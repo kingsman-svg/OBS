@@ -1,0 +1,24 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow (View)
+participant C as LoginController
+participant M as LoginModel
+participant H as HttpClient
+U->>V: 输入接口、账号、密码，点击登录
+V->>V: 清空密码输入框
+V-->>C: loginRequested(endpoint, account, password)
+C->>C: 校验输入，阻止重复请求
+C->>M: beginLogin()
+M-->>C: changed()
+C->>V: applyLoginState(LoggingIn)
+C->>H: postJson(/auth/login, credentials)
+H-->>C: requestId
+alt 2xx 且会话字段有效
+H-->>C: succeeded(id, status, JSON)
+C->>M: completeLogin(token, userId, name, expiresIn)
+else HTTP / 网络失败或响应无效
+H-->>C: failed(id, message, status) 或 succeeded(无效会话)
+C->>M: failLogin(message)
+end
+M-->>C: changed()
+C->>V: applyLoginState(message, busy=false, loggedIn)

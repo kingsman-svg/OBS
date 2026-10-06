@@ -1,0 +1,19 @@
+classDiagram
+%% m_requests is QHash<quint64, QNetworkReply*>; comma-generics are not supported by Mermaid.
+class HttpClient {
+  -QNetworkAccessManager* m_manager
+  -QHash m_requests
+  -quint64 m_nextRequestId
+  +qint64 MaxResponseBytes$
+  +HttpClient(parent)
+  +postJson(url, body, timeoutMs) quint64
+  +cancel(requestId) void
+  +succeeded(requestId, httpStatus, body) signal
+  +failed(requestId, message, httpStatus) signal
+  -finish(requestId, reply) void
+  -rejectLater(requestId, message) void
+}
+QObject <|-- HttpClient
+HttpClient *-- QNetworkAccessManager : owns
+HttpClient --> QNetworkReply : tracks and releases
+HttpClient ..> QTimer : per request timeout

@@ -1,0 +1,12 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow (View)
+participant C as LoginController
+participant M as LoginModel
+U->>V: 点击退出登录
+V-->>C: logoutRequested()
+C->>M: logout()
+M->>M: 清空 token、userId、expiresAt
+M-->>C: changed()
+C->>V: applyLoginState(LoggedOut)
+Note over C,M: 当前仅清除本地会话，服务端撤销会话待后续实现

@@ -1,0 +1,15 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow (View)
+participant C as LoginController
+participant H as HttpClient
+participant M as LoginModel
+U->>V: 点击取消
+V-->>C: cancelRequested()
+C->>C: 保存当前 id，然后清零 m_requestId
+C->>H: cancel(id)
+H->>H: 移除请求，断开回调，abort，deleteLater
+Note over H: 取消后不发出成功或失败信号
+C->>M: failLogin(已取消登录)
+M-->>C: changed()
+C->>V: applyLoginState(LoggedOut)

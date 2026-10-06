@@ -1,0 +1,23 @@
+sequenceDiagram
+participant C as 调用方
+participant H as HttpClient
+participant Q as QNetworkAccessManager
+participant R as QNetworkReply + QTimer
+participant S as HTTP 服务
+C->>H: postJson(url, body, timeoutMs)
+H->>Q: post(JSON request)
+Q->>R: create reply
+H->>R: start per-request timer
+H-->>C: requestId
+Q->>S: HTTP POST
+alt HTTP 响应完成
+S-->>R: status + response bytes
+R-->>H: finished()
+H->>R: stop timer, read body, deleteLater()
+H-->>C: succeeded(id, status, JSON) or failed(id, message, status)
+else 请求超时
+R-->>H: timer timeout
+H->>R: mark timeout, abort()
+R-->>H: finished()
+H-->>C: failed(id, timeout, status)
+end

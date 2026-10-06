@@ -1,0 +1,18 @@
+classDiagram
+class LoginController {
+  -MainWindow* m_view
+  -LoginModel* m_model
+  -HttpClient* m_http
+  -quint64 m_requestId
+  +LoginController(view, model, http, parent)
+  +login(endpoint, account, password) slot
+  +cancel() slot
+  +logout() slot
+  -onSucceeded(requestId, httpStatus, body) void
+  -onFailed(requestId, message, httpStatus) void
+  -refreshView() void
+}
+QObject <|-- LoginController
+LoginController --> MainWindow : borrows view
+LoginController --> LoginModel : borrows model
+LoginController --> HttpClient : borrows client
