@@ -1,0 +1,10 @@
+build/
+build-*/
+out/
+.vs/
+.qtcreator/
+*.user
+*.user.*
+*.log
+__pycache__/
+.venv/
