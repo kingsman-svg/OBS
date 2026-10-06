@@ -1,0 +1,21 @@
+classDiagram
+class LoginModel {
+  -State m_state
+  -QString m_message
+  -QString m_accessToken
+  -QString m_userId
+  -QDateTime m_expiresAt
+  +LoginModel(parent)
+  +state() State
+  +message() QString
+  +accessToken() QString
+  +userId() QString
+  +expiresAt() QDateTime
+  +beginLogin() void
+  +completeLogin(token, userId, displayName, expiresIn) void
+  +failLogin(message) void
+  +logout() void
+  +changed() signal
+  -clearSession() void
+}
+QObject <|-- LoginModel

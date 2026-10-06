@@ -1,0 +1,12 @@
+classDiagram
+class MainWindow {
+  -Ui::MainWindow* ui
+  +MainWindow(parent)
+  +~MainWindow()
+  +applyLoginState(message, busy, loggedIn) void
+  +loginRequested(endpoint, account, password) signal
+  +cancelRequested() signal
+  +logoutRequested() signal
+}
+QMainWindow <|-- MainWindow
+MainWindow *-- Ui_MainWindow : owns generated UI

@@ -1,0 +1,42 @@
+cmake_minimum_required(VERSION 3.16)
+project(CSN VERSION 0.1 LANGUAGES CXX)
+set(CMAKE_AUTOUIC ON)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
+
+add_library(CSNNetwork STATIC network/HttpClient.cpp network/HttpClient.h)
+target_include_directories(CSNNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(CSNNetwork PUBLIC Qt6::Network)
+
+add_library(CSNLogin STATIC
+    mainwindow.cpp mainwindow.h mainwindow.ui
+    login/LoginModel.cpp login/LoginModel.h
+    login/LoginController.cpp login/LoginController.h
+)
+target_include_directories(CSNLogin PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(CSNLogin PUBLIC Qt6::Widgets CSNNetwork)
+qt_add_executable(CSN main.cpp)
+target_link_libraries(CSN PRIVATE CSNLogin)
+set_target_properties(CSN PROPERTIES WIN32_EXECUTABLE TRUE)
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    add_executable(CSNLoginTests tests/login/LoginTests.cpp)
+    target_link_libraries(CSNLoginTests PRIVATE CSNLogin Qt6::Test)
+    add_test(NAME login.http_mvc COMMAND CSNLoginTests)
+    set_tests_properties(login.http_mvc PROPERTIES TIMEOUT 20)
+endif()
+if(MSVC)
+    target_compile_options(CSNNetwork PRIVATE /utf-8 /W4)
+    target_compile_options(CSNLogin PRIVATE /utf-8 /W4)
+    target_compile_options(CSN PRIVATE /utf-8 /W4)
+    if(BUILD_TESTING)
+        target_compile_options(CSNLoginTests PRIVATE /utf-8 /W4)
+    endif()
+endif()
+include(GNUInstallDirs)
+install(TARGETS CSN RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
