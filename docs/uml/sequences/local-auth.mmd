@@ -1,0 +1,23 @@
+sequenceDiagram
+participant A as main
+participant S as LocalAuthServer
+participant V as MainWindow
+participant H as HttpClient
+A->>S: start() 监听 127.0.0.1 随机端口
+alt 监听成功
+S-->>A: endpoint()
+A->>V: setLoginEndpoint(endpoint)
+else 监听失败
+A->>V: applyLoginState(启动失败)
+end
+H->>S: POST /auth/login (JSON)
+S->>S: 异步累积请求，校验方法、路径、长度、JSON
+alt 完整请求且 root / root 匹配
+S-->>H: 200 token、用户、expiresIn
+else 账号或密码错误
+S-->>H: 401 INVALID_CREDENTIALS
+else 无效协议、路径、方法或大小
+S-->>H: 400 / 404 / 405 / 413
+end
+S->>S: 关闭连接并释放 socket
+Note over S: 未完整接收等待后续数据；5 秒超时关闭；最多 16 个连接

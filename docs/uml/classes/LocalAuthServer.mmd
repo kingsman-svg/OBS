@@ -1,0 +1,14 @@
+classDiagram
+class LocalAuthServer {
+  -QTcpServer m_server
+  +LocalAuthServer(parent)
+  +start() bool
+  +endpoint() QUrl
+  +errorString() QString
+  -acceptConnections() void
+  -readRequest(socket) void
+  -respond(socket, status, body) void
+}
+QObject <|-- LocalAuthServer
+LocalAuthServer *-- QTcpServer : loopback ephemeral port
+LocalAuthServer *-- QTcpSocket : bounded lifetime
