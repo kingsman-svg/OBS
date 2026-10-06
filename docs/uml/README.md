@@ -21,7 +21,15 @@
 
 ![LoginController](classes/LoginController.png)
 
+- [LocalAuthServer 类图源码](classes/LocalAuthServer.mmd) · [SVG](classes/LocalAuthServer.svg)
+
+![LocalAuthServer](classes/LocalAuthServer.png)
+
 ## 时序图
+
+- [本地开发认证源码](sequences/local-auth.mmd) · [SVG](sequences/local-auth.svg)
+
+![本地开发认证](sequences/local-auth.png)
 
 - [HTTP 请求源码](sequences/http-request.mmd) · [SVG](sequences/http-request.svg)
 

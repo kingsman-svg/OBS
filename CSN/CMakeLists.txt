@@ -7,7 +7,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
-add_library(CSNNetwork STATIC network/HttpClient.cpp network/HttpClient.h)
+add_library(CSNNetwork STATIC network/HttpClient.cpp network/HttpClient.h
+    server/LocalAuthServer.cpp server/LocalAuthServer.h)
 target_include_directories(CSNNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(CSNNetwork PUBLIC Qt6::Network)
 

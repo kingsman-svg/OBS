@@ -2,10 +2,13 @@
 #include "login/LoginModel.h"
 #include "mainwindow.h"
 #include "network/HttpClient.h"
+#include "server/LocalAuthServer.h"
+#include <QStackedWidget>
 #include <QApplication>
 #include <QElapsedTimer>
 #include <QFont>
 #include <QFontDatabase>
+#include <QFileInfo>
 #include <QHostAddress>
 #include <QJsonDocument>
 #include <QLabel>
@@ -224,6 +227,79 @@ bool mvcFailureAndCancel()
     CHECK(model.accessToken().isEmpty());
     return true;
 }
+bool localRootLoginAndHome()
+{
+    csn::LocalAuthServer server;
+    CHECK(server.start());
+    CHECK(server.start());
+    CHECK(server.endpoint().host() == QStringLiteral("127.0.0.1"));
+    MainWindow view;
+    csn::HttpClient http;
+    csn::LoginModel model;
+    csn::LoginController controller(&view, &model, &http);
+    view.setLoginEndpoint(server.endpoint());
+    view.show();
+    auto *account = view.findChild<QLineEdit *>(QStringLiteral("accountEdit"));
+    auto *password = view.findChild<QLineEdit *>(QStringLiteral("passwordEdit"));
+    auto *login = view.findChild<QPushButton *>(QStringLiteral("loginButton"));
+    auto *logout = view.findChild<QPushButton *>(QStringLiteral("logoutButton"));
+    auto *pages = view.findChild<QStackedWidget *>(QStringLiteral("pages"));
+    CHECK(account && password && login && logout && pages);
+    CHECK(account->text() == QStringLiteral("root"));
+    password->setText(QStringLiteral("wrong"));
+    QTest::mouseClick(login, Qt::LeftButton);
+    CHECK(waitUntil([&] { return model.state() == csn::LoginModel::State::LoggedOut; }));
+    CHECK(model.message().contains(QStringLiteral("账号或密码错误")));
+    CHECK(pages->currentIndex() == 0 && model.accessToken().isEmpty());
+    password->setText(QStringLiteral("root"));
+    QTest::mouseClick(login, Qt::LeftButton);
+    CHECK(waitUntil([&] { return model.state() == csn::LoginModel::State::LoggedIn; }));
+    CHECK(model.userId() == QStringLiteral("root") && !model.accessToken().isEmpty());
+    CHECK(pages->currentWidget()->objectName() == QStringLiteral("homePage"));
+    CHECK(logout->isVisible() && password->text().isEmpty());
+    const QString token = model.accessToken();
+    if (!qEnvironmentVariableIsEmpty("CSN_SCREENSHOT_PATH")) {
+        const QString path = qEnvironmentVariable("CSN_SCREENSHOT_PATH");
+        CHECK(view.grab().save(QFileInfo(path).absolutePath() + QStringLiteral("/home-ui.png")));
+    }
+    QTest::mouseClick(logout, Qt::LeftButton);
+    CHECK(pages->currentIndex() == 0 && model.accessToken().isEmpty());
+    password->setText(QStringLiteral("root"));
+    QTest::mouseClick(login, Qt::LeftButton);
+    CHECK(waitUntil([&] { return model.state() == csn::LoginModel::State::LoggedIn; }));
+    CHECK(model.accessToken() != token);
+    return true;
+}
+bool localHttpValidation()
+{
+    csn::LocalAuthServer server;
+    CHECK(server.start());
+    const auto request = [&server](const QByteArray &bytes, int status, bool fragment = false) {
+        QTcpSocket socket;
+        QByteArray response;
+        QObject::connect(&socket, &QTcpSocket::readyRead, &socket, [&] { response += socket.readAll(); });
+        socket.connectToHost(QHostAddress::LocalHost, quint16(server.endpoint().port()));
+        if (!waitUntil([&] { return socket.state() == QAbstractSocket::ConnectedState; })) return false;
+        if (fragment) {
+            socket.write(bytes.left(bytes.size() - 2));
+            QTest::qWait(20);
+            if (!response.isEmpty()) return false;
+            socket.write(bytes.right(2));
+        } else socket.write(bytes);
+        return waitUntil([&] { return response.contains("\r\n\r\n")
+            && socket.state() == QAbstractSocket::UnconnectedState; })
+            && response.startsWith("HTTP/1.1 " + QByteArray::number(status) + " ");
+    };
+    CHECK(request("GET /auth/login HTTP/1.1\r\nHost: localhost\r\n\r\n", 405));
+    CHECK(request("POST /missing HTTP/1.1\r\nHost: localhost\r\n\r\n", 404));
+    CHECK(request("POST /auth/login HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: 1\r\n\r\nx", 400));
+    CHECK(request("POST /auth/login HTTP/1.1\r\nContent-Length: 20000\r\nContent-Type: application/json\r\n\r\n", 413));
+    CHECK(request("POST /auth/login HTTP/1.1\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\n{}", 400));
+    const QByteArray body = "{\"account\":\"root\",\"password\":\"root\"}";
+    CHECK(request("POST /auth/login HTTP/1.1\r\nContent-Type: application/json\r\nContent-Length: "
+                  + QByteArray::number(body.size()) + "\r\n\r\n" + body, 200, true));
+    return true;
+}
 } // namespace
 int main(int argc, char *argv[])
 {
@@ -250,5 +326,7 @@ int main(int argc, char *argv[])
     run("cancelAndResponseLimit", cancelAndResponseLimit);
     run("mvcLoginAndLogout", mvcLoginAndLogout);
     run("mvcFailureAndCancel", mvcFailureAndCancel);
+    run("localRootLoginAndHome", localRootLoginAndHome);
+    run("localHttpValidation", localHttpValidation);
     return failures == 0 ? 0 : 1;
 }

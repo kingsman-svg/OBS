@@ -9,4 +9,5 @@ C->>M: logout()
 M->>M: 清空 token、userId、expiresAt
 M-->>C: changed()
 C->>V: applyLoginState(LoggedOut)
+V->>V: 返回登录页
 Note over C,M: 当前仅清除本地会话，服务端撤销会话待后续实现

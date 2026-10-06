@@ -24,7 +24,7 @@ python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 ```
 
 脚本仅为测试子进程设置 Qt DLL/插件路径，使用 offscreen 平台运行界面验证；不修改系统或全局环境。
-`CSNLoginTests` 是本工程的测试目标，测试服务使用动态本机端口，不是新增业务 Demo 或认证服务。
+`CSNLoginTests` 是本工程的测试目标，既有网络测试使用动态本机端口的 HTTP fixture；root 登录测试使用实际 LocalAuthServer 开发服务。业务应用 CSN 启动时也会自动启动该服务并填入地址。登录账号 root，密码 root。
 
 测试覆盖：
 

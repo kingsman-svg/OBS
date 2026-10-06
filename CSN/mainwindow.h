@@ -9,6 +9,8 @@ namespace Ui {
 class MainWindow;
 }
 QT_END_NAMESPACE
+class QStackedWidget;
+class QLabel;
 
 class MainWindow : public QMainWindow
 {
@@ -19,6 +21,7 @@ public:
     ~MainWindow() override;
 
     void applyLoginState(const QString &message, bool busy, bool loggedIn);
+    void setLoginEndpoint(const QUrl &endpoint);
 
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
@@ -27,5 +30,7 @@ signals:
 
 private:
     Ui::MainWindow *ui;
+    QStackedWidget *m_pages;
+    QLabel *m_welcome;
 };
 #endif // MAINWINDOW_H

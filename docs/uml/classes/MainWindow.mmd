@@ -1,12 +1,16 @@
 classDiagram
 class MainWindow {
   -Ui::MainWindow* ui
+  -QStackedWidget* m_pages
+  -QLabel* m_welcome
   +MainWindow(parent)
   +~MainWindow()
   +applyLoginState(message, busy, loggedIn) void
+  +setLoginEndpoint(endpoint) void
   +loginRequested(endpoint, account, password) signal
   +cancelRequested() signal
   +logoutRequested() signal
 }
 QMainWindow <|-- MainWindow
 MainWindow *-- Ui_MainWindow : owns generated UI
+MainWindow *-- QStackedWidget : login and home pages
