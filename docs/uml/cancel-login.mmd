@@ -7,6 +7,7 @@ participant M as LoginModel
 U->>V: 点击取消
 V-->>C: cancelRequested()
 C->>C: 保存当前 id，然后清零 m_requestId
+C->>C: 清空调度阶段保存的临时凭据与阶段标志
 C->>H: cancel(id)
 H->>H: 移除请求，断开回调，abort，deleteLater
 Note over H: 取消后不发出成功或失败信号

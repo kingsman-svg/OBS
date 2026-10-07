@@ -1,0 +1,21 @@
+classDiagram
+class SessionModel {
+  -bool m_ready
+  -bool m_busy
+  -bool m_connecting
+  -QString m_message
+  -QJsonObject m_room
+  -QJsonArray m_rooms
+  +ready() bool
+  +busy() bool
+  +connecting() bool
+  +message() QString
+  +room() QJsonObject
+  +rooms() QJsonArray
+  +setConnection(ready, connecting, message) void
+  +setBusy(busy, message) void
+  +setRoom(room, message) void
+  +setRooms(rooms) void
+  +changed() signal
+}
+QObject <|-- SessionModel

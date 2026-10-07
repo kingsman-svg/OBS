@@ -5,6 +5,16 @@
 
 ## 类图
 
+双端工作台新增类图：
+
+| 类 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| SignalClient | [源码](uml/SignalClient.mmd) | [客户端信令类图](uml/客户端信令类图.png) | [矢量图](uml/客户端信令类图.svg) |
+| SessionModel | [源码](uml/SessionModel.mmd) | [工作台模型类图](uml/工作台模型类图.png) | [矢量图](uml/工作台模型类图.svg) |
+| SessionController | [源码](uml/SessionController.mmd) | [工作台控制器类图](uml/工作台控制器类图.png) | [矢量图](uml/工作台控制器类图.svg) |
+
+ClientRole 是区分两个入口的枚举，不含手写类。MainWindow、LoginController、HttpClient 及相关时序已同步更新；LocalAuthServer 只保留为测试支持。
+
 公共网络库类图：
 
 | 类 | Mermaid | PNG | SVG |
@@ -39,6 +49,16 @@
 ![LocalAuthServer](uml/本地认证服务类图.png)
 
 ## 时序图
+
+双端工作台新增流程：
+
+| 流程 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| 信令连接、认证与重连 | [源码](uml/client-session.mmd) | [客户端信令连接时序图](uml/客户端信令连接时序图.png) | [矢量图](uml/客户端信令连接时序图.svg) |
+| 帧收发与错误收敛 | [源码](uml/client-frames.mmd) | [客户端信令收发时序图](uml/客户端信令收发时序图.png) | [矢量图](uml/客户端信令收发时序图.svg) |
+| 双端房间操作 | [源码](uml/client-room.mmd) | [双端房间操作时序图](uml/双端房间操作时序图.png) | [矢量图](uml/双端房间操作时序图.svg) |
+| 直播 / 点播切换 | [源码](uml/client-mode.mmd) | [播放模式切换时序图](uml/播放模式切换时序图.png) | [矢量图](uml/播放模式切换时序图.svg) |
+| 登录到期 | [源码](uml/client-expiry.mmd) | [客户端会话到期时序图](uml/客户端会话到期时序图.png) | [矢量图](uml/客户端会话到期时序图.svg) |
 
 公共网络库时序图：
 

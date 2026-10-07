@@ -1,41 +1,46 @@
 # 构建与验证
 
-## Qt Creator
+Qt Creator 打开 OBS client/CMakeLists.txt，选择 Qt 6 + MSVC 64 位 Kit。重新配置后有两个运行目标：OBS_Publisher、OBS_Player。程序连接独立 Docker 服务，启动与双端操作见 [第 003 步](003-two-clients.md)。
 
-打开 `OBS client/CMakeLists.txt`，选择 Qt 6 + MSVC 64 位 Kit，构建并运行 `CSN`。
-本机实际使用 Qt 6.11.2、MSVC 2022 和 C++17。保留了用户原有 Qt Creator 构建目录，命令行验证使用 `OBS client/build-agent`。
-应用自动启动本地开发服务并填写 `/auth/login` 地址，账号 root、密码 root；无需单独启动服务。外接服务遵循 [接口契约](auth-login.md)。
+## Windows 构建和部署
 
-## 命令行构建
-
-在已初始化 MSVC 编译环境的 Developer PowerShell 中执行：
+仓库根目录执行：
 
 ```powershell
-cmake -S "OBS client" -B "OBS client/build-agent" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=C:/software/Qt/6.11.2/msvc2022_64 -DCMAKE_MAKE_PROGRAM=C:/software/Qt/Tools/Ninja/ninja.exe
+powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
+```
+
+脚本自动通过 vswhere 查找 MSVC，默认 Qt 为 C:/software/Qt/6.11.2/msvc2022_64，支持 -QtRoot 和 -BuildDir。构建 Debug，并用 windeployqt 将两个程序所需的 Qt DLL、插件复制到忽略的构建目录。只影响子进程环境。
+
+需要真实服务器联调测试时，先启动 Docker 业务服务，再在构建命令中增加 -LiveTests。未启用时测试仅使用动态本机端口，不依赖外部服务。Qt 的 Windows 部署工具用法见 [官方说明](https://doc.qt.io/qt-6/windows-deployment.html)。
+
+已有 MSVC 开发终端也可直接使用 CMake：
+
+```powershell
+cmake -S "OBS client" -B "OBS client/build-agent" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=C:/software/Qt/6.11.2/msvc2022_64 -DCMAKE_MAKE_PROGRAM=C:/software/Qt/Tools/Ninja/ninja.exe -DOBS_LIVE_TESTS=ON
 cmake --build "OBS client/build-agent" --parallel 4
 ```
 
-客户端目录改名后，Qt Creator 请重新打开上述 CMakeLists.txt 并重新配置构建目录；旧 CMake 缓存仍可能引用原路径。根据本机安装位置调整 Qt 和 Ninja 路径。`BUILD_TESTING=OFF` 可关闭测试目标，但正常开发建议保留。
+BUILD_TESTING=OFF 可关闭测试，OBS_LIVE_TESTS 默认 OFF。Qt Creator 原构建目录保留；可重新配置运行目标，无需 .pro。
 
 ## 行为验证
 
 ```powershell
+$env:PATH = "C:/software/Qt/Tools/CMake_64/bin;" + $env:PATH
 python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 ```
 
-脚本仅为测试子进程设置 Qt DLL/插件路径，使用 offscreen 平台运行界面验证；不修改系统或全局环境。
-`CSNLoginTests` 是本工程的测试目标，既有网络测试使用动态本机端口的 HTTP fixture；root 登录测试使用实际 LocalAuthServer 开发服务。业务应用 CSN 启动时也会自动启动该服务并填入地址。登录账号 root，密码 root。
+脚本给测试子进程设置 DLL/插件路径，offscreen 运行 GUI，用实际按钮验证 MVC。测试会加载 Windows 微软雅黑；offscreen 的默认字体目录警告不影响本项目中文截图。
 
-测试覆盖：
+| CTest | 内容 |
+| --- | --- |
+| login.http_mvc | 原 7 组 HTTP、MVC、取消、限长、本地认证测试 |
+| client.protocol_mvc | TCP 分片粘包、并发编号、事件、心跳、非法帧、请求超时、重连、HTTP 调度和取消 |
+| client.live_services | 可选；Windows Qt → Docker 调度/登录/信令；两个角色与关闭/断线/过期清理 |
 
-- 并发请求编号与结果关联、完整 POST JSON、分段响应。
-- 无效地址、无效 JSON、401 响应、确定性的请求超时。
-- 取消后无结果回调、响应大小限制。
-- 点击界面按钮完成 MVC 登录与本地退出，密码输入清空、会话与按钮状态更新。
-- 无效会话响应不能登录成功，以及取消后的状态恢复。
+LocalAuthServer 只编译进 CSNLoginTests，不进入业务可执行程序。真实集成测试会短暂创建自己的测试房间，完成后关闭连接，由服务器清理；不要与同账号正式演示混用（当前仅开发账号）。
 
-界面截图保存到 `out/登录页面.png` 和 `out/主页页面.png`，构建产物和临时文件均被 Git 忽略。命令行验证目录 `OBS client/build-agent` 可随时删除并按上面的命令重建。
-实际构建与测试结果另见 [本步记录](001-http-login.md)。
+截图保存到 out/，构建目录与临时文件被 Git 忽略。Linux 服务测试及 ASan/UBSan 命令见 [服务端说明](server-services.md)。
 
 ## UML
 
@@ -43,4 +48,4 @@ python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 python scripts/render_uml.py
 ```
 
-绘图脚本需要 Pillow 和 Windows 微软雅黑字体；输出 Mermaid 源码对应的 SVG/PNG 图像。
+需要 Pillow 与 Windows 微软雅黑。当前生成 29 张类图和 25 张时序图，每张同时有中文名 SVG/PNG。渲染后检查新增图像，源码、图与业务行为保持一致。

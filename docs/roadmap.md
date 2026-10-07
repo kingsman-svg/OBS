@@ -36,5 +36,6 @@
 - 已实现：CSN 的 HttpClient、LoginModel、MainWindow（View）、LoginController，以及各类/流程的 UML。
 - 已实现：本地开发 HTTP 服务、root / root 默认账号、登录后媒体工作台和退出返回。
 - 已实现：OBS Linux 开发容器；公共 Reactor 网络库与 timerfd 定时器；HTTP/信令协议层；独立开发登录、健康节点轮询调度和 TCP 信令服务器。各类/流程 UML、普通 Debug 与 ASan/UBSan 验证同步完成，详见 [服务端说明](server-services.md)。
-- 下一步：Qt MVC 接入节点调度与独立登录、信令会话；UI 增加点播/直播切换，然后继续采集、媒体服务部署和推拉流。
+- 已实现：同工程推流端与播放端，接入节点调度、独立登录、信令会话及房间流程；播放端增加点播/直播切换。详见 [第 003 步](003-two-clients.md)。
+- 下一步：先在推流端完成设备枚举、摄像头采集和预览，再接麦克风；播放端接 FFmpeg 文件解码，随后部署媒体服务和贯通推拉流。
 - 暂未完成：生产账号数据库与令牌撤销、真实媒体服务、音视频/GPU 接入、AI 部署或 Agent 实现。

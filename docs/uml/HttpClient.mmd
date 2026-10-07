@@ -7,11 +7,13 @@ class HttpClient {
   +qint64 MaxResponseBytes$
   +HttpClient(parent)
   +postJson(url, body, timeoutMs) quint64
+  +getJson(url, timeoutMs) quint64
   +cancel(requestId) void
   +succeeded(requestId, httpStatus, body) signal
   +failed(requestId, message, httpStatus) signal
   -finish(requestId, reply) void
   -rejectLater(requestId, message) void
+  -requestJson(url, body, post, timeoutMs) quint64
 }
 QObject <|-- HttpClient
 HttpClient *-- QNetworkAccessManager : owns

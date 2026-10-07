@@ -23,6 +23,6 @@ class SignalServer {
 }
 SignalServer *-- TcpServer : TCP transport
 SignalServer *-- SignalSession : auth and heartbeat
-SignalServer *-- LiveRoom : broadcast state
+SignalServer *-- LiveRoom : live and member events
 SignalServer --> AuthService : token validation
 SignalServer ..> FrameCodec : JSON frames

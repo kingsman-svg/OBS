@@ -11,6 +11,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'SignalClient': '客户端信令类图', 'SessionModel': '工作台模型类图',
+    'SessionController': '工作台控制器类图',
+    'client-session': '客户端信令连接时序图', 'client-frames': '客户端信令收发时序图',
+    'client-room': '双端房间操作时序图', 'client-mode': '播放模式切换时序图',
+    'client-expiry': '客户端会话到期时序图',
     'HttpClient': '网络请求类图', 'LoginModel': '登录模型类图',
     'MainWindow': '主窗口类图', 'LoginController': '登录控制器类图',
     'LocalAuthServer': '本地认证服务类图',

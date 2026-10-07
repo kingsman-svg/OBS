@@ -4,12 +4,12 @@ participant H as HttpClient
 participant Q as QNetworkAccessManager
 participant R as QNetworkReply + QTimer
 participant S as HTTP 服务
-C->>H: postJson(url, body, timeoutMs)
-H->>Q: post(JSON request)
+C->>H: getJson 或 postJson
+H->>Q: get 或 post(JSON request)
 Q->>R: create reply
 H->>R: start per-request timer
 H-->>C: requestId
-Q->>S: HTTP POST
+Q->>S: HTTP GET 或 POST
 alt HTTP 响应完成
 S-->>R: status + response bytes
 R-->>H: finished()
