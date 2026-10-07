@@ -16,7 +16,7 @@ MainWindow 保持一个 View 类，QStackedWidget 承载登录页和主页；Log
 
 新增测试覆盖 root 成功、错误密码、页面切换、退出和再次登录令牌变化，以及 HTTP 方法、路径、坏 JSON、重复长度、大小上限、分段请求。与既有网络及 MVC 测试一起执行。
 
-Qt 6.11.2 / MSVC 2022 Debug 构建通过；CTest 通过（7 组行为检查）。登录后的页面截图为 out/home-ui.png。
+Qt 6.11.2 / MSVC 2022 Debug 构建通过；CTest 通过（7 组行为检查）。登录后的页面截图为 out/主页页面.png。
 
 ## 下一步
 

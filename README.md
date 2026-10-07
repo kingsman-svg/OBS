@@ -22,6 +22,20 @@ CSN 已实现首期 HTTP 登录客户端：简单 MVC 界面、异步 JSON 请�
 
 ## 工作方式
 
+目录保持简单分级：
+
+```text
+CourseStudioNext/
+├─ CSN/       应用源码、界面和 CMakeLists.txt（源码平铺）
+├─ tests/     行为测试
+├─ docs/      需求、设计、接口和阶段记录
+│  └─ uml/   Mermaid 源码、中文命名的 SVG/PNG 图片
+├─ scripts/   构建验证、UML 绘图工具
+└─ out/       自动生成的中文页面截图（Git 忽略）
+```
+
+Qt Creator 继续打开 `CSN/CMakeLists.txt`。构建缓存由 CMake/Qt Creator 自动生成，不放入 Git。
+
 - 所有功能在本工程逐步实现，既有 Demo 用作参考。
 - 每次只推进一个明确的小步骤：说明设计、实现、运行验证、记录结果。
 - 使用 Git 保存完成并验证的小步骤；阶段成果通过提交历史回溯。
@@ -34,11 +48,11 @@ CSN 已实现首期 HTTP 登录客户端：简单 MVC 界面、异步 JSON 请�
 - [现有技术栈初查](docs/technical-baseline.md)
 - [分阶段实施路线](docs/roadmap.md)
 - [首期网络与登录设计](docs/network-login.md)
-- [HTTP 登录接口契约](docs/api/auth-login.md)
-- [UML 图索引](docs/uml/README.md)
+- [HTTP 登录接口契约](docs/auth-login.md)
+- [UML 图索引](docs/uml.md)
 - [构建与验证](docs/build-and-test.md)
-- [第 001 步完成记录](docs/steps/001-http-login.md)
-- [第 002 步：默认账号与主页](docs/steps/002-root-home.md)
+- [第 001 步完成记录](docs/001-http-login.md)
+- [第 002 步：默认账号与主页](docs/002-root-home.md)
 
 ## 参考工程
 

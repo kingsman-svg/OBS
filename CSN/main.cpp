@@ -1,8 +1,8 @@
 #include "mainwindow.h"
-#include "login/LoginController.h"
-#include "login/LoginModel.h"
-#include "network/HttpClient.h"
-#include "server/LocalAuthServer.h"
+#include "LoginController.h"
+#include "LoginModel.h"
+#include "HttpClient.h"
+#include "LocalAuthServer.h"
 
 #include <QApplication>
 

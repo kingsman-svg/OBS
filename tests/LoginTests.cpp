@@ -1,8 +1,8 @@
-#include "login/LoginController.h"
-#include "login/LoginModel.h"
+#include "LoginController.h"
+#include "LoginModel.h"
 #include "mainwindow.h"
-#include "network/HttpClient.h"
-#include "server/LocalAuthServer.h"
+#include "HttpClient.h"
+#include "LocalAuthServer.h"
 #include <QStackedWidget>
 #include <QApplication>
 #include <QElapsedTimer>
@@ -260,7 +260,7 @@ bool localRootLoginAndHome()
     const QString token = model.accessToken();
     if (!qEnvironmentVariableIsEmpty("CSN_SCREENSHOT_PATH")) {
         const QString path = qEnvironmentVariable("CSN_SCREENSHOT_PATH");
-        CHECK(view.grab().save(QFileInfo(path).absolutePath() + QStringLiteral("/home-ui.png")));
+        CHECK(view.grab().save(QFileInfo(path).absolutePath() + QStringLiteral("/主页页面.png")));
     }
     QTest::mouseClick(logout, Qt::LeftButton);
     CHECK(pages->currentIndex() == 0 && model.accessToken().isEmpty());
