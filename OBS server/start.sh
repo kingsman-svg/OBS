@@ -10,5 +10,9 @@ if [[ ! -f /etc/ssh/keys/ssh_host_ed25519_key ]]; then
     ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/keys/ssh_host_ed25519_key
 fi
 chmod 600 /etc/ssh/keys/ssh_host_ed25519_key
+# Windows 绑定目录的 uid 可能与容器 root 不同，仅信任这个明确的完整仓库路径。
+if ! git config --global --get-all safe.directory | grep -Fxq /repo; then
+    git config --global --add safe.directory /repo
+fi
 /usr/sbin/sshd -t
 exec /usr/sbin/sshd -D -e

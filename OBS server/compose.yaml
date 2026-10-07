@@ -15,6 +15,10 @@ services:
       - type: bind
         source: .
         target: /workspace
+      # 完整仓库包含父目录 .git，远程 Git 在 /repo 操作；/workspace 保留原路径。
+      - type: bind
+        source: ..
+        target: /repo
       # 重建容器时保留 VS Code Server、用户配置和 SSH 主机身份。
       - obs-root:/root
       - obs-ssh-keys:/etc/ssh/keys

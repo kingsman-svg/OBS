@@ -1,11 +1,11 @@
 {
     "folders": [
-        { "name": "OBS server", "uri": "vscode-remote://ssh-remote+OBS/workspace" }
+        { "name": "CourseStudioNext", "uri": "vscode-remote://ssh-remote+OBS/repo" }
     ],
     "settings": {
         "files.eol": "\n",
-        "cmake.sourceDirectory": "${workspaceFolder}/code",
-        "cmake.buildDirectory": "${workspaceFolder}/code/build"
+        "cmake.sourceDirectory": "/workspace/code",
+        "cmake.buildDirectory": "/workspace/code/build"
     },
     "extensions": {
         "recommendations": ["ms-vscode.cpptools", "ms-vscode.cmake-tools"]
