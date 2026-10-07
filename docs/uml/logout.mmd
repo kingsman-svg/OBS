@@ -1,13 +1,21 @@
 sequenceDiagram
 actor U as 用户
-participant V as MainWindow (View)
-participant C as LoginController
+participant V as MainWindow
+participant L as LoginController
 participant M as LoginModel
-U->>V: 点击退出登录
-V-->>C: logoutRequested()
-C->>M: logout()
-M->>M: 清空 token、userId、expiresAt
-M-->>C: changed()
-C->>V: applyLoginState(LoggedOut)
-V->>V: 返回登录页
-Note over C,M: 当前仅清除本地会话，服务端撤销会话待后续实现
+participant C as SessionController
+participant N as SignalClient
+participant S as SignalServer
+U->>V: 点击退出登录或关闭窗口
+V-->>L: logoutRequested
+L->>M: logout 清除内存会话
+M-->>L: changed
+L->>V: 返回登录页
+M-->>C: changed
+C->>C: 停止到期定时器，清除待处理请求
+C->>N: disconnectFromServer
+N->>N: 停止心跳和请求定时器，abort socket
+N-->>C: disconnected，清空房间状态
+S->>S: 连接断开，清理成员或关闭主播房间
+S-->>S: 向剩余观众发送 room.closed 或 room.updated
+Note over M,S: 签名令牌暂未中心撤销，但退出客户端不再保留凭据

@@ -25,7 +25,7 @@ ctest = shutil.which('ctest')
 if not ctest:
     raise SystemExit('ctest was not found. Add CMake/bin to PATH.')
 result = subprocess.run([ctest, '--test-dir', str(build), '--output-on-failure', '-V'],
-                        env=environment, timeout=30, capture_output=True)
+                        env=environment, timeout=120, capture_output=True)
 print(result.stdout.decode('utf-8', errors='replace'))
 print(result.stderr.decode('utf-8', errors='replace'))
 raise SystemExit(result.returncode)

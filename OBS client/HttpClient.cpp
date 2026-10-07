@@ -13,6 +13,16 @@ HttpClient::HttpClient(QObject *parent)
 
 quint64 HttpClient::postJson(const QUrl &url, const QJsonObject &body, int timeoutMs)
 {
+    return requestJson(url, body, true, timeoutMs);
+}
+
+quint64 HttpClient::getJson(const QUrl &url, int timeoutMs)
+{
+    return requestJson(url, {}, false, timeoutMs);
+}
+
+quint64 HttpClient::requestJson(const QUrl &url, const QJsonObject &body, bool post, int timeoutMs)
+{
     const quint64 id = m_nextRequestId++;
     m_requests.insert(id, nullptr);
     if (!url.isValid() || url.host().isEmpty()
@@ -30,7 +40,7 @@ quint64 HttpClient::postJson(const QUrl &url, const QJsonObject &body, int timeo
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setRawHeader("Accept", "application/json");
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
-    QNetworkReply *reply = m_manager->post(request, payload);
+    QNetworkReply *reply = post ? m_manager->post(request, payload) : m_manager->get(request);
     m_requests[id] = reply;
     reply->setReadBufferSize(MaxResponseBytes + 1);
     auto *timer = new QTimer(reply);

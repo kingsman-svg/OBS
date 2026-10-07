@@ -1,0 +1,36 @@
+sequenceDiagram
+participant H as 推流端 View
+participant C as SessionController
+participant N as SignalClient
+participant S as SignalServer
+participant P as 播放端 MVC
+H->>C: createRoomRequested(title)
+C->>C: 校验主播角色、空闲状态与标题字节数
+C->>N: request room.create
+N->>S: 创建房间
+alt 标题无效或服务端拒绝
+S-->>N: 错误响应
+N-->>C: response ok=false
+C->>H: 恢复按钮并显示错误
+else 创建成功
+S-->>N: roomId、标题、媒体地址
+N-->>C: response ok=true
+C->>H: 显示房间，尚未开播
+end
+P->>S: room.list offset
+S-->>P: rooms、nextOffset
+P->>P: 按页汇总，最多 128 个房间
+P->>S: room.join(roomId)
+S-->>C: room.updated 成员变化
+S-->>P: 加入结果
+P->>P: 显示当前房间，等待媒体链路
+P->>S: room.leave
+S-->>C: room.updated 观众数减少
+S-->>P: 成功响应
+P->>S: 刷新列表
+H->>C: leaveRoomRequested
+C->>S: room.leave
+S-->>P: room.closed
+P->>P: 清空房间并移除列表项
+S-->>C: 成功响应
+Note over H,P: 本步只有房间控制，不会向未部署的媒体服务器发送推拉流

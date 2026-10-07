@@ -1,29 +1,35 @@
 sequenceDiagram
 actor U as 用户
-participant V as MainWindow (View)
+participant V as MainWindow
 participant C as LoginController
-participant M as LoginModel
 participant H as HttpClient
-participant S as LocalAuthServer
-U->>V: 输入接口、账号、密码，点击登录
-V->>V: 清空密码输入框
-V-->>C: loginRequested(endpoint, account, password)
-C->>C: 校验输入，阻止重复请求
-C->>M: beginLogin()
-M-->>C: changed()
-C->>V: applyLoginState(LoggingIn)
-C->>H: postJson(/auth/login, credentials)
-H-->>C: requestId
-H->>S: POST HTTP JSON
-S->>S: 校验 root / root（本地开发）
-S-->>H: 200 会话 或 401 错误
-alt 2xx 且会话字段有效
-H-->>C: succeeded(id, status, JSON)
-C->>M: completeLogin(token, userId, name, expiresIn)
-else HTTP / 网络失败或响应无效
-H-->>C: failed(id, message, status) 或 succeeded(无效会话)
-C->>M: failLogin(message)
+participant S as SchedulerServer
+participant L as LoginServer
+participant M as LoginModel
+U->>V: 输入地址、账号、密码并登录
+V->>V: 清空密码框
+V-->>C: loginRequested
+C->>M: beginLogin
+alt 地址为 /login/server
+C->>H: getJson 调度地址
+H->>S: GET /login/server（不含密码）
+S-->>H: loginUrl 或 503
+H-->>C: 成功或失败
+C->>C: 校验 HTTP(S) 地址，禁止 HTTPS 降级
+else 直接登录节点
+C->>C: 使用用户填写的登录地址
 end
-M-->>C: changed()
-C->>V: applyLoginState(message, busy=false, loggedIn)
-V->>V: 成功显示媒体工作台；失败保留登录页
+Note over C,H: 调度失败或地址无效时 failLogin，不发送密码
+C->>H: postJson 凭据
+C->>C: 清除临时凭据
+H->>L: POST /auth/login
+L-->>H: 签名会话或错误
+H-->>C: succeeded 或 failed
+alt HTTP 成功且会话字段有效
+C->>M: completeLogin
+else 网络、HTTP 或会话字段错误
+C->>M: failLogin
+end
+M-->>C: changed
+C->>V: applyLoginState
+Note over V,M: 成功显示角色工作台；SessionController 接续信令认证

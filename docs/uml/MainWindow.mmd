@@ -1,16 +1,34 @@
 classDiagram
 class MainWindow {
-  -Ui::MainWindow* ui
+  -Ui_MainWindow* ui
+  -ClientRole m_role
   -QStackedWidget* m_pages
-  -QLabel* m_welcome
+  -QLabel* m_signalStatus
+  -QLabel* m_roomInfo
+  -QListWidget* m_rooms
+  -QComboBox* m_mode
+  -bool m_loggedIn
   +MainWindow(parent)
+  +MainWindow(role, parent)
   +~MainWindow()
+  +role() ClientRole
+  +signalHost() QString
+  +signalPort() quint16
   +applyLoginState(message, busy, loggedIn) void
+  +applySessionState(ready, busy, connecting, message, room, rooms) void
   +setLoginEndpoint(endpoint) void
+  +setSignalEndpoint(host, port) void
   +loginRequested(endpoint, account, password) signal
   +cancelRequested() signal
   +logoutRequested() signal
+  +reconnectRequested() signal
+  +createRoomRequested(title) signal
+  +refreshRoomsRequested() signal
+  +joinRoomRequested(roomId) signal
+  +leaveRoomRequested() signal
+  #closeEvent(event) void
+  -buildWorkspace() QWidget
 }
 QMainWindow <|-- MainWindow
-MainWindow *-- Ui_MainWindow : owns generated UI
-MainWindow *-- QStackedWidget : login and home pages
+MainWindow *-- Ui_MainWindow : login form
+MainWindow *-- QStackedWidget : login and role workspace

@@ -1,36 +1,65 @@
-#ifndef MAINWINDOW_H
-#define MAINWINDOW_H
-
+#pragma once
+#include "ClientRole.h"
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QMainWindow>
 #include <QUrl>
-
-QT_BEGIN_NAMESPACE
-namespace Ui {
-class MainWindow;
-}
-QT_END_NAMESPACE
+namespace Ui { class MainWindow; }
 class QStackedWidget;
 class QLabel;
+class QLineEdit;
+class QSpinBox;
+class QPushButton;
+class QListWidget;
+class QComboBox;
+class QCloseEvent;
 
-class MainWindow : public QMainWindow
-{
+// 两端共用 View：控件只发出意图，网络与业务交给 Controller。
+class MainWindow final : public QMainWindow {
     Q_OBJECT
-
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    explicit MainWindow(csn::ClientRole role, QWidget *parent = nullptr);
     ~MainWindow() override;
-
+    csn::ClientRole role() const { return m_role; }
+    QString signalHost() const;
+    quint16 signalPort() const;
     void applyLoginState(const QString &message, bool busy, bool loggedIn);
+    void applySessionState(bool ready, bool busy, bool connecting, const QString &message,
+                           const QJsonObject &room, const QJsonArray &rooms);
     void setLoginEndpoint(const QUrl &endpoint);
-
+    void setSignalEndpoint(const QString &host, quint16 port);
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
     void logoutRequested();
-
+    void reconnectRequested();
+    void createRoomRequested(const QString &title);
+    void refreshRoomsRequested();
+    void joinRoomRequested(const QString &roomId);
+    void leaveRoomRequested();
+protected:
+    void closeEvent(QCloseEvent *event) override;
 private:
+    QWidget *buildWorkspace();
     Ui::MainWindow *ui;
+    csn::ClientRole m_role;
     QStackedWidget *m_pages;
     QLabel *m_welcome;
+    QLabel *m_signalStatus;
+    QLabel *m_roomInfo;
+    QLineEdit *m_signalHost;
+    QSpinBox *m_signalPort;
+    QPushButton *m_reconnect;
+    QPushButton *m_leave;
+    QLineEdit *m_roomTitle = nullptr;
+    QPushButton *m_create = nullptr;
+    QListWidget *m_rooms = nullptr;
+    QPushButton *m_refresh = nullptr;
+    QPushButton *m_join = nullptr;
+    QComboBox *m_mode = nullptr;
+    bool m_loggedIn = false;
+    bool m_ready = false;
+    bool m_busy = false;
+    bool m_inRoom = false;
 };
-#endif // MAINWINDOW_H

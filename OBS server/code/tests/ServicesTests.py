@@ -235,7 +235,9 @@ class ServiceTests(unittest.TestCase):
         room = owner.request('room.create', title='离开流程')['data']['roomId']
         self.assertEqual(viewer.request('room.join', roomId='missing')['error']['code'], 'ROOM_NOT_FOUND')
         viewer.request('room.join', roomId=room)
+        self.assertEqual(owner.event('room.updated')['data']['viewers'], 1)
         self.assertTrue(viewer.request('room.leave')['ok'])
+        self.assertEqual(owner.event('room.updated')['data']['viewers'], 0)
         self.assertTrue(viewer.request('room.join', roomId=room)['ok'])
         owner.request('room.leave')
         self.assertEqual(viewer.event('room.closed')['data']['roomId'], room)

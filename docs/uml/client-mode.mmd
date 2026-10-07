@@ -1,0 +1,22 @@
+sequenceDiagram
+actor U as 用户
+participant V as 播放端 MainWindow
+participant C as SessionController
+participant N as SignalClient
+participant S as SignalServer
+U->>V: 直播切换为点播
+V->>V: 显示本地文件与在线地址输入
+alt 已在直播房间
+V-->>C: leaveRoomRequested
+C->>N: request room.leave
+N->>S: 退出房间
+S-->>N: 成功或失败
+N-->>C: response
+C->>V: 更新房间状态与按钮
+else 尚未加入
+V->>V: 直接切换页面
+end
+Note over V,S: 请求进行中禁用模式切换；失败保留房间状态，可退出或重连
+U->>V: 选择本地文件或填写在线地址
+V->>V: 保存输入，播放按钮保持禁用
+Note over U,V: 解码、音频输出和实际播放属于下一阶段

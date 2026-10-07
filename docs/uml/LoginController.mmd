@@ -4,6 +4,9 @@ class LoginController {
   -LoginModel* m_model
   -HttpClient* m_http
   -quint64 m_requestId
+  -bool m_discovering
+  -QUrl m_discoveryUrl
+  -QJsonObject m_credentials
   +LoginController(view, model, http, parent)
   +login(endpoint, account, password) slot
   +cancel() slot

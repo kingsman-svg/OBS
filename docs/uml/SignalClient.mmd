@@ -1,0 +1,24 @@
+classDiagram
+class SignalClient {
+  -QTcpSocket* m_socket
+  -QTimer m_deadline
+  -QTimer m_heartbeat
+  -QByteArray m_buffer
+  -QHash m_types
+  -QHash m_timers
+  -bool m_ready
+  +connectToServer(host, port, token) void
+  +disconnectFromServer(reason) void
+  +isReady() bool
+  +request(type, fields) QString
+  +stateChanged(ready, connecting, message) signal
+  +response(id, type, ok, data, error) signal
+  +eventReceived(event, data) signal
+  -send(type, fields) QString
+  -readFrames() void
+  -handleMessage(message) void
+  -fail(message) void
+}
+QObject <|-- SignalClient
+SignalClient *-- QTcpSocket : new socket per connection
+SignalClient *-- QTimer : deadline and heartbeat

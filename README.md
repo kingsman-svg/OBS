@@ -14,13 +14,13 @@
 
 ## 当前进度
 
-CSN 已实现首期 HTTP 登录客户端：简单 MVC 界面、异步 JSON 请求、超时与取消、响应校验、内存会话和本地退出。每个类和完成的流程均提供 UML。
+已实现同一 CMake 工程中的两个客户端：OBS_Publisher 推流端、OBS_Player 播放端。简单 MVC，共享异步 HTTP 登录与 TCP 信令，已完成节点调度、认证、心跳、房间创建/列表/加入/退出、成员更新、断线重连和会话到期。每个类和流程均提供 UML。
 
 Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。注释、类图、时序图与真实进程测试同步维护，启动方法见 [服务端说明](docs/server-services.md)。当前使用 root 开发账号，生产账号系统和媒体转发后续实现。
 
-现在可直接登录：Qt Creator 打开 `OBS client/CMakeLists.txt`，重新构建并运行 CSN，账号 `root`，密码 `root`。应用自动启动本地开发 HTTP 登录服务并填入接口地址，无需另外启动服务器。成功进入媒体工作台，退出返回登录页。
+先在 OBS 容器启动 `python3 /workspace/code/run_services.py start`，再用 Qt Creator 打开 `OBS client/CMakeLists.txt`，构建并分别运行 OBS_Publisher 和 OBS_Player。两端使用开发账号 `root`、密码 `root`，默认连接本机 Docker 的 8080 调度与 9000 信令。详见 [双端运行说明](docs/003-two-clients.md)。
 
-本地服务仅监听 127.0.0.1 随机端口，默认账号用于开发。生产认证、账号数据库、受保护 API 和服务端会话撤销尚未实现。当前不增加云助教相关功能。
+播放端支持直播/点播页面切换，本地文件与在线地址输入已预留；推流端提供采集预览区域。实际采集、解码、推拉流、GPU 与 AI 继续逐步接入。LocalAuthServer 仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
 
 ## 工作方式
 
@@ -56,6 +56,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [构建与验证](docs/build-and-test.md)
 - [第 001 步完成记录](docs/001-http-login.md)
 - [第 002 步：默认账号与主页](docs/002-root-home.md)
+- [第 003 步：两个客户端工作台](docs/003-two-clients.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

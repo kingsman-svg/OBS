@@ -30,15 +30,35 @@ void LoginController::login(const QUrl &endpoint, const QString &account, const 
         m_model->failLogin(tr("请输入有效的 HTTP 或 HTTPS 登录接口地址。"));
         return;
     }
+    m_discovering = endpoint.path() == QStringLiteral("/login/server");
+    m_discoveryUrl = endpoint;
+    m_credentials = {{QStringLiteral("account"), account.trimmed()}, {QStringLiteral("password"), password}};
     m_model->beginLogin();
-    m_requestId = m_http->postJson(endpoint,
-        {{QStringLiteral("account"), account.trimmed()}, {QStringLiteral("password"), password}});
+    // 调度只返回节点地址，密码不会发送给调度服务器。
+    m_requestId = m_discovering ? m_http->getJson(endpoint) : m_http->postJson(endpoint, m_credentials);
+    if (!m_discovering)
+        m_credentials = {};
 }
 void LoginController::onSucceeded(quint64 id, int, const QJsonObject &body)
 {
     if (id != m_requestId)
         return;
     m_requestId = 0;
+    if (m_discovering) {
+        m_discovering = false;
+        const QUrl loginUrl(body.value(QStringLiteral("loginUrl")).toString());
+        if (!loginUrl.isValid() || loginUrl.host().isEmpty() || !loginUrl.userInfo().isEmpty()
+            || loginUrl.hasFragment()
+            || (loginUrl.scheme() != QStringLiteral("http") && loginUrl.scheme() != QStringLiteral("https"))
+            || (m_discoveryUrl.scheme() == QStringLiteral("https") && loginUrl.scheme() != QStringLiteral("https"))) {
+            m_credentials = {};
+            m_model->failLogin(tr("调度服务器返回了无效的登录地址。"));
+            return;
+        }
+        m_requestId = m_http->postJson(loginUrl, m_credentials);
+        m_credentials = {};
+        return;
+    }
     const QString token = body.value(QStringLiteral("accessToken")).toString();
     const QJsonObject user = body.value(QStringLiteral("user")).toObject();
     const QString userId = user.value(QStringLiteral("id")).toString();
@@ -56,6 +76,8 @@ void LoginController::onFailed(quint64 id, const QString &message, int)
     if (id != m_requestId)
         return;
     m_requestId = 0;
+    m_credentials = {};
+    m_discovering = false;
     m_model->failLogin(message);
 }
 void LoginController::cancel()
@@ -64,6 +86,8 @@ void LoginController::cancel()
         return;
     const quint64 id = m_requestId;
     m_requestId = 0;
+    m_credentials = {};
+    m_discovering = false;
     m_http->cancel(id);
     m_model->failLogin(tr("已取消登录。"));
 }

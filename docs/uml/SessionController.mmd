@@ -1,0 +1,27 @@
+classDiagram
+class SessionController {
+  -MainWindow* m_view
+  -LoginModel* m_login
+  -SessionModel* m_model
+  -SignalClient* m_signal
+  -QTimer m_expiry
+  -QString m_pending
+  -QString m_closedRoom
+  -QJsonArray m_listing
+  -int m_offset
+  +SessionController(view, login, model, signal)
+  -onLoginChanged() void
+  -reconnect() void
+  -refreshView() void
+  -execute(type, fields) void
+  -refreshRooms() void
+  -onResponse(id, type, ok, data, error) void
+  -onEvent(event, data) void
+  -scheduleExpiry() void
+}
+QObject <|-- SessionController
+SessionController --> MainWindow : view intents
+SessionController --> LoginModel : session credentials
+SessionController --> SessionModel : business state
+SessionController --> SignalClient : async transport
+SessionController *-- QTimer : login expiry

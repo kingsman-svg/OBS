@@ -170,7 +170,12 @@ Json SignalServer::handle(const net::TcpConnection::Ptr &connection, const Json 
             return fail("ALREADY_IN_ROOM", "请先离开当前房间");
         found->second.members.insert(connection.get());
         session.roomId = id;
-        return ok(roomData(found->second));
+        // 成员变化也要通知已有客户端，否则主播界面的观众数会停留在创建时。
+        // 先拷贝响应，再广播；发送失败可能同步关闭连接并删除房间。
+        const auto data = roomData(found->second);
+        broadcast(found->second,
+                  {{"type", "event"}, {"event", "room.updated"}, {"data", data}});
+        return ok(data);
     }
     if (type == "room.leave") {
         leave(connection.get());
@@ -225,6 +230,8 @@ void SignalServer::leave(net::TcpConnection *connection) {
         return;
     if (found->second.owner != connection) {
         found->second.members.erase(connection);
+        broadcast(found->second, {{"type", "event"}, {"event", "room.updated"},
+                                  {"data", roomData(found->second)}});
         return;
     }
     auto room = std::move(found->second);

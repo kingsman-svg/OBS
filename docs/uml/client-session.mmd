@@ -1,0 +1,29 @@
+sequenceDiagram
+participant M as LoginModel
+participant C as SessionController
+participant N as SignalClient
+participant T as QTcpSocket
+participant S as SignalServer
+participant V as MainWindow
+M-->>C: changed 已登录
+C->>C: 设置登录到期定时器
+C->>N: connectToServer 主机、端口、token
+N->>T: connectToHost（异步）
+T-->>N: connected
+N->>S: auth 长度帧 JSON
+alt 认证成功
+S-->>N: userId、heartbeatSeconds
+N->>N: 启动心跳并释放认证回调捕获的 token
+N-->>C: stateChanged ready
+C->>V: 启用房间操作
+N->>S: 定时 heartbeat
+S-->>N: 心跳响应
+else 连接失败、认证失败或请求超时
+N->>N: 关闭 socket，取消所有请求定时器
+N-->>C: stateChanged disconnected
+C->>C: 清除待处理请求
+C->>V: 清空房间状态，显示重新连接
+end
+V-->>C: reconnectRequested
+C->>N: 使用未过期会话重新认证
+Note over C,V: 重连不恢复已关闭的房间，用户重新创建或加入

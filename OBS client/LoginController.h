@@ -22,5 +22,8 @@ private:
     LoginModel *m_model;
     HttpClient *m_http;
     quint64 m_requestId = 0;
+    bool m_discovering = false;
+    QUrl m_discoveryUrl;
+    QJsonObject m_credentials;
 };
 } // namespace csn

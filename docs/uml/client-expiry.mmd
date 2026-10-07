@@ -1,0 +1,19 @@
+sequenceDiagram
+participant T as 登录到期定时器
+participant C as SessionController
+participant M as LoginModel
+participant N as SignalClient
+participant V as MainWindow
+T-->>C: timeout
+C->>C: 重新检查 UTC 到期时间
+alt 会话已过期
+C->>M: failLogin 请重新登录
+M->>M: 清除 token 与用户信息
+M-->>C: changed 未登录
+C->>N: disconnectFromServer
+N->>N: 停止心跳，关闭连接并取消请求
+C->>V: 清空房间状态
+M-->>V: 经 LoginController 返回登录页
+else 尚未到期
+C->>T: 按剩余时间继续计时
+end

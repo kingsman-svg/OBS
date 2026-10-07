@@ -1,0 +1,21 @@
+sequenceDiagram
+participant C as SessionController
+participant N as SignalClient
+participant T as QTcpSocket
+participant S as SignalServer
+C->>N: request(type, fields)
+N->>N: 分配字符串 id，检查帧和写队列上限
+N->>T: write 四字节大端长度及 JSON
+N-->>C: id
+T->>S: TCP 字节流
+S-->>T: 分片或粘包响应及事件
+T-->>N: readyRead
+N->>N: 缓存半帧，逐帧取出完整 JSON
+alt 帧长、JSON、编号或类型错误
+N->>T: abort
+N-->>C: stateChanged disconnected
+else 完整合法帧
+N->>N: 按 id 取消请求超时定时器
+N-->>C: response 或 eventReceived
+end
+Note over N,T: 帧最大 64 KiB，未完成请求最多 32，写队列最大 256 KiB

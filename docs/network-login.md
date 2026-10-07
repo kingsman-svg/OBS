@@ -1,35 +1,22 @@
-# 首期网络与登录：简单 MVC
+# 客户端网络与简单 MVC
 
-## 类与职责
+当前实现和运行入口见 [两个客户端工作台](003-two-clients.md)。
 
-| 类 | 职责 | 所在文件 |
-| --- | --- | --- |
-| HttpClient | 异步 HTTP JSON POST、请求编号、超时、取消、响应大小限制与结果通知 | `OBS client/HttpClient.*` |
-| LoginModel | 未登录/登录中/已登录状态、消息、内存会话和过期时间 | `OBS client/LoginModel.*` |
-| MainWindow | View：输入接口地址、账号和密码；显示状态；发出登录/取消/退出意图 | `OBS client/mainwindow.*` |
-| LoginController | 校验输入、发起登录、检查响应契约、更新 Model、同步 View | `OBS client/LoginController.*` |
-| LocalAuthServer | 本地开发 HTTP 服务；异步接收、协议校验、root 账号验证与临时令牌生成 | `OBS client/LocalAuthServer.*` |
+| 类 | 职责 |
+| --- | --- |
+| HttpClient | 异步 HTTP GET/POST JSON；请求编号、超时、取消、响应限长 |
+| LoginModel | 登录状态、消息、内存会话及到期时间 |
+| MainWindow | View：登录输入、推流端/播放端工作台和直播/点播模式 |
+| LoginController | 校验输入、发现登录节点、登录响应校验、取消、退出和显示同步 |
+| SignalClient | 异步 TCP 帧收发、认证、心跳、关联响应和连接收敛 |
+| SessionModel | 工作台连接状态、房间、列表和操作状态 |
+| SessionController | 登录后的连接生命周期、房间流程、事件、分页与会话到期 |
+| LocalAuthServer | 原登录测试的本机 fixture，业务程序不再自动启动 |
 
-对象由 `main.cpp` 装配，在同一 Qt 事件循环线程中使用。Controller 借用 View、Model 和 HttpClient，不拥有它们；声明顺序保证 Controller 最先销毁。
-HttpClient 拥有 QNetworkAccessManager，请求结束或取消后释放 QNetworkReply；超时 QTimer 由回复对象拥有。
+main.cpp 在一个 Qt 事件循环线程装配对象，两个目标共享 OBSNetwork 与 OBSClientCore 静态库。Controller 借用对象，在对象销毁前先销毁 Controller。HttpClient 拥有 QNetworkAccessManager；回复对象拥有其超时定时器。SignalClient 拥有当前 socket 和每请求定时器，重连时释放旧对象。
 
-## 当前完成的流程
+网络采用 [QNetworkAccessManager](https://doc.qt.io/qt-6/qnetworkaccessmanager.html) 和 [QAbstractSocket](https://doc.qt.io/qt-6/qabstractsocket.html) 的异步信号，不在 GUI 线程阻塞等待。取消/关闭先解除回调并停止定时器，旧结果不进入新会话。
 
-1. HTTP 请求及响应/超时处理。
-2. 输入 → 登录请求 → 结果校验 → 状态展示，包含失败分支。
-3. 取消当前登录，恢复未登录状态。
-4. 本地退出登录，清空内存会话。
+登录流程为 GET /login/server → 校验 loginUrl → POST /auth/login → 内存会话 → TCP auth。直接填写登录节点时省略调度。协议见 [HTTP 登录契约](auth-login.md) 和 [服务端信令](server-services.md)。
 
-每个类与流程的 UML 可从 [图索引](uml.md) 查看。
-HttpClient 使用 QNetworkAccessManager 的异步 API，符合当前简单 UI 的使用方式。[Qt 官方文档](https://doc.qt.io/qt-6/qnetworkaccessmanager.html)
-
-## 本步边界
-
-应用现自动启动 LocalAuthServer（127.0.0.1 随机端口），客户端通过 HTTP 校验 root / root，成功显示主页，退出返回登录页。MainWindow 的两个页面只负责展示，切换仍由 Controller 同步 Model 状态驱动。
-这是本地开发服务；账号数据库、生产密码存储、令牌验证和服务端会话撤销尚未实现。
-新 HTTP 登录不依赖 yzj 的 LoginServer、SigServer 或 LoadBanceServer，也不迁入云助教或远控业务。
-注册、找回密码、会话续期在需要时逐步设计。
-
-## 阅读顺序
-
-先读 HttpClient 及其类图/请求时序，再读 LoginModel、MainWindow、LoginController；最后对照登录、取消和退出时序图跟踪一次实际调用。
+注册、找回密码、自动续期、持久凭据和中心令牌撤销尚未实现。当前不增加云助教或远控功能。每类及每个流程的图见 [UML 索引](uml.md)。
