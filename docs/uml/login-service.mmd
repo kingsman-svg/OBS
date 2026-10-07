@@ -1,0 +1,18 @@
+sequenceDiagram
+participant C as 登录客户端
+participant H as HttpServer
+participant S as LoginServer
+participant A as AuthService
+C->>H: POST auth/login
+H->>S: 已验证边界的HTTP请求
+S->>S: 内容类型与节点限流检查
+S->>A: 校验开发账号
+alt 字段或账号错误
+S-->>H: 400或401错误JSON
+else 账号有效
+A->>A: 随机会话标识与HMAC签名
+A-->>S: 带到期时间的令牌
+S-->>H: 令牌与用户及有效期
+end
+H-->>C: HTTP响应
+Note over S,A: 只提供root开发账号，不记录认证正文

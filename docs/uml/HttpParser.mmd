@@ -1,0 +1,8 @@
+classDiagram
+class HttpParser {
+  +size_t MaxHeader = 16384
+  +size_t MaxBody = 65536
+  +parse(input, request) int
+}
+HttpParser ..> Buffer : consume complete request
+HttpParser ..> HttpRequest : output

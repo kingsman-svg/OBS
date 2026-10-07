@@ -1,0 +1,7 @@
+classDiagram
+class FrameCodec {
+  +size_t MaxFrame = 65536
+  +next(input, body) Result
+  +encode(body) string
+}
+FrameCodec ..> Buffer : retain incomplete frame

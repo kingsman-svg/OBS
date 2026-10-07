@@ -1,0 +1,10 @@
+classDiagram
+class LoginNode {
+  +string id
+  +string address
+  +string publicUrl
+  +uint16_t port
+  +bool healthy
+  +shared_ptr probe
+}
+LoginNode *-- HttpProbe : current health request

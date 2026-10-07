@@ -7,13 +7,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(nlohmann_json 3.11 REQUIRED)
 
-# 公共网络库与业务无关。后续登录、调度、信令目标都链接 obs_net。
+# 公共网络库与业务无关；协议层和三个业务目标逐层复用，不引入 Qt 依赖。
 add_library(obs_net STATIC
     net/UniqueFd.h net/Buffer.h net/Buffer.cpp
     net/Channel.h net/Channel.cpp net/Poller.h net/Poller.cpp
     net/EventLoop.h net/EventLoop.cpp net/Acceptor.h net/Acceptor.cpp
-    net/TcpConnection.h net/TcpConnection.cpp net/TcpServer.h net/TcpServer.cpp)
+    net/TcpConnection.h net/TcpConnection.cpp net/TcpServer.h net/TcpServer.cpp
+    net/TimerQueue.h net/TimerQueue.cpp)
 target_include_directories(obs_net PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/net)
 target_link_libraries(obs_net PUBLIC Threads::Threads)
 target_compile_options(obs_net PRIVATE -Wall -Wextra -Wpedantic -Werror)
@@ -23,6 +26,23 @@ if(OBS_ENABLE_SANITIZERS)
     target_compile_options(obs_net PUBLIC -fsanitize=address,undefined -fno-omit-frame-pointer)
     target_link_options(obs_net PUBLIC -fsanitize=address,undefined)
 endif()
+
+add_library(obs_protocol STATIC protocol/HttpParser.cpp protocol/HttpServer.cpp
+    protocol/HttpProbe.cpp protocol/FrameCodec.cpp)
+target_include_directories(obs_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
+target_link_libraries(obs_protocol PUBLIC obs_net nlohmann_json::nlohmann_json)
+target_compile_options(obs_protocol PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_library(obs_services STATIC services/AuthService.cpp services/LoginServer.cpp
+    services/SchedulerServer.cpp services/SignalServer.cpp)
+target_include_directories(obs_services PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/services)
+target_link_libraries(obs_services PUBLIC obs_protocol OpenSSL::Crypto)
+target_compile_options(obs_services PRIVATE -Wall -Wextra -Wpedantic -Werror)
+foreach(role login scheduler signal)
+    add_executable(obs_${role} services/ServerMain.cpp)
+    target_compile_definitions(obs_${role} PRIVATE OBS_SERVER_ROLE="${role}")
+    target_compile_options(obs_${role} PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    target_link_libraries(obs_${role} PRIVATE obs_services)
+endforeach()
 include(CTest)
 if(BUILD_TESTING)
     add_executable(obs_net_tests tests/NetworkTests.cpp)
@@ -30,4 +50,18 @@ if(BUILD_TESTING)
     target_compile_options(obs_net_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
     add_test(NAME network.behavior COMMAND obs_net_tests)
     set_tests_properties(network.behavior PROPERTIES TIMEOUT 30)
+    add_executable(obs_timer_tests tests/TimerTests.cpp)
+    target_link_libraries(obs_timer_tests PRIVATE obs_net)
+    target_compile_options(obs_timer_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME timer.behavior COMMAND obs_timer_tests)
+    set_tests_properties(timer.behavior PROPERTIES TIMEOUT 10)
+    add_executable(obs_protocol_tests tests/ProtocolTests.cpp)
+    target_link_libraries(obs_protocol_tests PRIVATE obs_services)
+    target_compile_options(obs_protocol_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME protocol.auth COMMAND obs_protocol_tests)
+    set_tests_properties(protocol.auth PROPERTIES TIMEOUT 10)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME services.integration COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ServicesTests.py ${CMAKE_CURRENT_BINARY_DIR})
+    set_tests_properties(services.integration PROPERTIES TIMEOUT 50)
 endif()

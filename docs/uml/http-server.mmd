@@ -1,0 +1,19 @@
+sequenceDiagram
+participant C as HTTP客户端
+participant H as HttpServer
+participant P as HttpParser
+participant L as EventLoop
+C->>H: TCP连接与请求字节
+H->>L: 设置五秒绝对请求期限
+H->>P: 解析缓冲
+alt 不完整
+P-->>H: 保留半包等待后续字节
+else 格式错误或超限
+P-->>H: 返回400或413或431
+else 完整请求
+P-->>H: 消费完整请求
+H->>H: 调用业务路由
+end
+H->>L: 取消请求期限并设置关闭兜底
+H-->>C: JSON响应与Connection close
+Note over H,L: 不完整请求超时则强制关闭

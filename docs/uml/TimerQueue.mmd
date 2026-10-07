@@ -1,0 +1,17 @@
+classDiagram
+class TimerQueue {
+  -EventLoop m_loop
+  -UniqueFd m_fd
+  -shared_ptr m_channel
+  -multimap m_timers
+  +TimerQueue(loop)
+  +~TimerQueue()
+  +add(delay, interval, task) TimerId
+  +cancel(id) void
+  -handleRead() void
+  -removeCancelled() void
+  -arm() void
+}
+TimerQueue --> EventLoop : owner thread
+TimerQueue *-- UniqueFd : timerfd
+TimerQueue *-- Channel : readiness

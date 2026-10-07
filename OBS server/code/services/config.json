@@ -1,0 +1,15 @@
+{
+  "bindAddress": "0.0.0.0",
+  "loginPort": 8081,
+  "schedulerPort": 8080,
+  "signalPort": 9000,
+  "tokenTtlSeconds": 3600,
+  "signalIdleSeconds": 45,
+  "signalAuthSeconds": 5,
+  "rtmpBase": "rtmp://127.0.0.1:1935/live",
+  "playbackBase": "http://127.0.0.1:8088/live",
+  "loginNodes": [
+    {"id": "login-1", "address": "127.0.0.1", "port": 8081, "publicUrl": "http://127.0.0.1:8081/auth/login"},
+    {"id": "login-2", "address": "127.0.0.1", "port": 8082, "publicUrl": "http://127.0.0.1:8082/auth/login"}
+  ]
+}

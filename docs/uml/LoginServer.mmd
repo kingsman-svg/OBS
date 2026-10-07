@@ -1,0 +1,12 @@
+classDiagram
+class LoginServer {
+  -AuthService m_auth
+  -HttpServer m_http
+  -time_point m_window
+  -unsigned_int m_attempts
+  +LoginServer(loop, address, port, auth)
+  +start() void
+  -handle(request) HttpResponse
+}
+LoginServer *-- HttpServer : HTTP routes
+LoginServer --> AuthService : credentials and token

@@ -24,6 +24,18 @@ IMAGE_NAMES = {
     'TcpConnection': '连接管理类图', 'TcpServer': '服务入口类图',
     'tcp-accept': '连接接入时序图', 'tcp-io': '数据收发时序图',
     'tcp-close': '连接关闭时序图', 'reactor-task': '跨线程任务时序图',
+    'TimerQueue': '定时器队列类图', 'HttpRequest': '请求数据类图',
+    'HttpParser': '请求解析器类图', 'HttpServer': '公共请求服务类图',
+    'HttpProbe': '健康探测类图', 'FrameCodec': '信令帧编解码类图',
+    'AuthService': '认证签名类图', 'LoginServer': '登录服务器类图',
+    'LoginNode': '登录节点类图', 'SchedulerServer': '负载调度服务器类图',
+    'SignalSession': '信令会话类图', 'LiveRoom': '直播房间类图',
+    'SignalServer': '信令服务器类图',
+    'timer-schedule': '定时器调度时序图', 'timer-cancel': '定时器取消时序图',
+    'http-server': '服务端请求处理时序图', 'login-service': '独立登录时序图',
+    'login-schedule': '登录节点调度时序图', 'signal-auth': '信令认证时序图',
+    'signal-room': '信令房间管理时序图', 'signal-live': '信令开播停播时序图',
+    'signal-cleanup': '信令心跳清理时序图', 'server-stop': '服务器启停时序图',
 }
 FONT = Path('C:/Windows/Fonts/msyh.ttc')
 NS = 'http://www.w3.org/2000/svg'

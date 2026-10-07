@@ -1,0 +1,15 @@
+sequenceDiagram
+participant H as 主播连接
+participant S as SignalServer
+participant L as 定时器
+participant V as 观众连接
+V->>S: heartbeat或有效业务请求
+S-->>V: 带服务器时间的响应
+L->>S: 每秒检查认证期限与空闲及令牌期限
+alt 观众超时或主动离开
+S->>S: 删除成员关系
+else 主播离开或断开或超时
+S->>S: 先删除房间并清空成员状态
+S-->>V: room.closed事件
+end
+Note over S,V: 发送失败可重入清理，先修改状态再通知

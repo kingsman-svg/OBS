@@ -9,6 +9,8 @@
 #include <utility>
 
 namespace obs::net {
+// 状态流转：Connecting -> Connected -> Disconnecting -> Disconnected。
+// 正常关闭尽量排空输出；协议错误、超限或强制关闭则立即释放 fd 和缓冲。
 TcpConnection::TcpConnection(EventLoop &loop, UniqueFd socket)
     : m_loop(loop), m_socket(std::move(socket)),
       m_channel(std::make_shared<Channel>(loop, m_socket.get())) {
@@ -16,6 +18,7 @@ TcpConnection::TcpConnection(EventLoop &loop, UniqueFd socket)
     if (m_socket.get() < 0)
         throw std::invalid_argument("invalid connection socket");
     const int on = 1;
+    // 控制消息通常很小，关闭 Nagle 以降低交互延迟；不改变 TCP 消息边界语义。
     ::setsockopt(m_socket.get(), IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on));
     m_channel->setReadCallback([this] { handleRead(); });
     m_channel->setWriteCallback([this] { handleWrite(); });
@@ -43,6 +46,7 @@ std::size_t TcpConnection::pendingBytes() const {
     return m_output.readableBytes();
 }
 void TcpConnection::establish() {
+    // 必须在 make_shared 完成之后调用，构造函数内不能使用 shared_from_this。
     m_loop.assertInLoopThread();
     if (m_state != State::Connecting)
         throw std::logic_error("connection already established");
@@ -108,6 +112,7 @@ void TcpConnection::handleWrite() {
     }
 }
 void TcpConnection::handleRead() {
+    // 一轮读到 EAGAIN 或预算耗尽，再把累计字节交给协议层；协议层自行保留半包。
     char bytes[16384];
     std::size_t total = 0;
     bool eof = false;
@@ -156,6 +161,7 @@ void TcpConnection::shutdown() {
     });
 }
 void TcpConnection::shutdownInLoop() {
+    // SHUT_WR 只关闭发送方向。对端不回应的等待上限由 HTTP/信令业务定时器控制。
     if (m_output.readableBytes() == 0)
         ::shutdown(m_socket.get(), SHUT_WR);
 }
@@ -164,6 +170,7 @@ void TcpConnection::forceClose() {
     m_loop.runInLoop([self] { self->handleClose("force closed"); });
 }
 void TcpConnection::handleClose(const std::string &reason) {
+    // 关闭入口统一且幂等。先更新状态并移除事件，再通知业务，允许回调释放 Server。
     if (m_state == State::Disconnected)
         return;
     const auto guard = shared_from_this();

@@ -1,0 +1,17 @@
+sequenceDiagram
+participant C as 信令客户端
+participant S as SignalServer
+participant F as FrameCodec
+participant A as AuthService
+C->>S: 四字节长度头与JSON
+S->>F: 从Buffer提取完整帧
+alt 帧不完整
+F-->>S: 保留字节等待下一次
+else 长度无效
+S-->>C: 关闭连接
+else 完整认证帧
+S->>A: 校验签名与到期时间
+A-->>S: 有效用户或认证失败
+S-->>C: 带请求id的认证响应
+end
+Note over C,S: 未认证只能auth；五秒内未完成认证会断开

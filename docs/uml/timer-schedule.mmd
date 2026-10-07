@@ -1,0 +1,22 @@
+sequenceDiagram
+participant T as 调用线程
+participant L as EventLoop
+participant Q as TimerQueue
+participant K as timerfd与epoll
+T->>L: runAfter 或 runEvery
+L->>Q: 分配取消标记和到期时间
+alt 其他线程调用
+Q->>L: 排队插入并唤醒 eventfd
+else 归属线程调用
+Q->>Q: 直接插入到期队列
+end
+Q->>K: 设置最早期限
+K-->>L: 定时器可读
+L->>Q: 摘出本批到期任务
+Q->>T: 在 loop 线程执行回调
+alt 重复且未取消
+Q->>Q: 从回调完成时重新计时
+else 一次性或已取消
+Q->>Q: 标记完成并释放任务
+end
+Q->>K: 设置下一期限或撤防

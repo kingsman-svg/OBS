@@ -1,0 +1,17 @@
+sequenceDiagram
+participant H as 主播
+participant S as SignalServer
+participant V as 观众
+H->>S: room.create 标题
+S->>S: 绑定创建连接与房间
+S-->>H: roomId与媒体地址
+V->>S: room.list 与 room.join
+alt 房间不存在或已在房间
+S-->>V: 业务错误
+else 可以加入
+S->>S: 保存成员关系
+S-->>V: 房间状态与拉流地址
+end
+V->>S: room.leave
+S->>S: 移除观众成员关系
+S-->>V: 成功响应

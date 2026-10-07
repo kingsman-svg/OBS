@@ -16,6 +16,8 @@
 
 CSN 已实现首期 HTTP 登录客户端：简单 MVC 界面、异步 JSON 请求、超时与取消、响应校验、内存会话和本地退出。每个类和完成的流程均提供 UML。
 
+Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。注释、类图、时序图与真实进程测试同步维护，启动方法见 [服务端说明](docs/server-services.md)。当前使用 root 开发账号，生产账号系统和媒体转发后续实现。
+
 现在可直接登录：Qt Creator 打开 `OBS client/CMakeLists.txt`，重新构建并运行 CSN，账号 `root`，密码 `root`。应用自动启动本地开发 HTTP 登录服务并填入接口地址，无需另外启动服务器。成功进入媒体工作台，退出返回登录页。
 
 本地服务仅监听 127.0.0.1 随机端口，默认账号用于开发。生产认证、账号数据库、受保护 API 和服务端会话撤销尚未实现。当前不增加云助教相关功能。
@@ -56,6 +58,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 002 步：默认账号与主页](docs/002-root-home.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
+- [定时器与登录、调度、信令服务](docs/server-services.md)
 
 ## 参考工程
 

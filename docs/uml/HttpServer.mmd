@@ -1,0 +1,19 @@
+classDiagram
+class HttpServer {
+  -EventLoop m_loop
+  -TcpServer m_server
+  -Handler m_handler
+  -milliseconds m_timeout
+  -unordered_map m_requests
+  +HttpServer(loop, address, port, handler, timeout)
+  +~HttpServer()
+  +start() void
+  +stop() void
+  +port() uint16_t
+  +connectionCount() size_t
+  -receive(connection, input) void
+  -respond(connection, response) void
+}
+HttpServer *-- TcpServer : transport
+HttpServer ..> HttpParser : request boundary
+HttpServer --> EventLoop : request deadline

@@ -77,3 +77,36 @@
 
 安装了 Pillow 的 Python 环境中执行 `python scripts/render_uml.py`。
 工程脚本支持本目录当前使用的 Mermaid 子集。修改源码后重新生成，并检查图像和代码是否一致。
+
+## 独立服务端类图
+
+| 对象/流程 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| TimerQueue | [源码](uml/TimerQueue.mmd) | [定时器队列类图](uml/定时器队列类图.png) | [矢量图](uml/定时器队列类图.svg) |
+| HttpRequest | [源码](uml/HttpRequest.mmd) | [请求数据类图](uml/请求数据类图.png) | [矢量图](uml/请求数据类图.svg) |
+| HttpParser | [源码](uml/HttpParser.mmd) | [请求解析器类图](uml/请求解析器类图.png) | [矢量图](uml/请求解析器类图.svg) |
+| HttpServer | [源码](uml/HttpServer.mmd) | [公共请求服务类图](uml/公共请求服务类图.png) | [矢量图](uml/公共请求服务类图.svg) |
+| HttpProbe | [源码](uml/HttpProbe.mmd) | [健康探测类图](uml/健康探测类图.png) | [矢量图](uml/健康探测类图.svg) |
+| FrameCodec | [源码](uml/FrameCodec.mmd) | [信令帧编解码类图](uml/信令帧编解码类图.png) | [矢量图](uml/信令帧编解码类图.svg) |
+| AuthService | [源码](uml/AuthService.mmd) | [认证签名类图](uml/认证签名类图.png) | [矢量图](uml/认证签名类图.svg) |
+| LoginServer | [源码](uml/LoginServer.mmd) | [登录服务器类图](uml/登录服务器类图.png) | [矢量图](uml/登录服务器类图.svg) |
+| LoginNode | [源码](uml/LoginNode.mmd) | [登录节点类图](uml/登录节点类图.png) | [矢量图](uml/登录节点类图.svg) |
+| SchedulerServer | [源码](uml/SchedulerServer.mmd) | [负载调度服务器类图](uml/负载调度服务器类图.png) | [矢量图](uml/负载调度服务器类图.svg) |
+| SignalSession | [源码](uml/SignalSession.mmd) | [信令会话类图](uml/信令会话类图.png) | [矢量图](uml/信令会话类图.svg) |
+| LiveRoom | [源码](uml/LiveRoom.mmd) | [直播房间类图](uml/直播房间类图.png) | [矢量图](uml/直播房间类图.svg) |
+| SignalServer | [源码](uml/SignalServer.mmd) | [信令服务器类图](uml/信令服务器类图.png) | [矢量图](uml/信令服务器类图.svg) |
+
+## 独立服务端时序图
+
+| 对象/流程 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| timer-schedule | [源码](uml/timer-schedule.mmd) | [定时器调度时序图](uml/定时器调度时序图.png) | [矢量图](uml/定时器调度时序图.svg) |
+| timer-cancel | [源码](uml/timer-cancel.mmd) | [定时器取消时序图](uml/定时器取消时序图.png) | [矢量图](uml/定时器取消时序图.svg) |
+| http-server | [源码](uml/http-server.mmd) | [服务端请求处理时序图](uml/服务端请求处理时序图.png) | [矢量图](uml/服务端请求处理时序图.svg) |
+| login-service | [源码](uml/login-service.mmd) | [独立登录时序图](uml/独立登录时序图.png) | [矢量图](uml/独立登录时序图.svg) |
+| login-schedule | [源码](uml/login-schedule.mmd) | [登录节点调度时序图](uml/登录节点调度时序图.png) | [矢量图](uml/登录节点调度时序图.svg) |
+| signal-auth | [源码](uml/signal-auth.mmd) | [信令认证时序图](uml/信令认证时序图.png) | [矢量图](uml/信令认证时序图.svg) |
+| signal-room | [源码](uml/signal-room.mmd) | [信令房间管理时序图](uml/信令房间管理时序图.png) | [矢量图](uml/信令房间管理时序图.svg) |
+| signal-live | [源码](uml/signal-live.mmd) | [信令开播停播时序图](uml/信令开播停播时序图.png) | [矢量图](uml/信令开播停播时序图.svg) |
+| signal-cleanup | [源码](uml/signal-cleanup.mmd) | [信令心跳清理时序图](uml/信令心跳清理时序图.png) | [矢量图](uml/信令心跳清理时序图.svg) |
+| server-stop | [源码](uml/server-stop.mmd) | [服务器启停时序图](uml/服务器启停时序图.png) | [矢量图](uml/服务器启停时序图.svg) |

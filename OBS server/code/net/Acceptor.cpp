@@ -9,12 +9,15 @@
 #include <utility>
 
 namespace obs::net {
+// 监听 fd 由 Acceptor 独占。构造只 bind，start 才 listen 并注册事件，
+// 因而端口冲突等错误会在服务启动阶段暴露，不会藏到第一次连接之后。
 Acceptor::Acceptor(EventLoop &loop, const std::string &address, std::uint16_t port)
     : m_loop(loop), m_socket(::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0)) {
     loop.assertInLoopThread();
     if (m_socket.get() < 0)
         throw std::system_error(errno, std::generic_category(), "socket");
     const int reuse = 1;
+    // 允许进程重启后重新绑定地址；不启用 SO_REUSEPORT，避免意外启动多个监听者。
     if (::setsockopt(m_socket.get(), SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse)) < 0)
         throw std::system_error(errno, std::generic_category(), "SO_REUSEADDR");
     sockaddr_in local{};
@@ -43,6 +46,7 @@ void Acceptor::setErrorCallback(ErrorCallback cb) {
     m_errorCallback = std::move(cb);
 }
 void Acceptor::start() {
+    // Channel 不持有监听器。tie 让一次事件处理期间的 shared_ptr 保活监听器。
     m_loop.assertInLoopThread();
     if (::listen(m_socket.get(), SOMAXCONN) < 0)
         throw std::system_error(errno, std::generic_category(), "listen");
@@ -50,6 +54,7 @@ void Acceptor::start() {
     m_channel->enableReading();
 }
 void Acceptor::stop() {
+    // 先移除关注再关闭 fd，避免 epoll 的旧事件误命中系统刚复用的描述符。
     m_loop.assertInLoopThread();
     if (m_channel)
         m_channel->disableAll();
@@ -75,7 +80,7 @@ void Acceptor::handleRead() {
             continue;
         if (error != EAGAIN && error != EWOULDBLOCK) {
             // fd 耗尽等错误不能保持 LT 监听空转。暂停监听并交给上层恢复/停止。
-            // 上层可释放资源后 stop/start Server，后续有定时器时再加入退避恢复。
+            // 上层可释放资源后 stop/start Server；业务服务器当前选择报告并终止进程。
             m_channel->disableAll();
             const auto callback = m_errorCallback;
             if (callback)
