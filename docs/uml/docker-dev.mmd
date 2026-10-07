@@ -1,0 +1,28 @@
+sequenceDiagram
+actor U as 开发者
+participant D as Docker Compose
+participant C as OBS 容器
+participant S as SSH 服务
+participant V as VS Code
+U->>D: up -d --build
+D->>C: 构建 Ubuntu 开发镜像，创建容器
+D->>C: 本地 OBS server 挂载为 /workspace
+D->>C: 映射 SSH 及预留业务端口
+C->>C: 配置 root 密码，生成或复用 SSH 主机密钥
+C->>S: 校验配置并启动 sshd
+alt SSH 就绪
+D->>S: 健康检查连接 22 端口
+else 配置无效或进程未就绪
+D-->>U: 未健康，检查 compose logs
+end
+U->>V: Remote - SSH 连接 OBS
+V->>S: 连接本机 2222，root 身份验证
+alt 密码正确
+S-->>V: 允许会话及 TCP 转发
+V->>C: 安装或启动 VS Code Server，打开 /workspace
+U->>V: 编辑服务端文件
+V->>C: 修改挂载目录，Windows 同步可见
+else 密码错误
+S-->>V: 拒绝认证
+end
+Note over C: 目前仅 SSH 启动；登录、调度、信令和媒体端口预留

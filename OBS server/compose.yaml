@@ -1,0 +1,38 @@
+name: csn-obs
+services:
+  obs:
+    container_name: OBS
+    image: csn-obs-dev:24.04
+    build: .
+    user: root
+    init: true
+    restart: unless-stopped
+    working_dir: /workspace
+    environment:
+      OBS_ROOT_PASSWORD: ${OBS_ROOT_PASSWORD:?请先创建本地 .env 文件}
+    volumes:
+      # 相对路径以本 compose 文件为基准，指向 Windows 上的 OBS server。
+      - type: bind
+        source: .
+        target: /workspace
+      # 重建容器时保留 VS Code Server、用户配置和 SSH 主机身份。
+      - obs-root:/root
+      - obs-ssh-keys:/etc/ssh/keys
+    ports:
+      - "127.0.0.1:2222:22"     # SSH / VS Code Remote - SSH
+      - "127.0.0.1:8080:8080"   # 登录节点调度服务
+      - "127.0.0.1:8081:8081"   # 登录节点 1
+      - "127.0.0.1:8082:8082"   # 登录节点 2，验证调度
+      - "127.0.0.1:9000:9000"   # TCP JSON 信令服务
+      - "127.0.0.1:1935:1935"   # 预留 RTMP 媒体服务
+      - "127.0.0.1:1985:1985"   # 预留媒体服务 HTTP 管理 API
+      - "127.0.0.1:8088:8088"   # 预留点播文件、HLS / HTTP-FLV
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1',22),2).close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+volumes:
+  obs-root:
+  obs-ssh-keys:

@@ -27,6 +27,10 @@
 
 ## 时序图
 
+- [容器开发连接源码](uml/docker-dev.mmd) · [SVG](uml/容器开发连接时序图.svg)
+
+![容器开发连接](uml/容器开发连接时序图.png)
+
 - [本地开发认证源码](uml/local-auth.mmd) · [SVG](uml/本地认证时序图.svg)
 
 ![本地开发认证](uml/本地认证时序图.png)

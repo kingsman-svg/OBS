@@ -1,0 +1,6 @@
+Host OBS
+    HostName 127.0.0.1
+    Port 2222
+    User root
+    ServerAliveInterval 30
+    ServerAliveCountMax 3

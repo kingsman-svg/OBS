@@ -27,6 +27,7 @@ CSN 已实现首期 HTTP 登录客户端：简单 MVC 界面、异步 JSON 请�
 ```text
 CourseStudioNext/
 ├─ CSN/       应用源码、界面和 CMakeLists.txt（源码平铺）
+├─ OBS server/ Linux 服务端源码和 Docker 开发环境（挂载到 /workspace）
 ├─ tests/     行为测试
 ├─ docs/      需求、设计、接口和阶段记录
 │  └─ uml/   Mermaid 源码、中文命名的 SVG/PNG 图片
@@ -53,6 +54,7 @@ Qt Creator 继续打开 `CSN/CMakeLists.txt`。构建缓存由 CMake/Qt Creator 
 - [构建与验证](docs/build-and-test.md)
 - [第 001 步完成记录](docs/001-http-login.md)
 - [第 002 步：默认账号与主页](docs/002-root-home.md)
+- [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 
 ## 参考工程
 
