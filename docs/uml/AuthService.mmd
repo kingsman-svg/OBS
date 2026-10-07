@@ -1,0 +1,15 @@
+classDiagram
+class AuthService {
+  -string m_secret
+  -string m_passwordDigest
+  -int m_ttlSeconds
+  +AuthService(secret, password, ttlSeconds)
+  +checkPassword(account, password) bool
+  +issue(userId) string
+  +verify(token, userId, expiresAt) bool
+  +ttlSeconds() int
+  +randomId() string
+  +unixSeconds() int64_t
+  -sign(payload) string
+}
+AuthService ..> OpenSSL : HMAC and random

@@ -6,7 +6,7 @@ ARG UBUNTU_MIRROR=http://mirrors.ustc.edu.cn/ubuntu
 RUN sed -i -E "s#http://(archive|security).ubuntu.com/ubuntu/?#${UBUNTU_MIRROR}/#g" /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get update && apt-get install -y --no-install-recommends \
     openssh-server ca-certificates curl git build-essential cmake ninja-build \
-    gdb pkg-config python3 libssl-dev clang-format iproute2 \
+    gdb pkg-config python3 libssl-dev nlohmann-json3-dev clang-format iproute2 \
     && rm -rf /var/lib/apt/lists/*
 # GitHub CLI 用于浏览器授权及为 Git 配置凭据，不在工程中保存访问令牌。
 RUN apt-get update && apt-get install -y --no-install-recommends gh \

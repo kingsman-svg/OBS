@@ -1,0 +1,15 @@
+sequenceDiagram
+participant T as 调用线程
+participant L as EventLoop
+participant Q as TimerQueue
+T->>L: cancelTimer 句柄
+L->>Q: 原子设置取消标记
+Q->>L: 在归属线程清理并重设期限
+alt 插入任务尚未执行
+L->>Q: 插入任务检查标记后跳过
+else 已在到期批次中
+Q->>Q: 调用前检查标记并跳过
+else 回调已经开始
+Q->>Q: 当前回调完成后不再重复
+end
+Note over T,Q: 取消幂等，不中断正在执行的回调

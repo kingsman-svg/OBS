@@ -35,6 +35,6 @@
 - 已完成：新目录、需求初稿、技术栈初查、路线初稿；明确单工程逐步推进和 Git 管理方式。
 - 已实现：CSN 的 HttpClient、LoginModel、MainWindow（View）、LoginController，以及各类/流程的 UML。
 - 已实现：本地开发 HTTP 服务、root / root 默认账号、登录后媒体工作台和退出返回。
-- 已实现：OBS Linux 开发容器；code/net 中的 8 个公共网络类、4 个流程时序图和 11 组行为检查，普通 Debug 与 ASan/UBSan 验证通过。
-- 当前服务端顺序：公共网络基础 → 定时器/协议层 → 独立 HTTP 登录 → 登录节点调度 → TCP 信令；UI 随业务增加点播/直播切换，然后继续采集与推拉流。
-- 暂未完成：真实认证服务、完整账号系统、音视频/GPU 接入、AI 部署或 Agent 实现。
+- 已实现：OBS Linux 开发容器；公共 Reactor 网络库与 timerfd 定时器；HTTP/信令协议层；独立开发登录、健康节点轮询调度和 TCP 信令服务器。各类/流程 UML、普通 Debug 与 ASan/UBSan 验证同步完成，详见 [服务端说明](server-services.md)。
+- 下一步：Qt MVC 接入节点调度与独立登录、信令会话；UI 增加点播/直播切换，然后继续采集、媒体服务部署和推拉流。
+- 暂未完成：生产账号数据库与令牌撤销、真实媒体服务、音视频/GPU 接入、AI 部署或 Agent 实现。

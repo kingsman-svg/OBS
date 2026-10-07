@@ -1,0 +1,21 @@
+sequenceDiagram
+participant C as 客户端
+participant S as SchedulerServer
+participant P as HttpProbe
+participant L as 登录节点
+S->>P: 启动及每两秒发起探测
+P->>L: 非阻塞GET health
+alt 200且登录服务就绪
+L-->>P: 健康JSON
+P-->>S: 标记健康
+else 拒绝连接或800ms超时
+P-->>S: 标记不可用
+end
+C->>S: GET login/server
+alt 存在健康节点
+S->>S: 健康节点轮询
+S-->>C: nodeId与public loginUrl
+C->>L: 直接POST auth/login
+else 全部不可用
+S-->>C: 503 NO_LOGIN_NODE
+end

@@ -1,0 +1,24 @@
+classDiagram
+class HttpProbe {
+  -EventLoop m_loop
+  -string m_address
+  -uint16_t m_port
+  -Callback m_callback
+  -UniqueFd m_socket
+  -shared_ptr m_channel
+  -TimerId m_timeout
+  -string m_output
+  -string m_input
+  -size_t m_written
+  -bool m_finished
+  +HttpProbe(loop, address, port, callback)
+  +~HttpProbe()
+  +start() void
+  +stop() void
+  -write() void
+  -read() void
+  -finish(healthy) void
+}
+HttpProbe *-- UniqueFd : nonblocking socket
+HttpProbe *-- Channel : connect and IO
+HttpProbe --> EventLoop : 800ms timeout

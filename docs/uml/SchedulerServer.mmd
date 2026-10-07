@@ -1,0 +1,16 @@
+classDiagram
+class SchedulerServer {
+  -EventLoop m_loop
+  -HttpServer m_http
+  -vector m_nodes
+  -TimerId m_probeTimer
+  -size_t m_next
+  +SchedulerServer(loop, address, port, nodes)
+  +~SchedulerServer()
+  +start() void
+  -probeNodes() void
+  -handle(request) HttpResponse
+}
+SchedulerServer *-- HttpServer : address discovery
+SchedulerServer *-- LoginNode : health and round robin
+SchedulerServer --> EventLoop : periodic probe

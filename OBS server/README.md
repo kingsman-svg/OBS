@@ -56,16 +56,16 @@ GitHub 地址确认后配置 origin；已有 origin 时先查看 `git remote -v`
 | 用途 | Windows 本机端口 | 容器端口 | 当前状态 |
 | --- | --- | --- | --- |
 | SSH / VS Code | 2222 | 22 | 容器启动时运行 |
-| 登录节点调度 | 8080 | 8080 | 预留 |
-| HTTP 登录节点 1 | 8081 | 8081 | 预留 |
-| HTTP 登录节点 2 | 8082 | 8082 | 预留 |
-| TCP JSON 信令 | 9000 | 9000 | 预留 |
+| 登录节点调度 | 8080 | 8080 | code/run_services.py 启动 |
+| HTTP 登录节点 1 | 8081 | 8081 | 同上 |
+| HTTP 登录节点 2 | 8082 | 8082 | 同上 |
+| TCP JSON 信令 | 9000 | 9000 | 同上 |
 | RTMP | 1935 | 1935 | 预留，媒体服务后续部署 |
 | 媒体管理 API | 1985 | 1985 | 预留 |
 | 点播 / HLS / HTTP-FLV | 8088 | 8088 | 预留 |
 
 所有宿主端口绑定 `127.0.0.1`；Windows 客户端使用该地址。后续容器内业务进程须监听 `0.0.0.0` 对应端口，才能从宿主机访问。
-映射不代表业务已经实现，目前只启动 SSH；媒体服务选型和部署另一步完成。若媒体服务独立部署到其他容器，需调整这几个预留映射，避免重复占用宿主端口。
+容器入口自动启动 SSH；业务服务另用开发启动器启动，见 [完整说明](../docs/server-services.md)。媒体服务选型和部署另一步完成。若媒体服务独立部署到其他容器，需调整这几个预留映射，避免重复占用宿主端口。
 
 ## 启停与重建
 
@@ -93,12 +93,21 @@ $env:PATH = "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin;$env:PATH"
 
 ## 工具与后续工作
 
-Ubuntu 24.04，提供 GCC/G++、CMake、Ninja、GDB、Git、Python3、OpenSSL 开发头文件和 clang-format。
-已在 [code](code/README.md) 实现第一步公共网络库 `obs_net`：单 Reactor、TCP 接入、非阻塞收发、任务唤醒和资源清理。下一步补定时器和协议层，再迁移登录服务、增加调度和信令。
+Ubuntu 24.04，提供 GCC/G++、CMake、Ninja、GDB、Git、Python3、OpenSSL、nlohmann JSON 开发头文件和 clang-format。
+已在 [code](code/README.md) 实现公共网络库、定时器、协议层及三个业务服务器。远程终端中完成构建后：
+
+```bash
+cd /workspace/code
+python3 run_services.py start
+python3 run_services.py status
+python3 run_services.py stop
+```
+
+启动器创建两个登录节点、一个调度进程和一个信令进程。构建、协议与功能边界见 [服务端说明](../docs/server-services.md)。
 
 ## 当前验证结果
 
 2026-10-07：OBS 已运行且健康检查通过。已验证 root 密码 SSH 认证、Windows 2222 端口的 SSH 握手、挂载目录写入同步、C++17 编译及 epoll 调用，全部端口映射与上表一致。
-Remote - SSH 插件由用户安装，VS Code 首次连接和 VS Code Server 下载尚未验证。
+Remote - SSH 插件由用户安装，用户已确认连接成功。定时器与三个业务服务器的最新构建、测试及 Windows 端口链路验证见 [服务端记录](../docs/server-services.md#验证)。
 
 参考：[Docker 目录挂载](https://docs.docker.com/engine/storage/bind-mounts/)、[端口映射](https://docs.docker.com/engine/network/port-publishing/)、[VS Code Remote - SSH](https://code.visualstudio.com/docs/remote/ssh)。

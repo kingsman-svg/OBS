@@ -8,12 +8,16 @@ class EventLoop {
   -bool m_running
   -mutex m_mutex
   -vector m_pending
+  -unique_ptr m_timers
   +EventLoop()
   +~EventLoop()
   +loop() void
   +quit() void
   +runInLoop(task) void
   +queueInLoop(task) void
+  +runAfter(delay, task) TimerId
+  +runEvery(interval, task) TimerId
+  +cancelTimer(id) void
   +isInLoopThread() bool
   +assertInLoopThread() void
   +updateChannel(channel) void
@@ -25,3 +29,4 @@ class EventLoop {
 EventLoop *-- Poller : epoll driver
 EventLoop *-- UniqueFd : eventfd
 EventLoop *-- Channel : wakeup subscription
+EventLoop *-- TimerQueue : monotonic timers

@@ -1,0 +1,11 @@
+classDiagram
+class SignalSession {
+  +weak_ptr connection
+  +string userId
+  +string roomId
+  +int64_t expiresAt
+  +time_point lastSeen
+  +time_point rateWindow
+  +unsigned_int requests
+}
+SignalSession --> TcpConnection : weak ownership

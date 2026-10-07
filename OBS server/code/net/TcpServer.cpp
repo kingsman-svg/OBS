@@ -4,6 +4,7 @@
 #include <utility>
 
 namespace obs::net {
+// Server 是活跃连接的主要所有者。业务只需要配置回调，无需手动 accept/close。
 TcpServer::TcpServer(EventLoop &loop, std::string address, std::uint16_t port)
     : m_loop(loop), m_address(std::move(address)), m_port(port) {
     loop.assertInLoopThread();
@@ -36,6 +37,7 @@ std::size_t TcpServer::connectionCount() const {
     return m_connections.size();
 }
 void TcpServer::start() {
+    // 先在局部对象上完成初始化，成功后才发布 m_acceptor，失败时 RAII 自动回滚。
     m_loop.assertInLoopThread();
     if (m_acceptor)
         return;
@@ -51,6 +53,7 @@ void TcpServer::start() {
     m_acceptor = std::move(acceptor);
 }
 void TcpServer::onAccept(UniqueFd socket) {
+    // 使用独立递增 id，而非 fd 作为 map 键，关闭回调只删除属于自己的连接记录。
     const auto id = m_nextId++;
     auto connection = std::make_shared<TcpConnection>(m_loop, std::move(socket));
     connection->setMessageCallback(m_messageCallback);
@@ -75,6 +78,7 @@ void TcpServer::onAccept(UniqueFd socket) {
         callback(connection);
 }
 void TcpServer::stop() {
+    // 整体移出连接集合后再逐一关闭，避免释放过程中修改正在遍历的 map。
     m_loop.assertInLoopThread();
     if (m_acceptor)
         m_acceptor->stop();

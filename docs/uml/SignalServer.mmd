@@ -1,0 +1,28 @@
+classDiagram
+class SignalServer {
+  -EventLoop m_loop
+  -TcpServer m_server
+  -AuthService m_auth
+  -string m_rtmpBase
+  -string m_playbackBase
+  -int m_idleSeconds
+  -int m_authSeconds
+  -TimerId m_sweepTimer
+  -unordered_map m_sessions
+  -map m_rooms
+  +SignalServer(loop, address, port, auth, mediaURLs)
+  +~SignalServer()
+  +start() void
+  -receive(connection, input) void
+  -handle(connection, request) Json
+  -send(connection, message) void
+  -broadcast(room, message) void
+  -leave(connection) void
+  -sweep() void
+  -roomData(room) Json
+}
+SignalServer *-- TcpServer : TCP transport
+SignalServer *-- SignalSession : auth and heartbeat
+SignalServer *-- LiveRoom : broadcast state
+SignalServer --> AuthService : token validation
+SignalServer ..> FrameCodec : JSON frames

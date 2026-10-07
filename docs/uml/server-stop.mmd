@@ -1,0 +1,16 @@
+sequenceDiagram
+participant U as 操作用户
+participant P as 开发启动器
+participant S as 业务进程
+participant L as EventLoop
+U->>P: start
+P->>P: 加载持久化签名密钥
+P->>S: 启动两个登录及调度和信令进程
+S-->>P: 就绪检查通过
+U->>P: stop或Ctrl+C
+P->>S: SIGTERM
+S->>L: signalfd事件请求quit
+L-->>S: 退出循环
+S->>S: 取消定时器并停止连接
+S-->>P: 正常退出
+Note over P,S: 任一子进程异常退出会停止整个开发组

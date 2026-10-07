@@ -1,0 +1,15 @@
+sequenceDiagram
+participant H as 主播
+participant S as SignalServer
+participant V as 观众
+V->>S: live.start 或 live.stop
+S-->>V: FORBIDDEN
+H->>S: live.start
+S->>S: 更新房间开播状态
+S-->>V: live.changed事件
+S-->>H: 推流地址与成功响应
+Note over H,V: 媒体由后续部署的媒体服务器转发
+H->>S: live.stop
+S->>S: 更新房间停播状态
+S-->>V: live.changed事件
+S-->>H: 成功响应

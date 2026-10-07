@@ -1,0 +1,8 @@
+classDiagram
+class HttpRequest {
+  +string method
+  +string target
+  +string body
+  +map headers
+}
+HttpParser ..> HttpRequest : validated output

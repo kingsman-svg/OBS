@@ -1,0 +1,10 @@
+classDiagram
+class LiveRoom {
+  +string id
+  +string title
+  +string streamKey
+  +TcpConnection owner
+  +set members
+  +bool streaming
+}
+LiveRoom --> SignalSession : membership via connection
