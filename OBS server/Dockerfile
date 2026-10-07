@@ -8,6 +8,9 @@ RUN sed -i -E "s#http://(archive|security).ubuntu.com/ubuntu/?#${UBUNTU_MIRROR}/
     openssh-server ca-certificates curl git build-essential cmake ninja-build \
     gdb pkg-config python3 libssl-dev clang-format iproute2 \
     && rm -rf /var/lib/apt/lists/*
+# GitHub CLI 用于浏览器授权及为 Git 配置凭据，不在工程中保存访问令牌。
+RUN apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
 COPY sshd_config /etc/ssh/sshd_config
 COPY start.sh /usr/local/bin/obs-start
 # Windows 文件系统上的脚本可能带 CRLF，镜像内统一为 LF。

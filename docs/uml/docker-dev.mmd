@@ -7,6 +7,7 @@ participant V as VS Code
 U->>D: up -d --build
 D->>C: 构建 Ubuntu 开发镜像，创建容器
 D->>C: 本地 OBS server 挂载为 /workspace
+D->>C: 完整仓库及 .git 挂载为 /repo
 D->>C: 映射 SSH 及预留业务端口
 C->>C: 配置 root 密码，生成或复用 SSH 主机密钥
 C->>S: 校验配置并启动 sshd
@@ -19,7 +20,8 @@ U->>V: Remote - SSH 连接 OBS
 V->>S: 连接本机 2222，root 身份验证
 alt 密码正确
 S-->>V: 允许会话及 TCP 转发
-V->>C: 安装或启动 VS Code Server，打开 /workspace
+V->>C: 安装或启动 VS Code Server，打开 /repo
+V->>C: git log / status 查看完整仓库
 U->>V: 编辑服务端文件
 V->>C: 修改挂载目录，Windows 同步可见
 else 密码错误
