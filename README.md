@@ -16,7 +16,7 @@
 
 CSN 已实现首期 HTTP 登录客户端：简单 MVC 界面、异步 JSON 请求、超时与取消、响应校验、内存会话和本地退出。每个类和完成的流程均提供 UML。
 
-现在可直接登录：Qt Creator 打开 `CSN/CMakeLists.txt`，重新构建并运行 CSN，账号 `root`，密码 `root`。应用自动启动本地开发 HTTP 登录服务并填入接口地址，无需另外启动服务器。成功进入媒体工作台，退出返回登录页。
+现在可直接登录：Qt Creator 打开 `OBS client/CMakeLists.txt`，重新构建并运行 CSN，账号 `root`，密码 `root`。应用自动启动本地开发 HTTP 登录服务并填入接口地址，无需另外启动服务器。成功进入媒体工作台，退出返回登录页。
 
 本地服务仅监听 127.0.0.1 随机端口，默认账号用于开发。生产认证、账号数据库、受保护 API 和服务端会话撤销尚未实现。当前不增加云助教相关功能。
 
@@ -26,7 +26,7 @@ CSN 已实现首期 HTTP 登录客户端：简单 MVC 界面、异步 JSON 请�
 
 ```text
 CourseStudioNext/
-├─ CSN/       应用源码、界面和 CMakeLists.txt（源码平铺）
+├─ OBS client/       应用源码、界面和 CMakeLists.txt（源码平铺）
 ├─ OBS server/ Linux 服务端源码和 Docker 开发环境（挂载到 /workspace）
 ├─ tests/     行为测试
 ├─ docs/      需求、设计、接口和阶段记录
@@ -35,7 +35,7 @@ CourseStudioNext/
 └─ out/       自动生成的中文页面截图（Git 忽略）
 ```
 
-Qt Creator 继续打开 `CSN/CMakeLists.txt`。构建缓存由 CMake/Qt Creator 自动生成，不放入 Git。
+Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt Creator 自动生成，不放入 Git。
 
 - 所有功能在本工程逐步实现，既有 Demo 用作参考。
 - 每次只推进一个明确的小步骤：说明设计、实现、运行验证、记录结果。

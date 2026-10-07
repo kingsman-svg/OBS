@@ -1,6 +1,6 @@
 # CourseStudioNext 工作约定
 
-- 在 `CSN/` 这个应用工程内逐步推进，使用 Git 记录完成并验证的小步骤。
+- 在 `OBS client/` 这个应用工程内逐步推进，使用 Git 记录完成并验证的小步骤。
 - 当前优先实现网络与登录；界面采用简单 MVC。
 - 首期登录重新设计 HTTP JSON 接口，不沿用 yzj 的 TCP 登录协议。
 - View 负责输入与展示，Controller 编排流程，Model 保存业务状态。网络类负责通信，协议类负责封包和解析。
@@ -8,13 +8,13 @@
 - 原有 AI 部署与 Agent 需求继续保留为后续阶段，具体媒体应用场景待定。
 - 每新增或修改一个手写 C++ 类，同步维护 `docs/uml/` 中该类的 UML 类图。
 - 每完成或修改一个业务/网络流程，同步维护 `docs/uml/` 中对应 UML 时序图，包含本步覆盖的重要失败分支。
-- 保持简单分级：应用源码集中在 `CSN/`，测试放 `tests/`，说明放 `docs/`，图示放 `docs/uml/`，工具放 `scripts/`；不为空模块预建目录。
+- 保持简单分级：应用源码集中在 `OBS client/`，测试放 `tests/`，说明放 `docs/`，图示放 `docs/uml/`，工具放 `scripts/`；不为空模块预建目录。
 - 所有项目图片（包括 SVG、PNG 和生成截图）使用中文文件名；修改名称时同步文档和生成脚本。
 - UML 使用 Mermaid 源码，并提供 SVG/PNG 图像；代码、图与说明应对应当前实现。
 - 逐类、逐流程增量实现；避免为未来需求预先建立大量抽象或界面。
 - 网络采用异步 API；不得在 GUI 线程调用阻塞等待网络的 API。
 - 每步完成后执行适当的构建和行为验证，记录实际结果；未验证能力明确标注。
 - 不打印密码、认证数据包或令牌。
-- Linux 服务端源码和 Docker 配置集中在 `OBS server/`，容器名 `OBS`，工作目录 `/workspace`；保持简单分级。客户端继续使用 `CSN/`。
+- Linux 服务端源码和 Docker 配置集中在 `OBS server/`，容器名 `OBS`，工作目录 `/workspace`；保持简单分级。客户端继续使用 `OBS client/`。
 - 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。
 - 容器 `/repo` 挂载完整 CourseStudioNext 仓库，用于 Git 和全工程浏览；`/workspace` 保留服务端目录别名和原构建路径。两者为同一份本地文件。

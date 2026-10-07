@@ -8,7 +8,7 @@ import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--qt-root', default=os.environ.get('CSN_QT_ROOT', 'C:/software/Qt/6.11.2/msvc2022_64'))
-parser.add_argument('--build-dir', default='CSN/build-agent')
+parser.add_argument('--build-dir', default='OBS client/build-agent')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 qt = Path(args.qt_root).resolve()
