@@ -1,0 +1,27 @@
+sequenceDiagram
+participant P as TCP 对端
+participant E as EventLoop / Channel
+participant C as TcpConnection
+participant B as 业务解析器
+P->>E: TCP 数据可读
+E->>C: handleRead()，recv 非阻塞读取
+C->>C: input Buffer 累积字节
+alt 输入超过 8 MiB 或 recv 错误
+C->>C: handleClose() 移除订阅并关闭 fd
+else 已收到合法数量的字节
+C->>B: messageCallback(conn, input)
+B->>B: 不完整保留；完整消息消费，可连续解析
+B->>C: send(response)，复制数据
+end
+Note over C: 下方为 send 的处理分支；已断开的连接忽略发送
+alt 直接写完成
+C-->>P: send(MSG_NOSIGNAL)
+else 部分写或 EAGAIN
+C->>C: 剩余字节存入 output Buffer
+C->>E: 订阅 EPOLLOUT
+E->>C: handleWrite()，分轮排空
+C-->>P: 剩余响应
+C->>E: 缓冲排空，取消 EPOLLOUT
+else 输出超限或发送错误
+C->>C: handleClose()，通知 Server 移除连接
+end

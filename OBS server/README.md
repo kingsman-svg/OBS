@@ -59,8 +59,8 @@ $env:PATH = "$env:LOCALAPPDATA\Programs\DockerDesktop\resources\bin;$env:PATH"
 
 ## 工具与后续工作
 
-Ubuntu 24.04，提供 GCC/G++、CMake、Ninja、GDB、Git、Python3、OpenSSL 开发头文件和 clang-format。业务代码尚未开始，不迁入 Qt 依赖。
-下一步在本目录分步骤实现 Linux Reactor 网络库，再迁移登录服务、增加调度和信令。
+Ubuntu 24.04，提供 GCC/G++、CMake、Ninja、GDB、Git、Python3、OpenSSL 开发头文件和 clang-format。
+已在 [code](code/README.md) 实现第一步公共网络库 `obs_net`：单 Reactor、TCP 接入、非阻塞收发、任务唤醒和资源清理。下一步补定时器和协议层，再迁移登录服务、增加调度和信令。
 
 ## 当前验证结果
 

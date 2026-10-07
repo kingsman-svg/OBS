@@ -1,0 +1,20 @@
+sequenceDiagram
+participant B as 业务服务
+participant S as TcpServer
+participant A as Acceptor
+participant E as EventLoop / Poller
+participant C as TcpConnection
+B->>S: start()
+S->>A: 创建监听 fd，bind / listen
+alt 绑定或监听失败
+A-->>B: system_error，UniqueFd 自动清理
+else 监听成功
+A->>E: 注册监听 Channel 的 EPOLLIN
+E->>A: accept4() 处理可读事件
+A->>S: 转移 accepted UniqueFd
+S->>C: 创建连接，配置回调
+C->>E: tie 连接生命期并注册读取
+S->>S: 将 shared_ptr 加入连接集合
+S-->>B: connectionCallback(conn)
+end
+Note over A: 单轮最多接入 64 个；EAGAIN 返回；其他错误暂停监听并通知 ErrorCallback

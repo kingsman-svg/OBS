@@ -5,6 +5,19 @@
 
 ## 类图
 
+公共网络库类图：
+
+| 类 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| UniqueFd | [源码](uml/UniqueFd.mmd) | [文件描述符管理类图](uml/文件描述符管理类图.png) | [矢量图](uml/文件描述符管理类图.svg) |
+| Buffer | [源码](uml/Buffer.mmd) | [字节缓冲类图](uml/字节缓冲类图.png) | [矢量图](uml/字节缓冲类图.svg) |
+| Channel | [源码](uml/Channel.mmd) | [事件通道类图](uml/事件通道类图.png) | [矢量图](uml/事件通道类图.svg) |
+| Poller | [源码](uml/Poller.mmd) | [事件轮询类图](uml/事件轮询类图.png) | [矢量图](uml/事件轮询类图.svg) |
+| EventLoop | [源码](uml/EventLoop.mmd) | [事件循环类图](uml/事件循环类图.png) | [矢量图](uml/事件循环类图.svg) |
+| Acceptor | [源码](uml/Acceptor.mmd) | [连接接收器类图](uml/连接接收器类图.png) | [矢量图](uml/连接接收器类图.svg) |
+| TcpConnection | [源码](uml/TcpConnection.mmd) | [连接管理类图](uml/连接管理类图.png) | [矢量图](uml/连接管理类图.svg) |
+| TcpServer | [源码](uml/TcpServer.mmd) | [服务入口类图](uml/服务入口类图.png) | [矢量图](uml/服务入口类图.svg) |
+
 - [HttpClient 源码](uml/HttpClient.mmd) · [SVG](uml/网络请求类图.svg)
 
 ![HttpClient](uml/网络请求类图.png)
@@ -26,6 +39,15 @@
 ![LocalAuthServer](uml/本地认证服务类图.png)
 
 ## 时序图
+
+公共网络库时序图：
+
+| 流程 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| 接入 | [源码](uml/tcp-accept.mmd) | [连接接入时序图](uml/连接接入时序图.png) | [矢量图](uml/连接接入时序图.svg) |
+| 收发 | [源码](uml/tcp-io.mmd) | [数据收发时序图](uml/数据收发时序图.png) | [矢量图](uml/数据收发时序图.svg) |
+| 关闭 | [源码](uml/tcp-close.mmd) | [连接关闭时序图](uml/连接关闭时序图.png) | [矢量图](uml/连接关闭时序图.svg) |
+| 任务 | [源码](uml/reactor-task.mmd) | [跨线程任务时序图](uml/跨线程任务时序图.png) | [矢量图](uml/跨线程任务时序图.svg) |
 
 - [容器开发连接源码](uml/docker-dev.mmd) · [SVG](uml/容器开发连接时序图.svg)
 

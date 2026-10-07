@@ -1,0 +1,32 @@
+classDiagram
+class TcpConnection {
+  -EventLoop m_loop
+  -UniqueFd m_socket
+  -shared_ptr m_channel
+  -State m_state
+  -Buffer m_input
+  -Buffer m_output
+  -bool m_peerEof
+  -MessageCallback m_messageCallback
+  -CloseCallback m_closeCallback
+  +TcpConnection(loop, socket)
+  +~TcpConnection()
+  +setMessageCallback(callback) void
+  +setCloseCallback(callback) void
+  +establish() void
+  +send(bytes) void
+  +shutdown() void
+  +forceClose() void
+  +state() State
+  +loop() EventLoop
+  +pendingBytes() size_t
+  -sendInLoop(bytes) void
+  -shutdownInLoop() void
+  -handleRead() void
+  -handleWrite() void
+  -handleClose(reason) void
+}
+TcpConnection --> EventLoop : borrowed loop
+TcpConnection *-- UniqueFd : connected fd
+TcpConnection *-- Channel : tied subscription
+TcpConnection *-- Buffer : input and output

@@ -55,6 +55,7 @@ Qt Creator 继续打开 `CSN/CMakeLists.txt`。构建缓存由 CMake/Qt Creator 
 - [第 001 步完成记录](docs/001-http-login.md)
 - [第 002 步：默认账号与主页](docs/002-root-home.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
+- [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 
 ## 参考工程
 

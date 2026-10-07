@@ -16,3 +16,4 @@
 - 每步完成后执行适当的构建和行为验证，记录实际结果；未验证能力明确标注。
 - 不打印密码、认证数据包或令牌。
 - Linux 服务端源码和 Docker 配置集中在 `OBS server/`，容器名 `OBS`，工作目录 `/workspace`；保持简单分级。客户端继续使用 `CSN/`。
+- 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。

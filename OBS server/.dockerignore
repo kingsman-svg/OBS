@@ -1,6 +1,8 @@
 .env
 .git
 build
+**/build
+**/build-*
 out
 *.log
 *.code-workspace

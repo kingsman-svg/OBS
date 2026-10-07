@@ -1,0 +1,11 @@
+classDiagram
+class Buffer {
+  +size_t MaxBytes$
+  -string m_data
+  -size_t m_readIndex
+  +readableBytes() size_t
+  +view() string_view
+  +append(bytes) void
+  +retrieve(count) void
+  +retrieveAll() void
+}
