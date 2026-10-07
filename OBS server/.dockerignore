@@ -1,0 +1,8 @@
+.env
+.git
+build
+out
+*.log
+*.code-workspace
+README.md
+ssh_config

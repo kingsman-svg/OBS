@@ -17,6 +17,7 @@ IMAGE_NAMES = {
     'http-request': '网络请求时序图', 'login': '登录时序图',
     'cancel-login': '取消登录时序图', 'logout': '退出登录时序图',
     'local-auth': '本地认证时序图',
+    'docker-dev': '容器开发连接时序图',
 }
 FONT = Path('C:/Windows/Fonts/msyh.ttc')
 NS = 'http://www.w3.org/2000/svg'

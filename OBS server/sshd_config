@@ -1,0 +1,16 @@
+# 仅用于本机 Docker 开发环境；宿主机 SSH 映射为 127.0.0.1:2222。
+Port 22
+ListenAddress 0.0.0.0
+HostKey /etc/ssh/keys/ssh_host_ed25519_key
+PermitRootLogin yes
+PasswordAuthentication yes
+PermitEmptyPasswords no
+PubkeyAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM yes
+AllowUsers root
+# VS Code Remote - SSH 需要通过 SSH 隧道连接容器内的 VS Code Server。
+AllowTcpForwarding yes
+X11Forwarding no
+PrintMotd no
+Subsystem sftp internal-sftp

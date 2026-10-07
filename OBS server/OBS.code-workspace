@@ -1,0 +1,11 @@
+{
+    "folders": [
+        { "name": "OBS server", "uri": "vscode-remote://ssh-remote+OBS/workspace" }
+    ],
+    "settings": {
+        "files.eol": "\n"
+    },
+    "extensions": {
+        "recommendations": ["ms-vscode.cpptools", "ms-vscode.cmake-tools"]
+    }
+}
