@@ -18,7 +18,7 @@ environment['PATH'] = str(qt / 'bin') + os.pathsep + environment.get('PATH', '')
 environment['QT_PLUGIN_PATH'] = str(qt / 'plugins')
 environment['QT_QPA_PLATFORM'] = 'offscreen'
 (root / 'out').mkdir(exist_ok=True)
-environment['CSN_SCREENSHOT_PATH'] = str(root / 'out' / 'login-ui.png')
+environment['CSN_SCREENSHOT_PATH'] = str(root / 'out' / '登录页面.png')
 if os.name == 'nt':
     ctypes.WinDLL('kernel32').SetErrorMode(0x8003)
 ctest = shutil.which('ctest')

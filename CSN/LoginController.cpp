@@ -1,7 +1,7 @@
 #include "LoginController.h"
 #include "LoginModel.h"
 #include "mainwindow.h"
-#include "network/HttpClient.h"
+#include "HttpClient.h"
 #include <cmath>
 #include <limits>
 namespace csn {

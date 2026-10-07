@@ -7,15 +7,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
-add_library(CSNNetwork STATIC network/HttpClient.cpp network/HttpClient.h
-    server/LocalAuthServer.cpp server/LocalAuthServer.h)
+add_library(CSNNetwork STATIC HttpClient.cpp HttpClient.h
+    LocalAuthServer.cpp LocalAuthServer.h)
 target_include_directories(CSNNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(CSNNetwork PUBLIC Qt6::Network)
 
 add_library(CSNLogin STATIC
     mainwindow.cpp mainwindow.h mainwindow.ui
-    login/LoginModel.cpp login/LoginModel.h
-    login/LoginController.cpp login/LoginController.h
+    LoginModel.cpp LoginModel.h
+    LoginController.cpp LoginController.h
 )
 target_include_directories(CSNLogin PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(CSNLogin PUBLIC Qt6::Widgets CSNNetwork)
@@ -26,7 +26,7 @@ set_target_properties(CSN PROPERTIES WIN32_EXECUTABLE TRUE)
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
-    add_executable(CSNLoginTests tests/login/LoginTests.cpp)
+    add_executable(CSNLoginTests ../tests/LoginTests.cpp)
     target_link_libraries(CSNLoginTests PRIVATE CSNLogin Qt6::Test)
     add_test(NAME login.http_mvc COMMAND CSNLoginTests)
     set_tests_properties(login.http_mvc PROPERTIES TIMEOUT 20)

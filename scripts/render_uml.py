@@ -10,6 +10,14 @@ import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
+IMAGE_NAMES = {
+    'HttpClient': '网络请求类图', 'LoginModel': '登录模型类图',
+    'MainWindow': '主窗口类图', 'LoginController': '登录控制器类图',
+    'LocalAuthServer': '本地认证服务类图',
+    'http-request': '网络请求时序图', 'login': '登录时序图',
+    'cancel-login': '取消登录时序图', 'logout': '退出登录时序图',
+    'local-auth': '本地认证时序图',
+}
 FONT = Path('C:/Windows/Fonts/msyh.ttc')
 NS = 'http://www.w3.org/2000/svg'
 ET.register_namespace('', NS)
@@ -62,6 +70,7 @@ def arrow(c, x1, y1, x2, y2, dashed=False, inheritance=False):
         line(c, *p[0], *p[1]); line(c, *p[0], *p[2])
 
 def save(c, path):
+    path = path.with_name(IMAGE_NAMES[path.stem])
     ET.ElementTree(c['svg']).write(path.with_suffix('.svg'), encoding='utf-8', xml_declaration=True)
     c['image'].save(path.with_suffix('.png'))
 
@@ -112,7 +121,7 @@ def render_sequence(path):
     width = max(1100, len(participants)*260)
     height = 210 + len(events)*57
     c = canvas(width, height)
-    text(c, 35, 20, f'{path.stem} · UML 时序图', 26)
+    text(c, 35, 20, IMAGE_NAMES[path.stem], 26)
     xs = {}
     for i, (key, label) in enumerate(participants):
         x = (i+0.5)*width/len(participants); xs[key] = x
@@ -159,8 +168,9 @@ def render_sequence(path):
         y += 57
     save(c, path)
 
-class_sources = sorted((ROOT/'classes').glob('*.mmd'))
-sequence_sources = sorted((ROOT/'sequences').glob('*.mmd'))
+sources = sorted(ROOT.glob('*.mmd'))
+class_sources = [p for p in sources if p.read_text(encoding='utf-8').startswith('classDiagram')]
+sequence_sources = [p for p in sources if p.read_text(encoding='utf-8').startswith('sequenceDiagram')]
 for source in class_sources: render_class(source)
 for source in sequence_sources: render_sequence(source)
 print(f'Rendered {len(class_sources)} class diagrams and {len(sequence_sources)} sequence diagrams (SVG + PNG).')
