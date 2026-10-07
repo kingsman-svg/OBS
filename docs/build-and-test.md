@@ -2,8 +2,8 @@
 
 ## Qt Creator
 
-打开 `CSN/CMakeLists.txt`，选择 Qt 6 + MSVC 64 位 Kit，构建并运行 `CSN`。
-本机实际使用 Qt 6.11.2、MSVC 2022 和 C++17。保留了用户原有 Qt Creator 构建目录，命令行验证使用 `CSN/build-agent`。
+打开 `OBS client/CMakeLists.txt`，选择 Qt 6 + MSVC 64 位 Kit，构建并运行 `CSN`。
+本机实际使用 Qt 6.11.2、MSVC 2022 和 C++17。保留了用户原有 Qt Creator 构建目录，命令行验证使用 `OBS client/build-agent`。
 应用自动启动本地开发服务并填写 `/auth/login` 地址，账号 root、密码 root；无需单独启动服务。外接服务遵循 [接口契约](auth-login.md)。
 
 ## 命令行构建
@@ -11,11 +11,11 @@
 在已初始化 MSVC 编译环境的 Developer PowerShell 中执行：
 
 ```powershell
-cmake -S CSN -B CSN/build-agent -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=C:/software/Qt/6.11.2/msvc2022_64 -DCMAKE_MAKE_PROGRAM=C:/software/Qt/Tools/Ninja/ninja.exe
-cmake --build CSN/build-agent --parallel 4
+cmake -S "OBS client" -B "OBS client/build-agent" -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=C:/software/Qt/6.11.2/msvc2022_64 -DCMAKE_MAKE_PROGRAM=C:/software/Qt/Tools/Ninja/ninja.exe
+cmake --build "OBS client/build-agent" --parallel 4
 ```
 
-根据本机安装位置调整 Qt 和 Ninja 路径。`BUILD_TESTING=OFF` 可关闭测试目标，但正常开发建议保留。
+客户端目录改名后，Qt Creator 请重新打开上述 CMakeLists.txt 并重新配置构建目录；旧 CMake 缓存仍可能引用原路径。根据本机安装位置调整 Qt 和 Ninja 路径。`BUILD_TESTING=OFF` 可关闭测试目标，但正常开发建议保留。
 
 ## 行为验证
 
@@ -34,7 +34,7 @@ python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 - 点击界面按钮完成 MVC 登录与本地退出，密码输入清空、会话与按钮状态更新。
 - 无效会话响应不能登录成功，以及取消后的状态恢复。
 
-界面截图保存到 `out/登录页面.png` 和 `out/主页页面.png`，构建产物和临时文件均被 Git 忽略。命令行验证目录 `CSN/build-agent` 可随时删除并按上面的命令重建。
+界面截图保存到 `out/登录页面.png` 和 `out/主页页面.png`，构建产物和临时文件均被 Git 忽略。命令行验证目录 `OBS client/build-agent` 可随时删除并按上面的命令重建。
 实际构建与测试结果另见 [本步记录](001-http-login.md)。
 
 ## UML
