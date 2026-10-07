@@ -1,0 +1,29 @@
+classDiagram
+class Channel {
+  -EventLoop m_loop
+  -int m_fd
+  -uint32_t m_events
+  -uint64_t m_token
+  -weak_ptr m_owner
+  -bool m_tied
+  -Callback m_readCallback
+  -Callback m_writeCallback
+  -Callback m_closeCallback
+  +Channel(loop, fd)
+  +fd() int
+  +events() uint32_t
+  +setReadCallback(callback) void
+  +setWriteCallback(callback) void
+  +setCloseCallback(callback) void
+  +tie(owner) void
+  +enableReading() void
+  +disableReading() void
+  +enableWriting() void
+  +disableWriting() void
+  +disableAll() void
+  +isWriting() bool
+  +handleEvent(ready) void
+  -update() void
+  -dispatch(ready) void
+}
+Channel --> EventLoop : borrowed owner loop

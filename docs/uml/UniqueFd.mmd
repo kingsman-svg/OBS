@@ -1,0 +1,11 @@
+classDiagram
+class UniqueFd {
+  -int m_fd
+  +UniqueFd(fd)
+  +~UniqueFd()
+  +UniqueFd(other move)
+  +operator=(other move) UniqueFd
+  +get() int
+  +release() int
+  +reset(fd) void
+}

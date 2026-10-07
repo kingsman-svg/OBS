@@ -1,0 +1,26 @@
+sequenceDiagram
+participant P as TCP 对端
+participant C as TcpConnection
+participant E as Channel / Poller
+participant S as TcpServer
+participant B as 业务服务
+P->>C: shutdown(SHUT_WR)，服务端读到 EOF
+C->>B: 先通知最后一批输入字节
+B->>C: send(response)
+C->>C: 状态 Disconnecting，停止读取
+alt 存在待发送数据
+E->>C: EPOLLOUT 驱动剩余数据发送
+C-->>P: 输出全部排空
+else 输出已排空
+C->>C: 立即进入关闭路径
+end
+C->>E: disableAll()，移除 token
+C->>C: Disconnected，关闭 fd，清空 Buffer
+C->>S: closeCallback(conn, reason)
+S->>S: 从连接集合移除
+S-->>B: disconnectCallback()
+Note over C: 对象保活到回调结束；重复关闭无副作用
+B->>S: stop()，也允许在连接或消息回调内调用
+S->>E: 停止并移除监听订阅
+S->>C: 解除业务回调，forceClose 所有连接
+Note over S: stop 不再发送断开通知；活跃事件遇到已禁用 Channel 会跳过

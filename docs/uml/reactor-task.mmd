@@ -1,0 +1,22 @@
+sequenceDiagram
+participant W as 外部线程
+participant E as EventLoop
+participant F as eventfd / epoll
+participant C as TcpConnection
+W->>C: send(bytes) / forceClose()
+C->>C: shared_ptr 保活，复制发送数据
+C->>E: runInLoop(task)
+alt 已在 loop 线程
+E->>C: 直接执行任务
+else 其他线程
+E->>E: 加锁入队，解锁
+E->>F: 写 eventfd 唤醒
+F-->>E: epoll_wait 返回
+E->>F: 消费 eventfd 计数
+E->>E: 交换任务列表，不持锁执行
+E->>C: 执行收发或关闭任务
+end
+W->>E: quit()
+E->>F: 设置停止标记并唤醒
+E->>E: 结束循环
+Note over E: 先停止任务生产者和服务器，再在归属线程销毁 loop

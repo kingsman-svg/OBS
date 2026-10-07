@@ -1,0 +1,12 @@
+classDiagram
+class Poller {
+  -UniqueFd m_epoll
+  -uint64_t m_nextToken
+  -unordered_map m_channels
+  +Poller()
+  +poll(timeoutMs) ActiveEvents
+  +update(channel) void
+  +remove(channel) void
+}
+Poller *-- UniqueFd : epoll fd
+Poller ..> Channel : weak registrations

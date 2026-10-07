@@ -1,0 +1,20 @@
+classDiagram
+class Acceptor {
+  -EventLoop m_loop
+  -UniqueFd m_socket
+  -shared_ptr m_channel
+  -uint16_t m_port
+  -AcceptCallback m_acceptCallback
+  -ErrorCallback m_errorCallback
+  +Acceptor(loop, address, port)
+  +~Acceptor()
+  +setAcceptCallback(callback) void
+  +setErrorCallback(callback) void
+  +start() void
+  +stop() void
+  +port() uint16_t
+  -handleRead() void
+}
+Acceptor --> EventLoop : borrowed loop
+Acceptor *-- UniqueFd : listener fd
+Acceptor *-- Channel : tied subscription

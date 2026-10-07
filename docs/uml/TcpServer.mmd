@@ -1,0 +1,27 @@
+classDiagram
+class TcpServer {
+  -EventLoop m_loop
+  -string m_address
+  -uint16_t m_port
+  -shared_ptr m_acceptor
+  -uint64_t m_nextId
+  -unordered_map m_connections
+  -ConnectionCallback m_connectionCallback
+  -MessageCallback m_messageCallback
+  -DisconnectCallback m_disconnectCallback
+  -ErrorCallback m_errorCallback
+  +TcpServer(loop, address, port)
+  +~TcpServer()
+  +setConnectionCallback(callback) void
+  +setMessageCallback(callback) void
+  +setDisconnectCallback(callback) void
+  +setErrorCallback(callback) void
+  +start() void
+  +stop() void
+  +port() uint16_t
+  +connectionCount() size_t
+  -onAccept(socket) void
+}
+TcpServer --> EventLoop : borrowed loop
+TcpServer *-- Acceptor : listener
+TcpServer *-- TcpConnection : active connections

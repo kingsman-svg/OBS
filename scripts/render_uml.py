@@ -18,6 +18,12 @@ IMAGE_NAMES = {
     'cancel-login': '取消登录时序图', 'logout': '退出登录时序图',
     'local-auth': '本地认证时序图',
     'docker-dev': '容器开发连接时序图',
+    'UniqueFd': '文件描述符管理类图', 'Buffer': '字节缓冲类图',
+    'Channel': '事件通道类图', 'Poller': '事件轮询类图',
+    'EventLoop': '事件循环类图', 'Acceptor': '连接接收器类图',
+    'TcpConnection': '连接管理类图', 'TcpServer': '服务入口类图',
+    'tcp-accept': '连接接入时序图', 'tcp-io': '数据收发时序图',
+    'tcp-close': '连接关闭时序图', 'reactor-task': '跨线程任务时序图',
 }
 FONT = Path('C:/Windows/Fonts/msyh.ttc')
 NS = 'http://www.w3.org/2000/svg'

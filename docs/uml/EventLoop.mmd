@@ -1,0 +1,27 @@
+classDiagram
+class EventLoop {
+  -thread_id m_ownerThread
+  -Poller m_poller
+  -UniqueFd m_wakeupFd
+  -shared_ptr m_wakeupChannel
+  -atomic_bool m_quit
+  -bool m_running
+  -mutex m_mutex
+  -vector m_pending
+  +EventLoop()
+  +~EventLoop()
+  +loop() void
+  +quit() void
+  +runInLoop(task) void
+  +queueInLoop(task) void
+  +isInLoopThread() bool
+  +assertInLoopThread() void
+  +updateChannel(channel) void
+  +removeChannel(channel) void
+  -wakeup() void
+  -drainWakeup() void
+  -runPending() void
+}
+EventLoop *-- Poller : epoll driver
+EventLoop *-- UniqueFd : eventfd
+EventLoop *-- Channel : wakeup subscription

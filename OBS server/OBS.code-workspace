@@ -3,7 +3,9 @@
         { "name": "OBS server", "uri": "vscode-remote://ssh-remote+OBS/workspace" }
     ],
     "settings": {
-        "files.eol": "\n"
+        "files.eol": "\n",
+        "cmake.sourceDirectory": "${workspaceFolder}/code",
+        "cmake.buildDirectory": "${workspaceFolder}/code/build"
     },
     "extensions": {
         "recommendations": ["ms-vscode.cpptools", "ms-vscode.cmake-tools"]
