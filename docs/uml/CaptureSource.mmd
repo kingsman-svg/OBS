@@ -1,0 +1,9 @@
+classDiagram
+class CaptureSource {
+  +Kind kind
+  +QString id
+  +QString name
+  +quintptr handle
+}
+VideoCapture --> CaptureSource : 视频源选择
+WasapiCapture --> CaptureSource : 音频端点选择

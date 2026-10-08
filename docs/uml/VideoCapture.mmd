@@ -1,0 +1,25 @@
+classDiagram
+class VideoCapture {
+  -CaptureSource m_source
+  -QMutex m_mutex
+  -VideoFrame m_latest
+  -ComPtr_ID3D11Texture2D m_staging
+  -qint64 m_lastPreviewTime
+  +VideoCapture(parent)
+  +~VideoCapture()
+  +sources(warning) QList_CaptureSource$
+  +begin(source) bool
+  +stop() void
+  +latestFrame() VideoFrame
+  +opened() signal
+  +failed(message) signal
+  #run() void
+  -captureCamera() void
+  -captureDesktop() void
+  -publishTexture(source, width, height, timestamp) void
+}
+QThread <|-- VideoCapture
+class Direct3D11CaptureFramePool["WGC Direct3D11 帧池"]
+VideoCapture *-- VideoFrame : 最新帧邮箱
+VideoCapture --> MediaFrameReader : WinRT 摄像头
+VideoCapture --> Direct3D11CaptureFramePool : WGC 桌面

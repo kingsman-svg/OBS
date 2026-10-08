@@ -30,12 +30,13 @@ $env:PATH = "C:/software/Qt/Tools/CMake_64/bin;" + $env:PATH
 python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 ```
 
-脚本给测试子进程设置 DLL/插件路径，offscreen 运行 GUI，用实际按钮验证 MVC。测试会加载 Windows 微软雅黑；offscreen 的默认字体目录警告不影响本项目中文截图。
+脚本给测试子进程设置 DLL/插件路径，网络与界面测试使用 offscreen，采集测试使用 Windows 原生平台，用实际按钮验证 MVC。测试会加载 Windows 微软雅黑；offscreen 的默认字体目录警告不影响本项目中文截图。
 
 | CTest | 内容 |
 | --- | --- |
 | login.http_mvc | 原 7 组 HTTP、MVC、取消、限长、本地认证测试 |
 | client.protocol_mvc | TCP 分片粘包、并发编号、事件、心跳、非法帧、请求超时、重连、HTTP 调度和取消 |
+| client.capture | Windows 原生平台；PCM 格式、无效目标重复启停、设备枚举响应和退出登录；不打开有效采集源 |
 | client.live_services | 可选；Windows Qt → Docker 调度/登录/信令；两个角色与关闭/断线/过期清理 |
 
 LocalAuthServer 只编译进 CSNLoginTests，不进入业务可执行程序。真实集成测试会短暂创建自己的测试房间，完成后关闭连接，由服务器清理；不要与同账号正式演示混用（当前仅开发账号）。
@@ -48,4 +49,6 @@ LocalAuthServer 只编译进 CSNLoginTests，不进入业务可执行程序。�
 python scripts/render_uml.py
 ```
 
-需要 Pillow 与 Windows 微软雅黑。当前生成 29 张类图和 25 张时序图，每张同时有中文名 SVG/PNG。渲染后检查新增图像，源码、图与业务行为保持一致。
+需要 Pillow 与 Windows 微软雅黑。当前生成 34 张类图和 29 张时序图，每张同时有中文名 SVG/PNG。渲染后检查新增图像，源码、图与业务行为保持一致。
+
+采集使用 C++20、Windows SDK 和 d3d11/dxgi/windowsapp/ole32/uuid。硬件验证由 python scripts/run_capture_checks.py --hardware 显式执行，详见 [采集说明](004-capture.md)；不放入默认 CTest，避免常规测试打开设备。

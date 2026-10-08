@@ -5,6 +5,23 @@
 
 ## 类图
 
+采集新增类图（采集没有单独 Model/Controller）：
+
+| 类 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| CaptureSource | [源码](uml/CaptureSource.mmd) | [采集源数据类图](uml/采集源数据类图.png) | [矢量图](uml/采集源数据类图.svg) |
+| VideoFrame | [源码](uml/VideoFrame.mmd) | [视频帧数据类图](uml/视频帧数据类图.png) | [矢量图](uml/视频帧数据类图.svg) |
+| AudioPacket | [源码](uml/AudioPacket.mmd) | [音频包数据类图](uml/音频包数据类图.png) | [矢量图](uml/音频包数据类图.svg) |
+| VideoCapture | [源码](uml/VideoCapture.mmd) | [视频采集类图](uml/视频采集类图.png) | [矢量图](uml/视频采集类图.svg) |
+| WasapiCapture | [源码](uml/WasapiCapture.mmd) | [音频采集类图](uml/音频采集类图.png) | [矢量图](uml/音频采集类图.svg) |
+
+MainWindow、SessionController 类图及退出登录时序已同步更新。采集时序图：
+
+- [设备枚举源码](uml/capture-devices.mmd) · [设备枚举图](uml/采集设备枚举时序图.png) · [SVG](uml/采集设备枚举时序图.svg)
+- [视频采集源码](uml/capture-video.mmd) · [视频采集图](uml/视频采集预览时序图.png) · [SVG](uml/视频采集预览时序图.svg)
+- [双路音频源码](uml/capture-audio.mmd) · [双路音频图](uml/双路音频采集时序图.png) · [SVG](uml/双路音频采集时序图.svg)
+- [停止清理源码](uml/capture-stop.mmd) · [停止清理图](uml/采集停止清理时序图.png) · [SVG](uml/采集停止清理时序图.svg)
+
 双端工作台新增类图：
 
 | 类 | Mermaid | PNG | SVG |

@@ -1,0 +1,26 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow
+participant C as SessionController
+participant W as WasapiCapture工作线程
+participant S as WASAPI
+U->>V: 选择麦克风或系统声音，开始采集
+V-->>C: captureRequested
+C->>W: begin(source)，两路分别一个实例
+W->>S: COM MTA / 激活端点 / GetMixFormat
+W->>S: Initialize共享模式，回环增加LOOPBACK标志
+alt 权限、设备或格式不支持
+S-->>W: 错误
+W-->>C: failed / finished
+C->>V: 展示该路错误，其余路独立运行
+else 初始化成功
+W->>S: Start / GetNextPacketSize / GetBuffer
+S-->>W: 原始PCM、标志、首帧QPC时间戳
+W->>W: 解码为交错Float32，处理静音和不连续
+W->>S: ReleaseBuffer，异常也成对归还
+W->>W: 保存最多50包和RMS音量
+C->>W: 每33ms takePackets / level
+C-->>C: audioPacketReady，后续接重采样/混音/编码
+C->>V: 两路音量显示
+end
+Note over W,S: 输出保留设备采样率和声道；本步不播放回采声音

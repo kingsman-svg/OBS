@@ -13,6 +13,7 @@ M-->>L: changed
 L->>V: 返回登录页
 M-->>C: changed
 C->>C: 停止到期定时器，清除待处理请求
+C->>C: 停止采集交付，异步请求工作线程退出
 C->>N: disconnectFromServer
 N->>N: 停止心跳和请求定时器，abort socket
 N-->>C: disconnected，清空房间状态
