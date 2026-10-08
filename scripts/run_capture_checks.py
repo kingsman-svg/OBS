@@ -13,6 +13,7 @@ mode = parser.add_mutually_exclusive_group()
 mode.add_argument('--hardware', action='store_true')
 mode.add_argument('--window-preview', action='store_true', help='Only verify WGC using a generated color window.')
 mode.add_argument('--ui-only', action='store_true', help='Verify layout and preview lifecycle without capture devices.')
+mode.add_argument('--audio-mix', action='store_true', help='Verify actual WASAPI loopback to mixed PCM using silent playback; save no captured audio.')
 args = parser.parse_args()
 if os.name != 'nt':
     raise SystemExit('Capture checks require Windows.')
@@ -35,6 +36,8 @@ elif args.window_preview:
     command.append('--window-preview')
 elif args.ui_only:
     command.append('--ui-only')
+elif args.audio_mix:
+    command.append('--audio-mix')
 try:
     result = subprocess.run(command, env=environment, cwd=root, capture_output=True,
                             timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)

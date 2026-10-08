@@ -6,17 +6,30 @@ participant R as VideoRenderer
 participant C as SessionController
 participant W as 三个采集工作线程
 participant S as Windows采集资源
-U->>V: 停止采集、退出登录或关闭窗口
+participant M as AudioMixer
+U->>V: 停止采集或退出登录
 V-->>C: stopCaptureRequested 或登录状态变化
-C->>C: 停止交付数据，清空预览
+C->>C: 停止视频/普通音频交付，清空预览
 C->>W: stop / requestInterruption
 C->>V: 显示正在停止，禁用重新启动
 V->>P: 清空画面并隐藏独立窗口
 P->>R: clear，释放SRV/RTV/SwapChain和帧引用
+alt 退出登录或登录失效
+C->>M: clear，立即丢弃缓存与滤波尾部
+else 普通停止
+C->>C: 保留音频尾部，等线程结束后排空
+end
 W->>W: 初始化等待或采集轮询检查停止标志
 W->>S: 停止及关闭Reader/Session/FramePool/AudioClient
 W->>W: 释放COM资源后反初始化MTA
 W-->>C: finished
-C->>C: 移除未完成线程；保留失败说明
+C->>C: 取走最后采集包，再移除未完成线程
+alt 普通停止且两路音频均退出
+C->>M: finish，排空重采样尾部和最后补零包
+M-->>C: 最后的固定10ms输出
+C->>C: emit mixedAudioReady
+else 已退出登录
+C->>C: 丢弃迟到包，不交付混音
+end
 C->>V: 已停止，登录状态允许时可重新选择
-Note over C,W: GUI启停不wait；控制器析构必须wait，保证线程不访问已销毁对象
+Note over C,W: 关闭程序时控制器析构wait并释放滤波器；不保证尾部交付

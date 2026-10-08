@@ -19,6 +19,7 @@ environment['QT_PLUGIN_PATH'] = str(qt / 'plugins')
 environment['QT_QPA_PLATFORM'] = 'offscreen'
 (root / 'out').mkdir(exist_ok=True)
 environment['CSN_SCREENSHOT_PATH'] = str(root / 'out' / '登录页面.png')
+environment['OBS_AUDIO_TEST_WAV'] = str(root / 'out' / '音频重采样混音验证.wav')
 if os.name == 'nt':
     ctypes.WinDLL('kernel32').SetErrorMode(0x8003)
 ctest = shutil.which('ctest')

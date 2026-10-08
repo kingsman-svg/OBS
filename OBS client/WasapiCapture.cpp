@@ -68,10 +68,12 @@ AudioPacket WasapiCapture::decode(const uchar *data, quint32 frames, const WAVEF
     // 1. 识别 PCM/Float 及 EXTENSIBLE 子格式，检查声道、位宽和块对齐。
     bool floating = format.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
     bool pcm = format.wFormatTag == WAVE_FORMAT_PCM;
+    quint64 channelMask = format.nChannels == 1 ? 4 : format.nChannels == 2 ? 3 : 0;
     if (format.wFormatTag == WAVE_FORMAT_EXTENSIBLE && format.cbSize >= 22) {
         const auto &extended = reinterpret_cast<const WAVEFORMATEXTENSIBLE &>(format);
         floating = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
         pcm = IsEqualGUID(extended.SubFormat, KSDATAFORMAT_SUBTYPE_PCM);
+        if (extended.dwChannelMask) channelMask = extended.dwChannelMask;
     }
     const int bits = format.wBitsPerSample;
     if (format.nChannels == 0 || format.nChannels > 32 || format.nSamplesPerSec == 0
@@ -86,6 +88,7 @@ AudioPacket WasapiCapture::decode(const uchar *data, quint32 frames, const WAVEF
     AudioPacket packet;
     packet.sampleRate = int(format.nSamplesPerSec);
     packet.channels = format.nChannels;
+    packet.channelMask = channelMask;
     packet.timestampEstimated = (flags & AUDCLNT_BUFFERFLAGS_TIMESTAMP_ERROR) != 0;
     packet.timestamp100ns = packet.timestampEstimated ? now100ns() : qint64(timestamp);
     packet.discontinuity = (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0;

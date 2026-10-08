@@ -1,21 +1,12 @@
 #pragma once
 #include "CaptureSource.h"
-#include <QByteArray>
+#include "AudioPacket.h"
 #include <QMutex>
 #include <QThread>
 #include <windows.h>
 #include <mmreg.h>
 
 namespace csn {
-struct AudioPacket {
-    QByteArray pcm;                    // 交错 Float32，小端，采样率/声道保留设备原始值。
-    int sampleRate = 0;                // 设备每秒采样帧数，当前尚未重采样。
-    int channels = 0;                  // 每个采样帧的声道数，当前尚未混音。
-    qint64 timestamp100ns = 0;          // 首个采样帧的 QPC 时间；与视频使用同一时间域。
-    bool discontinuity = false;        // 设备中断或应用队列丢包，消费者须重置连续性假设。
-    bool timestampEstimated = false;   // 设备时间戳无效，已用读取时的 QPC 估计。
-};
-
 // 麦克风与系统回环共用一个类，区别只有枚举方向及 LOOPBACK 标志。
 class WasapiCapture final : public QThread {
     Q_OBJECT
@@ -43,4 +34,3 @@ private:
     qint64 m_lastPacketTime = 0;             // 最近取包的 QPC 时间，100ns，用于电平超时。
 };
 } // namespace csn
-Q_DECLARE_METATYPE(csn::AudioPacket)

@@ -1,0 +1,27 @@
+classDiagram
+class AudioMixer {
+  -array_AudioMixTrack m_tracks
+  -qint64 m_origin
+  -bool m_originEstimated
+  -qint64 m_cursor
+  -bool m_discontinuity
+  -float m_level
+  -quint64 m_clippedSamples
+  +int FrameSamples = 480$
+  +begin(microphone, system) void
+  +clear() void
+  +setControl(kind, gain, muted) void
+  +disable(kind) void
+  +push(kind, packet) void
+  +takeFrames(now100ns) QList_AudioPacket
+  +finish() QList_AudioPacket
+  +active() bool
+  +level() float
+  +clippedSamples() quint64
+  -index(kind) int$
+  -frameAt(timestamp) qint64
+  -enqueue(track, packet) void
+  -mixFrame() AudioPacket
+}
+AudioMixer *-- AudioMixTrack : 麦克风与回环两路
+AudioMixer --> AudioPacket : 固定10ms混音输出

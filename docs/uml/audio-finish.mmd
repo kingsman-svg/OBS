@@ -1,0 +1,27 @@
+sequenceDiagram
+actor U as 用户
+participant C as SessionController
+participant W as 两路WasapiCapture
+participant M as AudioMixer
+participant R as 每路AudioResampler
+U->>C: 停止采集或退出登录
+C->>W: stop / requestInterruption
+alt 普通停止且仍登录
+C->>C: 暂停普通输出，继续取走最后的采集包
+W->>W: ReleaseBuffer / Stop / 释放COM
+W-->>C: finished
+C->>M: push最后一批数据
+C->>C: 两路音频均finished
+C->>M: finish
+M->>R: drain
+R->>R: swr_convert(nullptr,0)，取滤波尾部并reset
+R-->>M: 尾部重采样数据
+M->>M: 最多排空500ms，最后不足10ms补零
+M-->>C: 固定10ms尾部包
+C->>C: emit mixedAudioReady后标记已停止
+else 退出登录或登录失效
+C->>M: clear，立即丢弃缓存/滤波尾部
+W-->>C: finished及迟到包
+C->>C: 丢弃，不再发出混音输出
+end
+Note over C,R: 日常停止不wait；关闭程序时析构wait并释放滤波器，不保证尾部交付

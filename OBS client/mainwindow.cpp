@@ -2,6 +2,7 @@
 #include <QProgressBar>
 #include <QGridLayout>
 #include "PreviewWindow.h"
+#include <QCheckBox>
 #include <QScrollArea>
 #include <QScreen>
 #include <QSignalBlocker>
@@ -195,7 +196,9 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     m_micLevel->setObjectName(QStringLiteral("microphoneLevel"));
     m_systemLevel = new QProgressBar(capture);
     m_systemLevel->setObjectName(QStringLiteral("systemAudioLevel"));
-    for (auto *level : {m_micLevel, m_systemLevel}) {
+    m_mixedLevel = new QProgressBar(capture);
+    m_mixedLevel->setObjectName(QStringLiteral("mixedAudioLevel"));
+    for (auto *level : {m_micLevel, m_systemLevel, m_mixedLevel}) {
         level->setRange(0, 100); level->setValue(0); level->setTextVisible(false);
         level->setFixedWidth(72);
     }
@@ -204,9 +207,35 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     grid->addWidget(new QLabel(tr("麦克风"), capture), 1, 0);
     grid->addWidget(m_micSource, 1, 1);
     grid->addWidget(m_micLevel, 1, 2);
-    grid->addWidget(new QLabel(tr("系统声音"), capture), 2, 0);
-    grid->addWidget(m_systemSource, 2, 1);
-    grid->addWidget(m_systemLevel, 2, 2);
+    grid->addWidget(new QLabel(tr("系统声音"), capture), 3, 0);
+    grid->addWidget(m_systemSource, 3, 1);
+    grid->addWidget(m_systemLevel, 3, 2);
+    // 1. 每路仅增加音量和静音；控件放下一行，保持设备选择区宽度简单。
+    for (int index = 0; index < 2; ++index) {
+        auto *controls = new QHBoxLayout;
+        controls->addWidget(new QLabel(tr("音量"), capture));
+        m_audioGain[index] = new QSpinBox(capture);
+        m_audioGain[index]->setObjectName(index == 0 ? QStringLiteral("microphoneGain") : QStringLiteral("systemAudioGain"));
+        m_audioGain[index]->setRange(0, 200); m_audioGain[index]->setSuffix(QStringLiteral("%")); m_audioGain[index]->setValue(100);
+        m_audioMute[index] = new QCheckBox(tr("静音"), capture);
+        m_audioMute[index]->setObjectName(index == 0 ? QStringLiteral("microphoneMute") : QStringLiteral("systemAudioMute"));
+        controls->addWidget(m_audioGain[index]); controls->addWidget(m_audioMute[index]); controls->addStretch();
+        grid->addLayout(controls, index == 0 ? 2 : 4, 1, 1, 2);
+        // 2. 输入改变只发意图；混音器由现有 SessionController 串行操控。
+        const auto changed = [this, index] {
+            emit audioMixChanged(index == 0 ? csn::CaptureSource::Kind::Microphone : csn::CaptureSource::Kind::Loopback,
+                m_audioGain[index]->value() / 100.0f, m_audioMute[index]->isChecked());
+        };
+        connect(m_audioGain[index], &QSpinBox::valueChanged, this, changed);
+        connect(m_audioMute[index], &QCheckBox::toggled, this, changed);
+    }
+    grid->addWidget(new QLabel(tr("混音输出"), capture), 5, 0);
+    m_mixStatus = new QLabel(tr("未启用音频混音"), capture);
+    m_mixStatus->setObjectName(QStringLiteral("audioMixStatusLabel"));
+    m_mixStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    m_mixStatus->setWordWrap(true); // 在 sizePolicy 后设置，保留 heightForWidth 换行测量。
+    m_mixStatus->setMinimumHeight(m_mixStatus->fontMetrics().lineSpacing() * 2);
+    grid->addWidget(m_mixStatus, 5, 1); grid->addWidget(m_mixedLevel, 5, 2);
     grid->setColumnStretch(1, 1);
     layout->addLayout(grid);
     auto *actions = new QHBoxLayout;
@@ -404,6 +433,10 @@ void MainWindow::applyCaptureState(bool canStart, bool active, bool enumerating,
     m_startCapture->setEnabled(canStart);
     m_stopCapture->setEnabled(active);
     m_refreshDevices->setEnabled(!active && !enumerating);
+    for (int index = 0; index < 2; ++index) {
+        m_audioGain[index]->setEnabled(canStart || active);
+        m_audioMute[index]->setEnabled(canStart || active);
+    }
     QStringList text;
     text << (enumerating ? tr("正在枚举设备…") : devices);
     const QStringList names{tr("视频"), tr("麦克风"), tr("系统声音")};
@@ -421,4 +454,13 @@ void MainWindow::showAudioLevels(float microphone, float system)
     // dBFS 映射到 -60..0dB，低声说话也能看到变化；不播放回采声音，避免声反馈。
     const auto level = [](float value) { return value > 0 ? int(std::clamp((20.0f * std::log10(value) + 60.0f) / 60.0f, 0.0f, 1.0f) * 100) : 0; };
     m_micLevel->setValue(level(microphone)); m_systemLevel->setValue(level(system));
+}
+
+void MainWindow::showMixedAudio(float level, const QString &message)
+{
+    if (!m_mixedLevel) return;
+    // 与输入电平使用同一 -60～0dBFS 标尺，低电平混音也能直观看到。
+    const int value = level > 0 ? int(std::clamp((20.0f * std::log10(level) + 60.0f) / 60.0f, 0.0f, 1.0f) * 100) : 0;
+    m_mixedLevel->setValue(value);
+    m_mixStatus->setText(message);
 }

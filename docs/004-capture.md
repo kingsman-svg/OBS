@@ -11,6 +11,8 @@
 | CaptureSource.h | 一个设备/窗口/显示器选择项：类型、ID、名称、句柄 |
 | VideoCapture.h/.cpp | 摄像头、窗口、屏幕采集；单帧邮箱；GPU 纹理快照 |
 | WasapiCapture.h/.cpp | 麦克风和回环共用的实现；PCM 包、音量、有界邮箱 |
+| AudioPacket.h | 第 006 步独立出的音频包；原始格式、扬声器布局和 QPC 时间 |
+| AudioResampler.h/.cpp、AudioMixer.h/.cpp | 第 006 步新增；采集之后的统一格式转换、对齐与混音 |
 | SessionController.h/.cpp | 复用工作台控制器，枚举设备、协调三路启停、交付媒体数据 |
 | mainwindow.h/.cpp | 选择设备、开始/停止、音量、房间及状态说明；操作区支持滚动 |
 | PreviewWindow.h/.cpp | 独立非模态画面窗口，关闭后可重新打开 |
@@ -39,11 +41,11 @@ WGC 桌面互操作要求 Windows 10 1903 或更高版本。窗口关闭、最�
 
 VideoFrame.timestamp100ns 使用系统相对 QPC 时间域，sequence 区分新帧，邮箱只保留最新一帧。GUI 约每 33ms 交付一次，但静止窗口可能没有新帧。第 005 步已移除原先 QImage 低频预览及 staging 读回，独立窗口现在直接采样 GPU 纹理，详见 [GPU 渲染说明](005-gpu-preview.md)。
 
-**音频**：AudioPacket.pcm 是交错 Float32 PCM，保留端点的采样率和声道数；不在采集层偷偷重采样或混音。支持 PCM 8/16/24/32 位及 IEEE Float 32/64 位，EXTENSIBLE 根据 SubFormat 区分 PCM 与 Float。静音包转换为零值，异常浮点值归零。
+**音频**：AudioPacket.pcm 是交错 Float32 PCM，保留端点的采样率和声道数；采集层不重采样或混音。支持 PCM 8/16/24/32 位及 IEEE Float 32/64 位，EXTENSIBLE 根据 SubFormat 区分 PCM 与 Float，并保留 dwChannelMask 为 channelMask。普通单/双声道填入对应标准掩码，多声道布局未知时保留0，由处理层明确拒绝不安全的下混。静音包转换为零值，异常浮点值归零。
 
 AudioPacket.timestamp100ns 是首个采样帧的 QPC 时间戳；设备报告时间戳错误时使用近似时间并设置 timestampEstimated。discontinuity 表示设备不连续或应用丢包。每路最多保存 50 包，超过上限丢弃较早数据并标记不连续；500ms 无数据时音量归零。
 
-SessionController 的 videoFrameReady、audioPacketReady 为后续媒体处理入口，当前在 GUI 线程交付，消费者必须快速转交到有界处理队列。后续在采集与编码之间接 GPU 美颜，并让预览使用处理后的帧；音频后续接重采样、混音、编码和同步。
+SessionController 的 videoFrameReady 为后续视频处理入口，audioPacketReady 保留原始音频诊断信号；第 006 步已增加 mixedAudioReady，交付重采样、混音后的固定 10ms 音频。当前在 GUI 线程交付，消费者必须快速转交到有界处理队列。后续在采集与编码之间接 GPU 美颜，并让预览使用处理后的帧；音频继续接编码和音画同步。详见 [重采样与混音说明](006-audio-mix.md)。
 
 ## 生命周期与线程
 

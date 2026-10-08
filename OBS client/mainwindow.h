@@ -5,6 +5,7 @@
 #include <QJsonObject>
 #include <QMainWindow>
 #include <QUrl>
+#include <array>
 namespace Ui { class MainWindow; }
 namespace csn { struct VideoFrame; }
 class QStackedWidget;
@@ -16,6 +17,7 @@ class QListWidget;
 class QComboBox;
 class QCloseEvent;
 class QProgressBar;
+class QCheckBox;
 class PreviewWindow;
 
 // 两端共用 View：控件只发出意图，网络与业务交给 Controller。
@@ -38,6 +40,7 @@ public:
                            const QString &devices, const QStringList &messages); // 同步按钮及各路状态。
     void showCapturePreview(const csn::VideoFrame &frame); // 交给独立 GPU 预览窗口；空帧清理。
     void showAudioLevels(float microphone, float system); // 展示归一化 RMS，不播放音频。
+    void showMixedAudio(float level, const QString &message); // 混音后的电平、格式及削波统计。
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
@@ -50,6 +53,7 @@ signals:
     void captureRequested(const QList<csn::CaptureSource> &sources);
     void stopCaptureRequested();
     void refreshDevicesRequested();
+    void audioMixChanged(csn::CaptureSource::Kind kind, float gain, bool muted); // 控件只发意图，不处理 PCM。
 protected:
     void closeEvent(QCloseEvent *event) override;
 private:
@@ -83,6 +87,10 @@ private:
     QLabel *m_captureStatus = nullptr;        // 设备枚举及三路采集状态文字。
     QProgressBar *m_micLevel = nullptr;       // 麦克风 RMS 电平显示。
     QProgressBar *m_systemLevel = nullptr;    // 回环 RMS 电平显示。
+    std::array<QSpinBox *, 2> m_audioGain{};   // 麦克风/回环线性音量，0～200%。
+    std::array<QCheckBox *, 2> m_audioMute{};  // 两路静音选择，恢复时不重放旧数据。
+    QProgressBar *m_mixedLevel = nullptr;     // 削波后混音 RMS，独立于原始输入电平。
+    QLabel *m_mixStatus = nullptr;            // 输出格式、包数、削波和处理错误。
     bool m_loggedIn = false;
     bool m_ready = false;
     bool m_busy = false;
