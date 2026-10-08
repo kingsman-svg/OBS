@@ -1,6 +1,7 @@
 sequenceDiagram
 actor U as 用户
 participant V as MainWindow
+participant P as PreviewWindow
 participant C as SessionController
 participant W as 三个采集工作线程
 participant S as Windows采集资源
@@ -9,6 +10,7 @@ V-->>C: stopCaptureRequested 或登录状态变化
 C->>C: 停止交付数据，清空预览
 C->>W: stop / requestInterruption
 C->>V: 显示正在停止，禁用重新启动
+V->>P: 清空画面并隐藏独立窗口
 W->>W: 初始化等待或采集轮询检查停止标志
 W->>S: 停止及关闭Reader/Session/FramePool/AudioClient
 W->>W: 释放COM资源后反初始化MTA

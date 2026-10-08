@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'PreviewWindow': '独立画面窗口类图', 'preview-window': '独立画面窗口时序图',
     'CaptureSource': '采集源数据类图', 'VideoFrame': '视频帧数据类图',
     'AudioPacket': '音频包数据类图', 'VideoCapture': '视频采集类图',
     'WasapiCapture': '音频采集类图', 'capture-devices': '采集设备枚举时序图',

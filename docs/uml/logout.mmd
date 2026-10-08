@@ -1,6 +1,7 @@
 sequenceDiagram
 actor U as 用户
 participant V as MainWindow
+participant P as PreviewWindow
 participant L as LoginController
 participant M as LoginModel
 participant C as SessionController
@@ -11,6 +12,7 @@ V-->>L: logoutRequested
 L->>M: logout 清除内存会话
 M-->>L: changed
 L->>V: 返回登录页
+V->>P: 清空画面并隐藏独立窗口
 M-->>C: changed
 C->>C: 停止到期定时器，清除待处理请求
 C->>C: 停止采集交付，异步请求工作线程退出

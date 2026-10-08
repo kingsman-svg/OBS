@@ -23,6 +23,7 @@ target_link_libraries(OBSNetwork PUBLIC Qt6::Network)
 
 add_library(OBSClientCore STATIC
     mainwindow.cpp mainwindow.h mainwindow.ui
+    PreviewWindow.cpp PreviewWindow.h
     LoginModel.cpp LoginModel.h
     LoginController.cpp LoginController.h
     ClientRole.h SessionModel.cpp SessionModel.h SessionController.cpp SessionController.h

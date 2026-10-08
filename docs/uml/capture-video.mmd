@@ -1,6 +1,7 @@
 sequenceDiagram
 actor U as 用户
 participant V as MainWindow
+participant P as PreviewWindow
 participant C as SessionController
 participant W as VideoCapture工作线程
 participant S as Windows采集源
@@ -24,7 +25,9 @@ W->>G: 最多10fps读回预览，缩放到960×540以内
 W->>W: 更新单帧邮箱和QPC时间戳
 C->>W: 每33ms取 latestFrame
 C-->>C: videoFrameReady，后续接特效/编码
-C->>V: 显示最新预览
+C->>V: showCapturePreview 最新预览
+V->>P: setFrame，首帧非模态显示
+P->>P: 按独立窗口大小等比例绘制
 alt WGC目标尺寸变化
 W->>S: 释放旧帧后 Recreate 帧池
 else 目标关闭或摄像头失败

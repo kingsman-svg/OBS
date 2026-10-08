@@ -20,7 +20,7 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 
 先在 OBS 容器启动 `python3 /workspace/code/run_services.py start`，再用 Qt Creator 打开 `OBS client/CMakeLists.txt`，构建并分别运行 OBS_Publisher 和 OBS_Player。两端使用开发账号 `root`、密码 `root`，默认连接本机 Docker 的 8080 调度与 9000 信令。详见 [双端运行说明](docs/003-two-clients.md)。
 
-推流端已接入 WinRT 摄像头、WGC 窗口/屏幕、WASAPI 麦克风/系统声音，提供设备选择、启停、预览和双路音量。底层只有 VideoCapture、WasapiCapture 两个采集类，由现有工作台控制器协调，详见 [采集说明](docs/004-capture.md)。播放端支持直播/点播页面切换，本地文件与在线地址输入已预留；解码、编码、实际推拉流、GPU 美颜与 AI 继续逐步接入。LocalAuthServer 仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
+推流端已接入 WinRT 摄像头、WGC 窗口/屏幕、WASAPI 麦克风/系统声音，提供设备选择、启停、独立非模态预览和双路音量。主窗口仅放操作面板，小窗口可滚动；首帧打开预览，关闭画面后采集继续，可用“打开画面”恢复。底层只有 VideoCapture、WasapiCapture 两个采集类，由现有工作台控制器协调，详见 [采集说明](docs/004-capture.md)。播放端支持直播/点播页面切换，本地文件与在线地址输入已预留；解码、编码、实际推拉流、GPU 美颜与 AI 继续逐步接入。LocalAuthServer 仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
 
 ## 工作方式
 

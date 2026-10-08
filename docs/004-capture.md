@@ -12,7 +12,8 @@
 | VideoCapture.h/.cpp | 摄像头、窗口、屏幕采集；单帧邮箱；GPU 纹理及预览 |
 | WasapiCapture.h/.cpp | 麦克风和回环共用的实现；PCM 包、音量、有界邮箱 |
 | SessionController.h/.cpp | 复用工作台控制器，枚举设备、协调三路启停、交付媒体数据 |
-| mainwindow.h/.cpp | 选择设备、开始/停止、预览、音量和状态说明 |
+| mainwindow.h/.cpp | 选择设备、开始/停止、音量、房间及状态说明；操作区支持滚动 |
+| PreviewWindow.h/.cpp | 独立非模态画面窗口，保持比例显示，关闭后可重新打开 |
 
 界面继续使用现有 MVC。SessionModel 保存信令和房间业务状态；采集线程状态由工作台控制器直接协调，不额外增加一套 MVC。以上源码仍平铺在 OBS client。
 
@@ -22,8 +23,10 @@
 2. 构建并运行 OBS_Publisher，启动 Docker 登录服务，使用 root / root 登录。
 3. 视频源可选摄像头、窗口、屏幕；麦克风和系统声音分别选择。初始全部为“不采集”，不会自动打开设备。
 4. 点击“开始采集”。各路独立启动，一路失败会展示原因，其他成功的路继续工作。允许仅采音频或仅采视频。
-5. 视频显示预览，音频分别显示音量。当前不播放麦克风或回环声音。
-6. 点击“停止采集”，待停止完成后切换源或刷新设备。退出登录、登录到期、关闭程序也会停止采集。
+5. 视频首帧到达后自动打开独立非模态预览窗口，音频在主窗口分别显示音量。关闭预览只隐藏窗口，采集继续；点击主窗口“打开画面”可以重新显示。仅采音频时不会自动弹出画面。当前不播放麦克风或回环声音。
+6. 点击“停止采集”，清空并隐藏预览，待停止完成后切换源或刷新设备。退出登录、登录到期、关闭程序也会停止采集及关闭预览。
+
+主窗口改为顶部账户/画面操作、信令状态、可滚动的采集与房间面板；通常最低 640×480 时仍可滚动访问底部控件，高 DPI 下按屏幕可用空间缩小初始窗口和最低尺寸。长设备名不扩大主窗口，悬停可看完整名称。播放端采用同样的控制台布局，保留直播/点播选择，画面窗口为后续解码输出预留。
 
 创建房间与本地采集相互独立。信令未连通时仍可在登录有效期内预览；本步不发送 live.start，不做 FFmpeg 编码，也不连接 RTMP/WebRTC 媒体服务。
 
@@ -33,7 +36,7 @@ WGC 桌面互操作要求 Windows 10 1903 或更高版本。窗口关闭、最�
 
 **视频**：VideoFrame.texture 是独立持有的 D3D11 BGRA8 纹理快照，可通过 GetDevice 获得所属设备。WGC surface 或摄像头 GPU surface 通过 GPU 复制保存，系统复用采集帧池不会修改消费者保留的纹理。摄像头驱动若提供 SoftwareBitmap，则按真实步长上传；不强行承诺所有摄像头零拷贝。
 
-VideoFrame.timestamp100ns 使用系统相对 QPC 时间域，sequence 区分新帧。邮箱只保留最新一帧。现阶段 CPU 预览最多 10fps、尺寸不超过 960×540；GPU 帧约每 33ms 交付一次，但静止窗口可能没有新帧。当前 QLabel 预览有 GPU→CPU 读回，尚不是 GPU 渲染/美颜链路。
+VideoFrame.timestamp100ns 使用系统相对 QPC 时间域，sequence 区分新帧。邮箱只保留最新一帧。现阶段 CPU 预览最多 10fps、尺寸不超过 960×540；GPU 帧约每 33ms 交付一次，但静止窗口可能没有新帧。当前独立窗口的 QPainter 预览有 GPU→CPU 读回，尚不是 GPU 渲染/美颜链路。
 
 preview 是缓存的最近一次读回图像，previewTimestamp100ns 单独记录其采样时刻，可能早于当前 GPU 帧。编码及后续 GPU 处理使用 texture 与 timestamp100ns，不使用低帧率预览代替原始帧。
 
@@ -61,7 +64,21 @@ powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
 python scripts/run_capture_checks.py
 ```
 
-完整 CTest 仍使用 scripts/run_checks.py。新增 client.capture 覆盖 PCM/Float/EXTENSIBLE、静音和不连续标志、无效格式、无效窗口重复启停、GUI 枚举响应、退出登录及角色界面。
+完整 CTest 仍使用 scripts/run_checks.py。client.capture 覆盖 PCM/Float/EXTENSIBLE、静音和不连续标志、无效格式、无效窗口重复启停、GUI 枚举响应、退出登录及角色界面；另覆盖非模态首帧展示、关闭后不自动弹出、重新打开显示最新帧、缩放留黑边、停止/退出清理及长名称的小窗口布局。
+
+只验证布局、独立窗口生命周期并保存中文界面截图：
+
+```powershell
+python scripts/run_capture_checks.py --ui-only
+```
+
+只使用自建色块窗口验证真实 WGC 到独立窗口的链路，不采集屏幕、摄像头或音频：
+
+```powershell
+python scripts/run_capture_checks.py --window-preview
+```
+
+2026-10-08 界面重排验证：两端 Debug 构建通过；三个常规 CTest 全部通过（9.37 秒）；真实 WGC 色块采集、关闭预览后继续交付视频帧、重新打开、退出登录清理通过。QT_SCALE_FACTOR=1.5 和 2 的 UI 验证通过，初始窗口按屏幕可用空间调整，未再出现窗口几何尺寸警告。源码及 UML 已同步，界面截图在 out/，由测试构造界面状态和色块，不保存用户桌面或设备画面。
 
 显式执行硬件验证：
 
@@ -69,7 +86,7 @@ python scripts/run_capture_checks.py
 python scripts/run_capture_checks.py --hardware
 ```
 
-此命令显示自建变化色块窗口，验证 WGC 像素、尺寸变化、快照寿命、重复启停、窗口关闭及真实工作台预览；短暂测试可用的屏幕、摄像头、麦克风和回环端点。只有一个输出端点时，用无声音频验证回环 PCM、QPC 及 50 包上限。截图仅保存自建色块窗口的预览到 out/推流端采集页面.png，不保存桌面、摄像头或音频文件。
+此命令显示自建变化色块窗口，验证 WGC 像素、尺寸变化、快照寿命、重复启停、窗口关闭及真实工作台预览；短暂测试可用的屏幕、摄像头、麦克风和回环端点。只有一个输出端点时，用无声音频验证回环 PCM、QPC 及 50 包上限。截图保存主窗口到 out/推流端采集页面.png、自建色块预览到 out/独立窗口真实采集.png，不保存桌面、摄像头或音频文件。
 
 本机 Qt 6.11.2 / MSVC x64 Debug：两个客户端和三个测试程序构建成功，三个常规 CTest 全部通过；临时启动 Docker 服务后的真实双端登录、认证、房间及退出集成测试也通过，结束后已恢复服务停止状态。
 

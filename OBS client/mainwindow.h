@@ -16,6 +16,7 @@ class QListWidget;
 class QComboBox;
 class QCloseEvent;
 class QProgressBar;
+class PreviewWindow;
 
 // 两端共用 View：控件只发出意图，网络与业务交给 Controller。
 class MainWindow final : public QMainWindow {
@@ -53,6 +54,8 @@ protected:
     void closeEvent(QCloseEvent *event) override;
 private:
     QWidget *buildWorkspace();
+    QWidget *buildCapturePanel(QWidget *parent);
+    QWidget *buildPlayerPanel(QWidget *parent);
     Ui::MainWindow *ui;
     csn::ClientRole m_role;
     QStackedWidget *m_pages;
@@ -69,7 +72,8 @@ private:
     QPushButton *m_refresh = nullptr;
     QPushButton *m_join = nullptr;
     QComboBox *m_mode = nullptr;
-    QLabel *m_preview = nullptr;
+    PreviewWindow *m_preview = nullptr;
+    QPushButton *m_showPreview = nullptr;
     QComboBox *m_videoSource = nullptr;
     QComboBox *m_micSource = nullptr;
     QComboBox *m_systemSource = nullptr;

@@ -1,0 +1,26 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow
+participant C as SessionController
+participant P as PreviewWindow
+U->>V: 开始采集
+V-->>C: captureRequested
+C->>V: 首个有效预览 showCapturePreview
+V->>P: setFrame(image)
+P->>P: show 非模态窗口并按比例重绘
+U->>P: 关闭画面窗口
+P->>P: 隐藏，保留最新画面和本轮打开标记
+C->>V: 后续预览帧
+V->>P: 更新缓存，不自动弹窗
+U->>V: 点击打开画面
+V->>P: present 显示最新画面
+U->>P: 调整窗口大小
+P->>P: paintEvent 等比例显示并留黑边
+alt 停止采集
+C->>V: showCapturePreview 空图
+V->>P: 清空画面并隐藏，重置首帧标记
+else 退出登录或关闭主窗口
+V->>P: 清空画面并隐藏
+V-->>C: 停止采集及会话清理
+end
+Note over V,P: 主窗口保留操作面板；关闭预览不发出停止采集意图

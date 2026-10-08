@@ -7,15 +7,20 @@
 #include "LoginController.h"
 #include "HttpClient.h"
 #include "mainwindow.h"
+#include "PreviewWindow.h"
 #include <QApplication>
 #include <QComboBox>
 #include <QElapsedTimer>
+#include <QDir>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QLabel>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QScrollArea>
+#include <QScrollBar>
+#include <QScreen>
 #include <QTest>
 #include <audioclient.h>
 #include <mmdeviceapi.h>
@@ -137,6 +142,89 @@ bool captureMvc()
     return true;
 }
 
+bool previewUiLifecycle()
+{
+    qInfo("BEGIN independent preview and compact layout");
+    MainWindow view(ClientRole::Publisher);
+    view.show();
+    const QSize initialSize = view.size();
+    view.applyLoginState(QStringLiteral("已登录：root"), false, true);
+    auto *preview = view.findChild<PreviewWindow *>("previewWindow");
+    auto *open = view.findChild<QPushButton *>("showPreviewButton");
+    auto *scroll = view.findChild<QScrollArea *>("workspaceScroll");
+    CHECK(preview && preview->isWindow() && preview->windowModality() == Qt::NonModal);
+    CHECK(open && open->isEnabled() && scroll);
+    CHECK(!view.findChild<QLabel *>("previewPlaceholder"));
+
+    QImage image(320, 180, QImage::Format_RGB32);
+    image.fill(QColor(32, 160, 96));
+    view.showCapturePreview(image);
+    CHECK(preview->isVisible() && view.isEnabled());
+    preview->close();
+    CHECK(!preview->isVisible());
+    // 后续帧仍更新缓存，但不能把用户刚关掉的窗口重新弹出。
+    image.fill(QColor(64, 128, 192));
+    view.showCapturePreview(image);
+    CHECK(!preview->isVisible());
+    open->click();
+    CHECK(preview->isVisible());
+    preview->resize(320, 320);
+    QTest::qWait(30);
+    const auto rendered = preview->grab().toImage();
+    CHECK(rendered.pixelColor(rendered.width() / 2, rendered.height() / 2) == QColor(64, 128, 192));
+    CHECK(rendered.pixelColor(2, 2) == QColor("#101824")); // 保持比例，空余区域留黑边。
+
+    const QString longName = QStringLiteral("窗口 · ") + QString(180, QChar(0x6d4b));
+    view.setCaptureSources({{CaptureSource::Kind::Window, "layout", longName, 1}});
+    view.findChild<QComboBox *>("videoSourceCombo")->setCurrentIndex(1);
+    view.applyCaptureState(false, true, false, QStringLiteral("已发现采集设备"),
+        {QStringLiteral("采集中：") + longName, QStringLiteral("未启用"), QStringLiteral("未启用")});
+    const QSize compactSize = QSize(640, 480).boundedTo(initialSize);
+    view.resize(compactSize);
+    QTest::qWait(30);
+    CHECK(view.size() == compactSize);
+    CHECK(scroll->widget()->width() <= scroll->viewport()->width());
+    CHECK(scroll->verticalScrollBar()->maximum() > 0); // 小窗口可滚动访问底部房间操作。
+
+    // 只保存自建色块及人工构造的界面状态，不访问摄像头、麦克风或屏幕。
+    const auto directory = qEnvironmentVariable("OBS_UI_SCREENSHOTS");
+    if (!directory.isEmpty()) {
+        CHECK(QDir().mkpath(directory));
+        CHECK(view.grab().save(directory + QStringLiteral("/主窗口紧凑布局.png")));
+        view.setCaptureSources({{CaptureSource::Kind::Window, "layout", QStringLiteral("窗口 · 采集验证色块"), 1}});
+        view.applyCaptureState(false, true, false, QStringLiteral("已发现 3 个采集目标"),
+            {QStringLiteral("视频采集中"), QStringLiteral("未启用"), QStringLiteral("未启用")});
+        view.resize(initialSize); QTest::qWait(30);
+        CHECK(view.grab().save(directory + QStringLiteral("/主窗口采集设置.png")));
+        preview->resize(QSize(720, 480).boundedTo(preview->screen()->availableGeometry().size() - QSize(40, 80)));
+        QTest::qWait(30);
+        CHECK(preview->grab().save(directory + QStringLiteral("/独立采集预览.png")));
+        MainWindow player(ClientRole::Player);
+        player.applyLoginState(QStringLiteral("已登录：root"), false, true);
+        player.applySessionState(true, false, false, QStringLiteral("信令已连接，可以操作房间。"), {},
+            {QJsonObject{{"roomId", "room-1"}, {"title", QStringLiteral("我的直播间")}, {"viewers", 0}, {"streaming", false}}});
+        player.show(); QTest::qWait(30);
+        CHECK(player.grab().save(directory + QStringLiteral("/播放端直播布局.png")));
+        player.findChild<QComboBox *>("modeCombo")->setCurrentIndex(1); QTest::qWait(30);
+        CHECK(player.grab().save(directory + QStringLiteral("/播放端点播布局.png")));
+    }
+
+    view.showCapturePreview({});
+    CHECK(!preview->isVisible());
+    view.showCapturePreview(image); // 新一轮采集首帧允许再次自动打开。
+    CHECK(preview->isVisible());
+    view.applyLoginState(QStringLiteral("已退出登录"), false, false);
+    CHECK(!preview->isVisible() && !open->isEnabled());
+    view.showCapturePreview(image); // 迟到的预览不能在退出后弹窗。
+    CHECK(!preview->isVisible());
+    view.applyLoginState(QStringLiteral("已登录：root"), false, true);
+    view.showCapturePreview(image);
+    CHECK(preview->isVisible());
+    view.close();
+    CHECK(!preview->isVisible());
+    return true;
+}
+
 bool desktopHardware()
 {
     // 只捕获测试自建的色块窗口，避免把桌面内容写入测试图片。
@@ -197,10 +285,22 @@ bool desktopHardware()
         QObject::connect(&controller, &SessionController::videoFrameReady, &view, [&delivered](const VideoFrame &) { ++delivered; });
         view.findChild<QPushButton *>("startCaptureButton")->click();
         CHECK(until([&] { return delivered > 3; }));
-        view.resize(1000, 850); view.show(); QTest::qWait(200);
+        auto *preview = view.findChild<PreviewWindow *>("previewWindow");
+        CHECK(preview && preview->isVisible() && preview->windowModality() == Qt::NonModal);
+        preview->close();
+        const int beforeClose = delivered;
+        CHECK(until([&] { return delivered > beforeClose + 3; }));
+        CHECK(!preview->isVisible()); // 真实采集继续，关闭画面不会停采或自动重新弹窗。
+        view.findChild<QPushButton *>("showPreviewButton")->click();
+        CHECK(preview->isVisible());
+        view.show(); QTest::qWait(200);
         const auto screenshot = qEnvironmentVariable("OBS_CAPTURE_SCREENSHOT");
-        if (!screenshot.isEmpty()) CHECK(view.grab().save(screenshot));
+        if (!screenshot.isEmpty()) {
+            CHECK(view.grab().save(screenshot));
+            CHECK(preview->grab().save(QFileInfo(screenshot).absolutePath() + QStringLiteral("/独立窗口真实采集.png")));
+        }
         login.logout();
+        CHECK(!preview->isVisible());
         CHECK(until([&] { return !view.findChild<QPushButton *>("stopCaptureButton")->isEnabled(); }));
         CHECK(!view.findChild<QPushButton *>("startCaptureButton")->isEnabled());
     }
@@ -322,8 +422,10 @@ int main(int argc, char **argv)
     const int fontId = QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
     if (fontId >= 0) app.setFont(QFont(QFontDatabase::applicationFontFamilies(fontId).constFirst(), 10));
     const bool hardware = app.arguments().contains("--hardware");
+    if (app.arguments().contains("--ui-only")) return previewUiLifecycle() ? 0 : 1;
+    if (app.arguments().contains("--window-preview")) return desktopHardware() ? 0 : 1;
     if (hardware) return desktopHardware() && deviceHardware() ? 0 : 1;
-    if (!audioFormats() || !failedWorkerRestart() || !captureMvc()) return 1;
-    qInfo("PASS 3 capture groups: PCM formats / failed worker restart / MVC and logout");
+    if (!audioFormats() || !failedWorkerRestart() || !captureMvc() || !previewUiLifecycle()) return 1;
+    qInfo("PASS 4 capture groups: PCM formats / failed worker restart / MVC and logout / independent preview");
     return 0;
 }
