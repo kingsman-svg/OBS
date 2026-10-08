@@ -24,13 +24,14 @@ target_link_libraries(OBSNetwork PUBLIC Qt6::Network)
 add_library(OBSClientCore STATIC
     mainwindow.cpp mainwindow.h mainwindow.ui
     PreviewWindow.cpp PreviewWindow.h
+    VideoRenderer.cpp VideoRenderer.h
     LoginModel.cpp LoginModel.h
     LoginController.cpp LoginController.h
     ClientRole.h SessionModel.cpp SessionModel.h SessionController.cpp SessionController.h
     CaptureSource.h VideoCapture.cpp VideoCapture.h WasapiCapture.cpp WasapiCapture.h
 )
 target_include_directories(OBSClientCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(OBSClientCore PUBLIC Qt6::Widgets OBSNetwork d3d11 dxgi windowsapp ole32 uuid)
+target_link_libraries(OBSClientCore PUBLIC Qt6::Widgets OBSNetwork d3d11 dxgi d3dcompiler windowsapp ole32 uuid)
 qt_add_executable(OBS_Publisher main.cpp)
 qt_add_executable(OBS_Player main.cpp)
 target_compile_definitions(OBS_Player PRIVATE OBS_PLAYER)

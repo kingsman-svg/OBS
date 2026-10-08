@@ -1,12 +1,12 @@
 #pragma once
 #include "ClientRole.h"
 #include "CaptureSource.h"
-#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QMainWindow>
 #include <QUrl>
 namespace Ui { class MainWindow; }
+namespace csn { struct VideoFrame; }
 class QStackedWidget;
 class QLabel;
 class QLineEdit;
@@ -33,11 +33,11 @@ public:
                            const QJsonObject &room, const QJsonArray &rooms);
     void setLoginEndpoint(const QUrl &endpoint);
     void setSignalEndpoint(const QString &host, quint16 port);
-    void setCaptureSources(const QList<csn::CaptureSource> &sources);
+    void setCaptureSources(const QList<csn::CaptureSource> &sources); // 刷新三个源列表，保留匹配的选择。
     void applyCaptureState(bool canStart, bool active, bool enumerating,
-                           const QString &devices, const QStringList &messages);
-    void showCapturePreview(const QImage &image);
-    void showAudioLevels(float microphone, float system);
+                           const QString &devices, const QStringList &messages); // 同步按钮及各路状态。
+    void showCapturePreview(const csn::VideoFrame &frame); // 交给独立 GPU 预览窗口；空帧清理。
+    void showAudioLevels(float microphone, float system); // 展示归一化 RMS，不播放音频。
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
@@ -72,17 +72,17 @@ private:
     QPushButton *m_refresh = nullptr;
     QPushButton *m_join = nullptr;
     QComboBox *m_mode = nullptr;
-    PreviewWindow *m_preview = nullptr;
-    QPushButton *m_showPreview = nullptr;
-    QComboBox *m_videoSource = nullptr;
-    QComboBox *m_micSource = nullptr;
-    QComboBox *m_systemSource = nullptr;
-    QPushButton *m_startCapture = nullptr;
-    QPushButton *m_stopCapture = nullptr;
-    QPushButton *m_refreshDevices = nullptr;
-    QLabel *m_captureStatus = nullptr;
-    QProgressBar *m_micLevel = nullptr;
-    QProgressBar *m_systemLevel = nullptr;
+    PreviewWindow *m_preview = nullptr;       // 拥有的非模态 GPU 画面窗口，关闭仅隐藏。
+    QPushButton *m_showPreview = nullptr;     // 主动恢复被隐藏的画面窗口。
+    QComboBox *m_videoSource = nullptr;       // 摄像头/窗口/屏幕共用一项选择。
+    QComboBox *m_micSource = nullptr;         // 麦克风端点选择，播放端为空。
+    QComboBox *m_systemSource = nullptr;      // 系统声音回环端点选择。
+    QPushButton *m_startCapture = nullptr;    // 发出开始意图，实际启停由控制器处理。
+    QPushButton *m_stopCapture = nullptr;     // 请求异步停止所有采集路。
+    QPushButton *m_refreshDevices = nullptr;  // 请求后台重新枚举。
+    QLabel *m_captureStatus = nullptr;        // 设备枚举及三路采集状态文字。
+    QProgressBar *m_micLevel = nullptr;       // 麦克风 RMS 电平显示。
+    QProgressBar *m_systemLevel = nullptr;    // 回环 RMS 电平显示。
     bool m_loggedIn = false;
     bool m_ready = false;
     bool m_busy = false;

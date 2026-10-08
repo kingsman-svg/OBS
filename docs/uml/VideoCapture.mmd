@@ -3,8 +3,6 @@ class VideoCapture {
   -CaptureSource m_source
   -QMutex m_mutex
   -VideoFrame m_latest
-  -ComPtr_ID3D11Texture2D m_staging
-  -qint64 m_lastPreviewTime
   +VideoCapture(parent)
   +~VideoCapture()
   +sources(warning) QList_CaptureSource$

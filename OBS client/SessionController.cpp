@@ -184,7 +184,7 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
     if (selection.isEmpty()) { m_captureMessages[0] = tr("请至少选择一个采集源"); refreshCaptureView(); return; }
     m_captureErrors.clear();
     m_captureMessages = {tr("未启用"), tr("未启用"), tr("未启用")};
-    m_lastSequence = 0; m_lastPreviewTimestamp = 0;
+    m_lastSequence = 0;
     for (const auto &source : selection) {
         const int index = source.kind == CaptureSource::Kind::Microphone ? 1 : source.kind == CaptureSource::Kind::Loopback ? 2 : 0;
         QThread *worker = index == 0 ? static_cast<QThread *>(m_video) : index == 1 ? m_microphone : m_system;
@@ -225,9 +225,7 @@ void SessionController::deliverCapture()
         && frame.texture && frame.sequence != m_lastSequence) {
         m_lastSequence = frame.sequence;
         emit videoFrameReady(frame);
-        if (!frame.preview.isNull() && frame.previewTimestamp100ns != m_lastPreviewTimestamp) {
-            m_lastPreviewTimestamp = frame.previewTimestamp100ns; m_view->showCapturePreview(frame.preview);
-        }
+        m_view->showCapturePreview(frame);
     }
     for (int index : {1, 2}) {
         auto *worker = index == 1 ? m_microphone : m_system;

@@ -1,0 +1,38 @@
+classDiagram
+class VideoRenderer {
+  -VideoFrame m_frame
+  -bool m_failed
+  -bool m_retryScheduled
+  -HWND m_window
+  -QSize m_bufferSize
+  -ComPtr_ID3D11Device m_device
+  -ComPtr_ID3D11DeviceContext m_immediate
+  -ComPtr_ID3D11DeviceContext m_deferred
+  -ComPtr_IDXGISwapChain1 m_swapChain
+  -ComPtr_ID3D11RenderTargetView m_target
+  -ComPtr_ID3D11ShaderResourceView m_source
+  -ComPtr_ID3D11VertexShader m_vertex
+  -ComPtr_ID3D11PixelShader m_pixel
+  -ComPtr_ID3D11SamplerState m_sampler
+  -ComPtr_ID3D11RasterizerState m_rasterizer
+  -ComPtr_ID3D11DepthStencilState m_depth
+  +VideoRenderer(parent)
+  +~VideoRenderer()
+  +setFrame(frame) void
+  +clear() void
+  +paintEngine() QPaintEngine*
+  +failed(message) signal
+  +framePresented(sequence) signal
+  #paintEvent(event) void
+  #resizeEvent(event) void
+  #showEvent(event) void
+  -initialize(device, window) void
+  -resizeBuffers(size) void
+  -render() void
+  -releaseResources() void
+}
+QWidget <|-- VideoRenderer
+VideoRenderer *-- VideoFrame : 最新GPU快照
+VideoRenderer *-- IDXGISwapChain1 : HWND双缓冲
+VideoRenderer --> ID3D11Device : 沿用采集设备
+VideoRenderer --> ID3D11DeviceContext : 独立录制并恢复共享状态

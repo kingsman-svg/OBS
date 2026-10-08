@@ -13,6 +13,7 @@
 
 using Microsoft::WRL::ComPtr;
 namespace {
+// QPC 换算到 100ns，与视频使用同一时间域。
 qint64 now100ns()
 {
     LARGE_INTEGER value{}, frequency{};
@@ -20,6 +21,7 @@ qint64 now100ns()
     return value.QuadPart / frequency.QuadPart * 10000000
         + value.QuadPart % frequency.QuadPart * 10000000 / frequency.QuadPart;
 }
+// 调用线程必须已初始化 COM；返回活动端点枚举器。
 ComPtr<IMMDeviceEnumerator> enumerator()
 {
     ComPtr<IMMDeviceEnumerator> result;
@@ -33,6 +35,7 @@ WasapiCapture::~WasapiCapture() { stop(); wait(); }
 
 QList<CaptureSource> WasapiCapture::devices(bool loopback)
 {
+    // 1. 回环枚举输出 eRender，麦克风枚举输入 eCapture，只返回活动端点。
     QList<CaptureSource> result;
     ComPtr<IMMDeviceCollection> collection;
     winrt::check_hresult(enumerator()->EnumAudioEndpoints(loopback ? eRender : eCapture,
@@ -42,6 +45,7 @@ QList<CaptureSource> WasapiCapture::devices(bool loopback)
     for (UINT index = 0; index < count; ++index) {
         ComPtr<IMMDevice> device;
         winrt::check_hresult(collection->Item(index, &device));
+        // 2. 设备 ID 用于定位，FriendlyName 用于显示；及时归还 COM 分配的字符串。
         LPWSTR id = nullptr;
         winrt::check_hresult(device->GetId(&id));
         const QString deviceId = QString::fromWCharArray(id);
@@ -61,6 +65,7 @@ QList<CaptureSource> WasapiCapture::devices(bool loopback)
 AudioPacket WasapiCapture::decode(const uchar *data, quint32 frames, const WAVEFORMATEX &format,
                                   quint32 flags, quint64 timestamp)
 {
+    // 1. 识别 PCM/Float 及 EXTENSIBLE 子格式，检查声道、位宽和块对齐。
     bool floating = format.wFormatTag == WAVE_FORMAT_IEEE_FLOAT;
     bool pcm = format.wFormatTag == WAVE_FORMAT_PCM;
     if (format.wFormatTag == WAVE_FORMAT_EXTENSIBLE && format.cbSize >= 22) {
@@ -77,6 +82,7 @@ AudioPacket WasapiCapture::decode(const uchar *data, quint32 frames, const WAVEF
         throw std::runtime_error("音频端点返回空缓冲");
     const quint64 samples = quint64(frames) * format.nChannels;
     if (samples > 4 * 1024 * 1024) throw std::runtime_error("音频数据包过大");
+    // 2. 保存设备采样率/声道及不连续标记，时间无效时用当前 QPC 估计。
     AudioPacket packet;
     packet.sampleRate = int(format.nSamplesPerSec);
     packet.channels = format.nChannels;
@@ -84,6 +90,7 @@ AudioPacket WasapiCapture::decode(const uchar *data, quint32 frames, const WAVEF
     packet.timestamp100ns = packet.timestampEstimated ? now100ns() : qint64(timestamp);
     packet.discontinuity = (flags & AUDCLNT_BUFFERFLAGS_DATA_DISCONTINUITY) != 0;
     packet.pcm.resize(qsizetype(samples * sizeof(float)));
+    // 3. 逐采样转 Float32；静音填 0，NaN/溢出归一处理，此处不重采样。
     for (quint64 index = 0; index < samples; ++index) {
         float output = 0;
         if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
@@ -107,6 +114,7 @@ AudioPacket WasapiCapture::decode(const uchar *data, quint32 frames, const WAVEF
 
 bool WasapiCapture::begin(const CaptureSource &source)
 {
+    // 1. 校验源及线程状态；2. 清空队列和电平；3. start 进入 run。
     if (isRunning() || (source.kind != CaptureSource::Kind::Microphone && source.kind != CaptureSource::Kind::Loopback)) return false;
     m_source = source;
     { QMutexLocker lock(&m_mutex); m_packets.clear(); m_level = 0; m_lastPacketTime = 0; }
@@ -129,12 +137,14 @@ float WasapiCapture::level() const
 
 void WasapiCapture::run()
 {
+    // 1. 工作线程建立 MTA，所有端点 COM 对象都在此线程使用和销毁。
     const HRESULT apartment = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     if (FAILED(apartment)) { emit failed(QStringLiteral("音频采集 COM 初始化失败")); return; }
     // COM 对象全部在此作用域销毁，然后再 CoUninitialize。
     {
         ComPtr<IAudioClient> client;
         try {
+            // 2. 按设备 ID 打开端点，空 ID 使用默认端点；激活 IAudioClient。
             ComPtr<IMMDevice> device;
             auto manager = enumerator();
             if (m_source.id.isEmpty())
@@ -143,20 +153,24 @@ void WasapiCapture::run()
             else winrt::check_hresult(manager->GetDevice(reinterpret_cast<LPCWSTR>(m_source.id.utf16()), &device));
             winrt::check_hresult(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
                 reinterpret_cast<void **>(client.GetAddressOf())));
+            // 3. GetMixFormat 读取设备原始格式，并预先验证解码支持。
             WAVEFORMATEX *rawFormat = nullptr;
             winrt::check_hresult(client->GetMixFormat(&rawFormat));
             std::unique_ptr<WAVEFORMATEX, decltype(&CoTaskMemFree)> format(rawFormat, &CoTaskMemFree);
             // 先验证格式，设备即使静音也不会把不认识的格式误当 Float32。
             decode(nullptr, 0, *format, AUDCLNT_BUFFERFLAGS_SILENT, 0);
+            // 4. 初始化共享模式；回环仅增加 LOOPBACK 标志，获取采集缓冲接口。
             winrt::check_hresult(client->Initialize(AUDCLNT_SHAREMODE_SHARED,
                 m_source.kind == CaptureSource::Kind::Loopback ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0,
                 1000000, 0, format.get(), nullptr));
             ComPtr<IAudioCaptureClient> capture;
             winrt::check_hresult(client->GetService(IID_PPV_ARGS(&capture)));
+            // 5. Start 成功发 opened；WASAPI 此处按包轮询，无 FrameArrived 回调。
             if (!isInterruptionRequested()) {
                 winrt::check_hresult(client->Start());
                 emit opened();
             }
+            // 6. 查询可读包；无数据短暂休眠，避免空转占用 CPU。
             while (!isInterruptionRequested()) {
                 UINT32 available = 0;
                 winrt::check_hresult(capture->GetNextPacketSize(&available));
@@ -166,11 +180,13 @@ void WasapiCapture::run()
                 DWORD flags = 0;
                 UINT64 timestamp = 0;
                 winrt::check_hresult(capture->GetBuffer(&data, &frames, &flags, nullptr, &timestamp));
+                // 7. GetBuffer → Float32 复制 → ReleaseBuffer，异常也必须归还。
                 AudioPacket packet;
                 // GetBuffer 与 ReleaseBuffer 成对，即使格式转换抛出异常也归还端点缓冲。
                 try { packet = decode(data, frames, *format, flags, timestamp); }
                 catch (...) { capture->ReleaseBuffer(frames); throw; }
                 winrt::check_hresult(capture->ReleaseBuffer(frames));
+                // 8. 计算 RMS 电平；队列最多 50 包，丢旧包后标记不连续。
                 double sum = 0;
                 const auto samples = packet.pcm.size() / qsizetype(sizeof(float));
                 for (qsizetype index = 0; index < samples; ++index) {
@@ -194,6 +210,7 @@ void WasapiCapture::run()
         } catch (const std::exception &error) {
             if (!isInterruptionRequested()) emit failed(QString::fromUtf8(error.what()));
         }
+        // 9. 正常/异常均 Stop，再释放接口，最后才 CoUninitialize。
         if (client) client->Stop();
     }
     { QMutexLocker lock(&m_mutex); m_level = 0; }
