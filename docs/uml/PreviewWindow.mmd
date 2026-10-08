@@ -1,0 +1,12 @@
+classDiagram
+class PreviewWindow {
+  -QString m_placeholder
+  -QImage m_frame
+  -bool m_presented
+  +PreviewWindow(title, placeholder, parent)
+  +setFrame(image) void
+  +present() void
+  #paintEvent(event) void
+}
+QWidget <|-- PreviewWindow
+PreviewWindow *-- QImage : latest display frame

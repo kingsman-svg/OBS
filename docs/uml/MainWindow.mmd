@@ -8,7 +8,8 @@ class MainWindow {
   -QListWidget* m_rooms
   -QComboBox* m_mode
   -bool m_loggedIn
-  -QLabel* m_preview
+  -PreviewWindow* m_preview
+  -QPushButton* m_showPreview
   -QComboBox* m_videoSource
   -QComboBox* m_micSource
   -QComboBox* m_systemSource
@@ -41,7 +42,11 @@ class MainWindow {
   +refreshDevicesRequested() signal
   #closeEvent(event) void
   -buildWorkspace() QWidget
+  -buildCapturePanel(parent) QWidget
+  -buildPlayerPanel(parent) QWidget
 }
 QMainWindow <|-- MainWindow
 MainWindow *-- Ui_MainWindow : login form
 MainWindow *-- QStackedWidget : login and role workspace
+MainWindow *-- PreviewWindow : owned nonmodal display
+MainWindow *-- QScrollArea : scrollable controls

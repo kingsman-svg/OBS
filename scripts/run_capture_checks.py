@@ -9,7 +9,10 @@ import sys
 parser = argparse.ArgumentParser()
 parser.add_argument('--qt-root', default='C:/software/Qt/6.11.2/msvc2022_64')
 parser.add_argument('--build-dir', default='OBS client/build-agent')
-parser.add_argument('--hardware', action='store_true')
+mode = parser.add_mutually_exclusive_group()
+mode.add_argument('--hardware', action='store_true')
+mode.add_argument('--window-preview', action='store_true', help='Only verify WGC using a generated color window.')
+mode.add_argument('--ui-only', action='store_true', help='Verify layout and preview lifecycle without capture devices.')
 args = parser.parse_args()
 if os.name != 'nt':
     raise SystemExit('Capture checks require Windows.')
@@ -23,10 +26,15 @@ environment['QT_PLUGIN_PATH'] = str(qt / 'plugins')
 environment['QT_QPA_PLATFORM'] = 'windows'
 (root / 'out').mkdir(exist_ok=True)
 environment['OBS_CAPTURE_SCREENSHOT'] = str(root / 'out' / '推流端采集页面.png')
+environment.setdefault('OBS_UI_SCREENSHOTS', str(root / 'out'))
 ctypes.WinDLL('kernel32').SetErrorMode(0x8003)
 command = [str((root / args.build_dir / 'OBSCaptureTests.exe').resolve())]
 if args.hardware:
     command.append('--hardware')
+elif args.window_preview:
+    command.append('--window-preview')
+elif args.ui_only:
+    command.append('--ui-only')
 try:
     result = subprocess.run(command, env=environment, cwd=root, capture_output=True,
                             timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
