@@ -58,6 +58,9 @@ MainWindow::MainWindow(csn::ClientRole role, QWidget *parent)
     m_pages->setObjectName(QStringLiteral("pages"));
     m_pages->addWidget(loginPage);
     m_pages->addWidget(buildWorkspace());
+    connect(m_preview, &PreviewWindow::failed, this, [this](const QString &message) {
+        if (m_captureStatus) m_captureStatus->setText(message);
+    });
     setCentralWidget(m_pages);
     setStyleSheet(QStringLiteral(
         "QMainWindow { background:#f3f5f9; } QLabel { color:#26354a; }"
@@ -408,9 +411,9 @@ void MainWindow::applyCaptureState(bool canStart, bool active, bool enumerating,
         if (!messages[index].isEmpty()) text << names[index] + QStringLiteral("：") + messages[index];
     m_captureStatus->setText(text.join(QLatin1Char('\n')));
 }
-void MainWindow::showCapturePreview(const QImage &image)
+void MainWindow::showCapturePreview(const csn::VideoFrame &frame)
 {
-    if (m_role == csn::ClientRole::Publisher && m_loggedIn) m_preview->setFrame(image);
+    if (m_role == csn::ClientRole::Publisher && m_loggedIn) m_preview->setFrame(frame);
 }
 void MainWindow::showAudioLevels(float microphone, float system)
 {

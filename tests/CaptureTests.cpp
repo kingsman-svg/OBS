@@ -8,6 +8,9 @@
 #include "HttpClient.h"
 #include "mainwindow.h"
 #include "PreviewWindow.h"
+#include "VideoRenderer.h"
+#include <QImage>
+#include <d3d11_4.h>
 #include <QApplication>
 #include <QComboBox>
 #include <QElapsedTimer>
@@ -55,6 +58,46 @@ WAVEFORMATEX format(WORD bits, WORD tag = WAVE_FORMAT_PCM)
     result.nSamplesPerSec = 48000; result.nBlockAlign = result.nChannels * (bits / 8);
     result.nAvgBytesPerSec = result.nSamplesPerSec * result.nBlockAlign;
     return result;
+}
+// 测试专用 CPU → GPU 色块；生产预览没有此构造路径。
+VideoFrame colorFrame(const QImage &image, quint64 sequence = 1, ID3D11Device *reuse = nullptr)
+{
+    Microsoft::WRL::ComPtr<ID3D11Device> device = reuse;
+    if (!device) winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, nullptr));
+    D3D11_TEXTURE2D_DESC description{};
+    description.Width = UINT(image.width()); description.Height = UINT(image.height());
+    description.MipLevels = 1; description.ArraySize = 1; description.SampleDesc.Count = 1;
+    description.Format = DXGI_FORMAT_B8G8R8A8_UNORM; description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA data{image.constBits(), UINT(image.bytesPerLine()), 0};
+    VideoFrame frame; frame.sequence = sequence; frame.timestamp100ns = qint64(sequence) * 333333;
+    winrt::check_hresult(device->CreateTexture2D(&description, &data, &frame.texture));
+    return frame;
+}
+// 仅测试/截图读回快照，不能放进采集或渲染生产循环。
+QImage readBack(ID3D11Texture2D *texture)
+{
+    if (!texture) return {};
+    Microsoft::WRL::ComPtr<ID3D11Device> device;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+    texture->GetDevice(&device); device->GetImmediateContext(&context);
+    D3D11_TEXTURE2D_DESC description{}; texture->GetDesc(&description);
+    description.Usage = D3D11_USAGE_STAGING; description.BindFlags = 0;
+    description.CPUAccessFlags = D3D11_CPU_ACCESS_READ; description.MiscFlags = 0;
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> staging;
+    winrt::check_hresult(device->CreateTexture2D(&description, nullptr, &staging));
+    context->CopyResource(staging.Get(), texture);
+    D3D11_MAPPED_SUBRESOURCE mapped{};
+    winrt::check_hresult(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+    const auto image = QImage(static_cast<const uchar *>(mapped.pData), int(description.Width),
+        int(description.Height), int(mapped.RowPitch), QImage::Format_RGB32).copy();
+    context->Unmap(staging.Get(), 0);
+    return image;
+}
+bool nearColor(const QColor &actual, const QColor &expected)
+{
+    return std::abs(actual.red() - expected.red()) < 8 && std::abs(actual.green() - expected.green()) < 8
+        && std::abs(actual.blue() - expected.blue()) < 8;
 }
 bool audioFormats()
 {
@@ -158,21 +201,43 @@ bool previewUiLifecycle()
 
     QImage image(320, 180, QImage::Format_RGB32);
     image.fill(QColor(32, 160, 96));
-    view.showCapturePreview(image);
+    auto frame = colorFrame(image);
+    view.showCapturePreview(frame);
     CHECK(preview->isVisible() && view.isEnabled());
+    auto *renderer = preview->findChild<VideoRenderer *>();
+    int presented = 0, failures = 0;
+    QObject::connect(renderer, &VideoRenderer::framePresented, &view, [&](quint64) { ++presented; });
+    QObject::connect(renderer, &VideoRenderer::failed, &view, [&](const QString &message) { ++failures; qWarning().noquote() << message; });
+    renderer->update();
+    CHECK(until([&] { return presented > 0 || failures > 0; }));
+    CHECK(failures == 0);
+    // 设置一个生产者状态，后续 GPU 绘制必须恢复它。
+    Microsoft::WRL::ComPtr<ID3D11Device> device;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+    frame.texture->GetDevice(&device); device->GetImmediateContext(&context);
+    context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP);
     preview->close();
     CHECK(!preview->isVisible());
     // 后续帧仍更新缓存，但不能把用户刚关掉的窗口重新弹出。
     image.fill(QColor(64, 128, 192));
-    view.showCapturePreview(image);
+    frame = colorFrame(image, 2, device.Get());
+    view.showCapturePreview(frame);
     CHECK(!preview->isVisible());
     open->click();
     CHECK(preview->isVisible());
     preview->resize(320, 320);
-    QTest::qWait(30);
-    const auto rendered = preview->grab().toImage();
-    CHECK(rendered.pixelColor(rendered.width() / 2, rendered.height() / 2) == QColor(64, 128, 192));
-    CHECK(rendered.pixelColor(2, 2) == QColor("#101824")); // 保持比例，空余区域留黑边。
+    const int beforeResize = presented;
+    CHECK(until([&] { return presented > beforeResize || failures > 0; }));
+    CHECK(failures == 0);
+    D3D11_PRIMITIVE_TOPOLOGY topology{};
+    context->IAGetPrimitiveTopology(&topology);
+    CHECK(topology == D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP);
+    // 同 HWND 切换输入设备，旧 flip 链必须释放才能绑定新设备。
+    const int beforeDevice = presented;
+    frame = colorFrame(image, 3);
+    view.showCapturePreview(frame);
+    CHECK(until([&] { return presented > beforeDevice || failures > 0; }));
+    CHECK(failures == 0);
 
     const QString longName = QStringLiteral("窗口 · ") + QString(180, QChar(0x6d4b));
     view.setCaptureSources({{CaptureSource::Kind::Window, "layout", longName, 1}});
@@ -198,7 +263,7 @@ bool previewUiLifecycle()
         CHECK(view.grab().save(directory + QStringLiteral("/主窗口采集设置.png")));
         preview->resize(QSize(720, 480).boundedTo(preview->screen()->availableGeometry().size() - QSize(40, 80)));
         QTest::qWait(30);
-        CHECK(preview->grab().save(directory + QStringLiteral("/独立采集预览.png")));
+        // 原生 SwapChain 不在 QWidget backing store 中；实际画面在 WGC 专项测试取证。
         MainWindow player(ClientRole::Player);
         player.applyLoginState(QStringLiteral("已登录：root"), false, true);
         player.applySessionState(true, false, false, QStringLiteral("信令已连接，可以操作房间。"), {},
@@ -211,17 +276,100 @@ bool previewUiLifecycle()
 
     view.showCapturePreview({});
     CHECK(!preview->isVisible());
-    view.showCapturePreview(image); // 新一轮采集首帧允许再次自动打开。
+    view.showCapturePreview(frame); // 新一轮采集首帧允许再次自动打开。
     CHECK(preview->isVisible());
     view.applyLoginState(QStringLiteral("已退出登录"), false, false);
     CHECK(!preview->isVisible() && !open->isEnabled());
-    view.showCapturePreview(image); // 迟到的预览不能在退出后弹窗。
+    view.showCapturePreview(frame); // 迟到的预览不能在退出后弹窗。
     CHECK(!preview->isVisible());
     view.applyLoginState(QStringLiteral("已登录：root"), false, true);
-    view.showCapturePreview(image);
+    view.showCapturePreview(frame);
     CHECK(preview->isVisible());
+    // 非契约格式必须显示错误；空帧清理后可恢复到正常 GPU 绘制。
+    Microsoft::WRL::ComPtr<ID3D11Device> latestDevice;
+    frame.texture->GetDevice(&latestDevice);
+    D3D11_TEXTURE2D_DESC invalidDescription{};
+    frame.texture->GetDesc(&invalidDescription);
+    invalidDescription.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    VideoFrame invalidFrame;
+    winrt::check_hresult(latestDevice->CreateTexture2D(&invalidDescription, nullptr, &invalidFrame.texture));
+    view.showCapturePreview(invalidFrame);
+    CHECK(until([&] { return failures == 1; }));
+    CHECK(preview->isVisible() && !renderer->isVisible());
+    view.showCapturePreview({});
+    const int beforeRecovery = presented;
+    view.showCapturePreview(frame);
+    CHECK(until([&] { return presented > beforeRecovery; }));
+    CHECK(failures == 1 && renderer->isVisible());
     view.close();
     CHECK(!preview->isVisible());
+    return true;
+}
+
+bool gpuOutputHardware()
+{
+    qInfo("BEGIN GPU output quadrants / letterbox / resize / device switch");
+    QImage image(320, 180, QImage::Format_RGB32);
+    const QColor colors[]{QColor(224,48,32), QColor(32,192,64), QColor(32,80,224), QColor(224,192,32)};
+    for (int y = 0; y < image.height(); ++y)
+        for (int x = 0; x < image.width(); ++x) image.setPixelColor(x, y, colors[(y >= 90 ? 2 : 0) + (x >= 160 ? 1 : 0)]);
+    PreviewWindow preview(QStringLiteral("OBS GPU 渲染验证"), "waiting", nullptr);
+    preview.resize(640, 480);
+    QString error;
+    QObject::connect(&preview, &PreviewWindow::failed, &preview, [&](const QString &message) { error = message; });
+    auto frame = colorFrame(image);
+    preview.setFrame(frame);
+    // 模拟持续视频输入。WGC 重建观察帧池后需一次新的 Present 才会交付完整新尺寸。
+    QTimer presentation;
+    presentation.setInterval(50);
+    QObject::connect(&presentation, &QTimer::timeout, &preview, [&] {
+        ++frame.sequence;
+        preview.setFrame(frame);
+    });
+    presentation.start();
+    CHECK(QTest::qWaitForWindowExposed(&preview));
+    VideoCapture observer;
+    QObject::connect(&observer, &VideoCapture::failed, &preview, [&](const QString &message) { error = message; });
+    CHECK(observer.begin({CaptureSource::Kind::Window, "gpu-output", "GPU output", quintptr(preview.winId())}));
+    QImage output;
+    const auto matches = [&] {
+        if (!error.isEmpty()) return true;
+        auto observed = observer.latestFrame();
+        if (!observed.texture) return false;
+        output = readBack(observed.texture.Get());
+        return nearColor(output.pixelColor(output.width()/4, output.height()/3), colors[0])
+            && nearColor(output.pixelColor(output.width()*3/4, output.height()/3), colors[1])
+            && nearColor(output.pixelColor(output.width()/4, output.height()*2/3), colors[2])
+            && nearColor(output.pixelColor(output.width()*3/4, output.height()*2/3), colors[3])
+            && nearColor(output.pixelColor(output.width()/2, output.height()-20), QColor("#101824"));
+    };
+    CHECK(until(matches));
+    if (!error.isEmpty()) qWarning().noquote() << error;
+    CHECK(error.isEmpty());
+    const auto directory = qEnvironmentVariable("OBS_UI_SCREENSHOTS");
+    if (!directory.isEmpty()) CHECK(output.save(directory + QStringLiteral("/GPU四象限渲染验证.png")));
+    // 改变源设备与窗口尺寸，仍验证最终显示内容；这里保留 4:3 外框供颜色采样。
+    const int beforeWidth = output.width();
+    frame = colorFrame(image, 2);
+    preview.setFrame(frame); preview.resize(720, 540);
+    const bool resized = until([&] { return matches() && output.width() > beforeWidth; });
+    if (!resized) {
+        qWarning() << "GPU output resize:" << preview.size() << "before" << beforeWidth << "after" << output.size()
+            << "sequence" << observer.latestFrame().sequence << "error" << error;
+        qWarning() << "Samples:" << output.pixelColor(output.width()/4, output.height()/3)
+            << output.pixelColor(output.width()*3/4, output.height()/3)
+            << output.pixelColor(output.width()/4, output.height()*2/3)
+            << output.pixelColor(output.width()*3/4, output.height()*2/3);
+        if (!directory.isEmpty()) output.save(directory + QStringLiteral("/GPU缩放诊断.png"));
+    }
+    CHECK(resized);
+    CHECK(error.isEmpty());
+    preview.showMinimized(); QTest::qWait(50);
+    preview.present(); QTest::qWait(100);
+    CHECK(until(matches) && error.isEmpty());
+    observer.stop(); CHECK(observer.wait(10000));
+    preview.setFrame({});
+    qInfo("PASS GPU actual output / RGBA direction / letterbox / ResizeBuffers / device switch / restore");
     return true;
 }
 
@@ -238,12 +386,12 @@ bool desktopHardware()
     QObject::connect(&worker, &VideoCapture::failed, &worker, [&error](const QString &message) { error = message; });
     const CaptureSource source{CaptureSource::Kind::Window, "test", QStringLiteral("窗口 · 采集验证色块"), quintptr(target.winId())};
     CHECK(worker.begin(source));
-    CHECK(until([&] { return !worker.latestFrame().preview.isNull() || !error.isEmpty(); }));
+    CHECK(until([&] { return worker.latestFrame().texture != nullptr || !error.isEmpty(); }));
     if (!error.isEmpty()) qWarning().noquote() << error;
     auto first = worker.latestFrame();
     CHECK(error.isEmpty() && first.texture && first.timestamp100ns > 0);
-    CHECK(first.previewTimestamp100ns > 0 && first.previewTimestamp100ns <= first.timestamp100ns);
-    auto color = first.preview.pixelColor(first.preview.width() / 2, first.preview.height() / 2);
+    const auto firstImage = readBack(first.texture.Get());
+    auto color = firstImage.pixelColor(firstImage.width() / 2, firstImage.height() / 2);
     CHECK(std::abs(color.red() - 32) < 8 && std::abs(color.green() - 160) < 8 && std::abs(color.blue() - 96) < 8);
     D3D11_TEXTURE2D_DESC before{}; first.texture->GetDesc(&before);
     QTimer animation;
@@ -297,7 +445,20 @@ bool desktopHardware()
         const auto screenshot = qEnvironmentVariable("OBS_CAPTURE_SCREENSHOT");
         if (!screenshot.isEmpty()) {
             CHECK(view.grab().save(screenshot));
-            CHECK(preview->grab().save(QFileInfo(screenshot).absolutePath() + QStringLiteral("/独立窗口真实采集.png")));
+            VideoCapture observer;
+            QString observerError;
+            QObject::connect(&observer, &VideoCapture::failed, &observer, [&](const QString &message) { observerError = message; });
+            CHECK(observer.begin({CaptureSource::Kind::Window, "preview", "preview", quintptr(preview->winId())}));
+            QImage rendered;
+            CHECK(until([&] {
+                const auto observed = observer.latestFrame();
+                if (!observed.texture) return !observerError.isEmpty();
+                rendered = readBack(observed.texture.Get());
+                return nearColor(rendered.pixelColor(rendered.width()/2, rendered.height()/2), QColor(32,160,96));
+            }));
+            CHECK(observerError.isEmpty() && !rendered.isNull());
+            observer.stop(); CHECK(observer.wait(10000));
+            CHECK(rendered.save(QFileInfo(screenshot).absolutePath() + QStringLiteral("/独立窗口真实采集.png")));
         }
         login.logout();
         CHECK(!preview->isVisible());
@@ -306,7 +467,8 @@ bool desktopHardware()
     }
     worker.stop(); CHECK(worker.wait(10000));
     // 停止后，消费者保留的快照仍有效；系统采集池不会复用它。
-    CHECK(first.texture && first.preview.pixelColor(first.preview.width() / 2, first.preview.height() / 2) == color);
+    const auto retained = readBack(first.texture.Get());
+    CHECK(first.texture && retained.pixelColor(retained.width() / 2, retained.height() / 2) == color);
     CHECK(worker.begin(source));
     CHECK(until([&] { return worker.latestFrame().texture != nullptr; }));
     target.close();
@@ -423,8 +585,8 @@ int main(int argc, char **argv)
     if (fontId >= 0) app.setFont(QFont(QFontDatabase::applicationFontFamilies(fontId).constFirst(), 10));
     const bool hardware = app.arguments().contains("--hardware");
     if (app.arguments().contains("--ui-only")) return previewUiLifecycle() ? 0 : 1;
-    if (app.arguments().contains("--window-preview")) return desktopHardware() ? 0 : 1;
-    if (hardware) return desktopHardware() && deviceHardware() ? 0 : 1;
+    if (app.arguments().contains("--window-preview")) return gpuOutputHardware() && desktopHardware() ? 0 : 1;
+    if (hardware) return gpuOutputHardware() && desktopHardware() && deviceHardware() ? 0 : 1;
     if (!audioFormats() || !failedWorkerRestart() || !captureMvc() || !previewUiLifecycle()) return 1;
     qInfo("PASS 4 capture groups: PCM formats / failed worker restart / MVC and logout / independent preview");
     return 0;

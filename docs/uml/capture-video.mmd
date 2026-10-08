@@ -6,6 +6,7 @@ participant C as SessionController
 participant W as VideoCapture工作线程
 participant S as Windows采集源
 participant G as D3D11
+participant R as VideoRenderer
 U->>V: 选择摄像头或窗口/屏幕，开始采集
 V-->>C: captureRequested
 C->>C: 检查登录、枚举及未完成启停
@@ -21,13 +22,13 @@ W->>S: TryAcquireLatestFrame 或 TryGetNextFrame
 S-->>W: GPU surface 或 SoftwareBitmap
 W->>G: GPU复制独立纹理；CPU位图才上传
 W->>G: Flush提交复制，不依赖SwapChain Present
-W->>G: 最多10fps读回预览，缩放到960×540以内
 W->>W: 更新单帧邮箱和QPC时间戳
 C->>W: 每33ms取 latestFrame
 C-->>C: videoFrameReady，后续接特效/编码
-C->>V: showCapturePreview 最新预览
+C->>V: showCapturePreview 最新GPU快照
 V->>P: setFrame，首帧非模态显示
-P->>P: 按独立窗口大小等比例绘制
+P->>R: setFrame 只换最新纹理
+R->>G: Shader等比采样 / Draw / SwapChain Present
 alt WGC目标尺寸变化
 W->>S: 释放旧帧后 Recreate 帧池
 else 目标关闭或摄像头失败
@@ -35,4 +36,4 @@ S-->>W: Closed/Failed事件
 W-->>C: failed 后 finished
 C->>V: 错误说明并允许重新选择
 end
-Note over W,G: GPU快照独立持有，系统采集池不会复用；预览目前含CPU读回
+Note over W,G: GPU快照独立持有，系统采集池不会复用；预览直接采样GPU纹理；不读回CPU

@@ -9,11 +9,12 @@
 | 文件 | 职责 |
 | --- | --- |
 | CaptureSource.h | 一个设备/窗口/显示器选择项：类型、ID、名称、句柄 |
-| VideoCapture.h/.cpp | 摄像头、窗口、屏幕采集；单帧邮箱；GPU 纹理及预览 |
+| VideoCapture.h/.cpp | 摄像头、窗口、屏幕采集；单帧邮箱；GPU 纹理快照 |
 | WasapiCapture.h/.cpp | 麦克风和回环共用的实现；PCM 包、音量、有界邮箱 |
 | SessionController.h/.cpp | 复用工作台控制器，枚举设备、协调三路启停、交付媒体数据 |
 | mainwindow.h/.cpp | 选择设备、开始/停止、音量、房间及状态说明；操作区支持滚动 |
-| PreviewWindow.h/.cpp | 独立非模态画面窗口，保持比例显示，关闭后可重新打开 |
+| PreviewWindow.h/.cpp | 独立非模态画面窗口，关闭后可重新打开 |
+| VideoRenderer.h/.cpp | 第 005 步新增，GPU 纹理采样、等比绘制与 SwapChain |
 
 界面继续使用现有 MVC。SessionModel 保存信令和房间业务状态；采集线程状态由工作台控制器直接协调，不额外增加一套 MVC。以上源码仍平铺在 OBS client。
 
@@ -36,9 +37,7 @@ WGC 桌面互操作要求 Windows 10 1903 或更高版本。窗口关闭、最�
 
 **视频**：VideoFrame.texture 是独立持有的 D3D11 BGRA8 纹理快照，可通过 GetDevice 获得所属设备。WGC surface 或摄像头 GPU surface 通过 GPU 复制保存，系统复用采集帧池不会修改消费者保留的纹理。摄像头驱动若提供 SoftwareBitmap，则按真实步长上传；不强行承诺所有摄像头零拷贝。
 
-VideoFrame.timestamp100ns 使用系统相对 QPC 时间域，sequence 区分新帧。邮箱只保留最新一帧。现阶段 CPU 预览最多 10fps、尺寸不超过 960×540；GPU 帧约每 33ms 交付一次，但静止窗口可能没有新帧。当前独立窗口的 QPainter 预览有 GPU→CPU 读回，尚不是 GPU 渲染/美颜链路。
-
-preview 是缓存的最近一次读回图像，previewTimestamp100ns 单独记录其采样时刻，可能早于当前 GPU 帧。编码及后续 GPU 处理使用 texture 与 timestamp100ns，不使用低帧率预览代替原始帧。
+VideoFrame.timestamp100ns 使用系统相对 QPC 时间域，sequence 区分新帧，邮箱只保留最新一帧。GUI 约每 33ms 交付一次，但静止窗口可能没有新帧。第 005 步已移除原先 QImage 低频预览及 staging 读回，独立窗口现在直接采样 GPU 纹理，详见 [GPU 渲染说明](005-gpu-preview.md)。
 
 **音频**：AudioPacket.pcm 是交错 Float32 PCM，保留端点的采样率和声道数；不在采集层偷偷重采样或混音。支持 PCM 8/16/24/32 位及 IEEE Float 32/64 位，EXTENSIBLE 根据 SubFormat 区分 PCM 与 Float。静音包转换为零值，异常浮点值归零。
 
@@ -64,7 +63,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
 python scripts/run_capture_checks.py
 ```
 
-完整 CTest 仍使用 scripts/run_checks.py。client.capture 覆盖 PCM/Float/EXTENSIBLE、静音和不连续标志、无效格式、无效窗口重复启停、GUI 枚举响应、退出登录及角色界面；另覆盖非模态首帧展示、关闭后不自动弹出、重新打开显示最新帧、缩放留黑边、停止/退出清理及长名称的小窗口布局。
+完整 CTest 仍使用 scripts/run_checks.py。client.capture 覆盖 PCM/Float/EXTENSIBLE、静音和不连续标志、无效格式、无效窗口重复启停、GUI 枚举响应、退出登录及角色界面；另覆盖非模态首帧展示、关闭后不自动弹出、重新打开显示最新帧、共享 D3D11 状态恢复、切换设备、停止/退出清理及长名称的小窗口布局。
 
 只验证布局、独立窗口生命周期并保存中文界面截图：
 

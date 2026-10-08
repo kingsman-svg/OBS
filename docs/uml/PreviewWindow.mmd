@@ -1,12 +1,17 @@
 classDiagram
 class PreviewWindow {
   -QString m_placeholder
-  -QImage m_frame
+  -QLabel* m_message
+  -VideoRenderer* m_renderer
+  -QStackedLayout* m_layout
   -bool m_presented
+  -bool m_renderFailed
   +PreviewWindow(title, placeholder, parent)
-  +setFrame(image) void
+  +setFrame(frame) void
   +present() void
-  #paintEvent(event) void
+  +failed(message) signal
 }
 QWidget <|-- PreviewWindow
-PreviewWindow *-- QImage : latest display frame
+PreviewWindow *-- VideoRenderer : 原生GPU画布
+PreviewWindow *-- QLabel : 占位和错误提示
+PreviewWindow *-- QStackedLayout : 互斥显示

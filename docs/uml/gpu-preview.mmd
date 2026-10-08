@@ -1,0 +1,38 @@
+sequenceDiagram
+participant P as PreviewWindow
+participant R as VideoRenderer
+participant D as D3D11设备
+participant C as 专用DeferredContext
+participant I as 共享ImmediateContext
+participant S as DXGI交换链
+P->>R: setFrame(VideoFrame)，只缓存最新纹理
+R->>R: paintEvent，获取HWND物理像素尺寸
+alt 首帧或输入设备/句柄变化
+R->>R: 释放旧视图和交换链，Flush
+R->>D: 沿输入纹理GetDevice，创建DeferredContext
+R->>D: 编译VS/PS，创建固定二维状态
+R->>S: CreateSwapChainForHwnd，双缓冲flip
+end
+alt 窗口物理尺寸变化
+R->>R: 释放RTV，清除旧后缓冲引用
+R->>S: ResizeBuffers / GetBuffer
+R->>D: 创建新的RTV
+end
+R->>D: 输入BGRA纹理创建SRV
+R->>C: 清背景，绑定SRV/Shader/等比视口，Draw(3)
+R->>C: FinishCommandList(FALSE)，重置录制状态
+C-->>R: CommandList
+R->>I: ExecuteCommandList(TRUE)，恢复共享状态
+R->>S: Present(0, DO_NOT_WAIT)
+alt Present队列忙碌
+S-->>R: WAS_STILL_DRAWING
+R->>R: 最多一个16ms延迟重试，避免静态首帧丢失
+else 窗口遮挡
+S-->>R: OCCLUDED，等待后续窗口/帧事件
+else Present成功
+R->>R: emit framePresented(sequence)，供调试观察
+else 格式/设备/交换链失败
+R->>R: 释放渲染资源并锁存错误
+R-->>P: failed，显示错误，采集仍继续
+end
+Note over D,I: 复用同设备，立即上下文开启线程保护；生产路径没有CPU读回

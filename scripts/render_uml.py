@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'VideoRenderer': '视频GPU渲染类图', 'gpu-preview': 'GPU预览渲染时序图',
     'PreviewWindow': '独立画面窗口类图', 'preview-window': '独立画面窗口时序图',
     'CaptureSource': '采集源数据类图', 'VideoFrame': '视频帧数据类图',
     'AudioPacket': '音频包数据类图', 'VideoCapture': '视频采集类图',
@@ -101,7 +102,8 @@ def arrow(c, x1, y1, x2, y2, dashed=False, inheritance=False):
 
 def save(c, path):
     path = path.with_name(IMAGE_NAMES[path.stem])
-    ET.ElementTree(c['svg']).write(path.with_suffix('.svg'), encoding='utf-8', xml_declaration=True)
+    # 写入字节以保持 LF，避免 Windows 文本包装器把 XML 换行改成 CRLF。
+    path.with_suffix('.svg').write_bytes(ET.tostring(c['svg'], encoding='utf-8', xml_declaration=True))
     c['image'].save(path.with_suffix('.png'))
 
 def render_class(path):

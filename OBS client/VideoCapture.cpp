@@ -29,6 +29,7 @@ namespace WGC = winrt::Windows::Graphics::Capture;
 namespace DX = winrt::Windows::Graphics::DirectX;
 
 namespace {
+// 将 QPC 计数换成 100ns，摄像头缺少系统时间时使用。
 qint64 qpcTime()
 {
     LARGE_INTEGER value{}, frequency{};
@@ -37,6 +38,7 @@ qint64 qpcTime()
     return value.QuadPart / frequency.QuadPart * 10000000
         + value.QuadPart % frequency.QuadPart * 10000000 / frequency.QuadPart;
 }
+// 创建支持 BGRA 的硬件设备，供 WGC 或 CPU 位图上传使用。
 ComPtr<ID3D11Device> createDevice()
 {
     ComPtr<ID3D11Device> device;
@@ -44,6 +46,7 @@ ComPtr<ID3D11Device> createDevice()
         D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, nullptr));
     return device;
 }
+// 从 WinRT 表面取得底层 D3D11 纹理，COM 引用保证临时对象有效。
 ComPtr<ID3D11Texture2D> surfaceTexture(const DX::Direct3D11::IDirect3DSurface &surface)
 {
     ComPtr<ID3D11Texture2D> texture;
@@ -71,7 +74,7 @@ VideoCapture::~VideoCapture() { stop(); wait(); }
 QList<CaptureSource> VideoCapture::sources(QString *warning)
 {
     QList<CaptureSource> result;
-    // 桌面枚举不依赖摄像头；摄像头权限失败仍可保留窗口和显示器。
+    // 1. 枚举显示器并保存 HMONITOR；桌面枚举不依赖摄像头；摄像头权限失败仍可保留窗口和显示器。
     EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR monitor, HDC, LPRECT, LPARAM parameter) -> BOOL {
         auto &items = *reinterpret_cast<QList<CaptureSource> *>(parameter);
         MONITORINFOEXW info{};
@@ -84,6 +87,7 @@ QList<CaptureSource> VideoCapture::sources(QString *warning)
         }
         return TRUE;
     }, reinterpret_cast<LPARAM>(&result));
+    // 2. 枚举可见且未最小化的顶层窗口，保存 HWND 和标题。
     EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
         if (!IsWindowVisible(window) || IsIconic(window) || GetWindow(window, GW_OWNER)) return TRUE;
         const int length = GetWindowTextLengthW(window);
@@ -95,6 +99,7 @@ QList<CaptureSource> VideoCapture::sources(QString *warning)
                       QStringLiteral("窗口 · ") + QString::fromWCharArray(title.c_str()), quintptr(window)});
         return TRUE;
     }, reinterpret_cast<LPARAM>(&result));
+    // 3. 用 WinRT 枚举摄像头设备 ID，权限失败仍保留桌面选择项。
     try {
         auto devices = winrt::Windows::Devices::Enumeration::DeviceInformation::FindAllAsync(
             winrt::Windows::Devices::Enumeration::DeviceClass::VideoCapture).get();
@@ -110,11 +115,11 @@ QList<CaptureSource> VideoCapture::sources(QString *warning)
 
 bool VideoCapture::begin(const CaptureSource &source)
 {
+    // 1. 拒绝重复启动及非视频源；2. 复制选择并清邮箱；3. start 进入 run。
     if (isRunning() || (source.kind != CaptureSource::Kind::Camera
         && source.kind != CaptureSource::Kind::Window && source.kind != CaptureSource::Kind::Monitor)) return false;
     m_source = source;
     { QMutexLocker lock(&m_mutex); m_latest = {}; }
-    m_lastPreviewTime = 0;
     start();
     return true;
 }
@@ -125,6 +130,7 @@ void VideoCapture::run()
 {
     bool initialized = false;
     try {
+        // 1. 在线程内建立 MTA；2. 按源类型进入摄像头或 WGC 采集流程。
         init_apartment(apartment_type::multi_threaded);
         initialized = true;
         if (!isInterruptionRequested()) {
@@ -138,25 +144,27 @@ void VideoCapture::run()
     } catch (const std::exception &error) {
         if (!isInterruptionRequested()) emit failed(QString::fromUtf8(error.what()));
     }
-    m_staging.Reset();
+    // 3. 采集函数已归还系统资源，清邮箱后退出 MTA；外部保留的快照仍有效。
     { QMutexLocker lock(&m_mutex); m_latest = {}; }
     if (initialized) uninit_apartment();
 }
 
 void VideoCapture::captureDesktop()
 {
-    // 在激活 WinRT/WGC 或创建设备前检查失效句柄，避免无效请求进入系统采集服务。
+    // 1. 校验 HWND 和 WGC 支持；在激活 WinRT/WGC 或创建设备前检查失效句柄，避免无效请求进入系统采集服务。
     if (m_source.kind == CaptureSource::Kind::Window) {
         const auto window = reinterpret_cast<HWND>(m_source.handle);
         if (!IsWindow(window) || IsIconic(window)) throw std::runtime_error("目标窗口已关闭或最小化，请重新选择");
     }
     if (!WGC::GraphicsCaptureSession::IsSupported()) throw std::runtime_error("当前系统不支持 WGC（需要 Windows 10 1903 或更高版本）");
+    // 2. D3D11 设备包装成 WinRT IDirect3DDevice。
     auto device = createDevice();
     ComPtr<IDXGIDevice> dxgi;
     check_hresult(device.As(&dxgi));
     com_ptr<IInspectable> inspectable;
     check_hresult(CreateDirect3D11DeviceFromDXGIDevice(dxgi.Get(), inspectable.put()));
     auto direct3d = inspectable.as<DX::Direct3D11::IDirect3DDevice>();
+    // 3. 根据 HWND/HMONITOR 创建捕获目标，读取初始尺寸。
     auto factory = get_activation_factory<WGC::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     WGC::GraphicsCaptureItem item{nullptr};
     if (m_source.kind == CaptureSource::Kind::Monitor) {
@@ -168,9 +176,10 @@ void VideoCapture::captureDesktop()
     }
     auto size = item.Size();
     if (size.Width <= 0 || size.Height <= 0) throw std::runtime_error("采集目标尺寸无效");
+    // 4. 创建双纹理帧池；FreeThreaded 不依赖 GUI Dispatcher。
     auto pool = WGC::Direct3D11CaptureFramePool::CreateFreeThreaded(direct3d,
         DX::DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, size);
-    // 系统帧回调只通知工作线程，不持有 this 或执行纹理操作；退出时不存在悬空对象回调。
+    // 5. 注册 FrameArrived 和 Closed。系统帧回调只通知工作线程，不持有 this 或执行纹理操作；退出时不存在悬空对象回调。
     auto notification = std::make_shared<QSemaphore>();
     const auto frameToken = pool.FrameArrived([notification](const auto &, const auto &) {
         if (!notification->available()) notification->release();
@@ -178,7 +187,7 @@ void VideoCapture::captureDesktop()
     auto session = pool.CreateCaptureSession(item);
     auto closed = std::make_shared<std::atomic_bool>(false);
     const auto closedToken = item.Closed([closed](const auto &, const auto &) { closed->store(true); });
-    // 每项独立清理，设备断开导致一个 Close 抛错时，仍然撤销其余回调并释放资源。
+    // 8. 清理出口：先撤销事件，再 Close 会话和帧池；每项独立清理，设备断开导致一个 Close 抛错时，仍然撤销其余回调并释放资源。
     const auto cleanup = [&]() noexcept {
         try { item.Closed(closedToken); } catch (...) {}
         try { pool.FrameArrived(frameToken); } catch (...) {}
@@ -186,6 +195,7 @@ void VideoCapture::captureDesktop()
         try { pool.Close(); } catch (...) {}
     };
     try {
+        // 6. StartCapture 后通知 GUI；循环每次只取最新可用系统帧。
         session.StartCapture();
         emit opened();
         while (!isInterruptionRequested()) {
@@ -195,6 +205,7 @@ void VideoCapture::captureDesktop()
             notification->tryAcquire(1, 33);
             auto frame = pool.TryGetNextFrame();
             if (!frame) continue;
+            // 7. 解包 GPU 纹理、复制独立快照；归还帧后才按新尺寸重建池。
             const auto content = frame.ContentSize();
             const bool resized = content.Width != size.Width || content.Height != size.Height;
             if (content.Width > 0 && content.Height > 0) {
@@ -218,6 +229,7 @@ void VideoCapture::captureDesktop()
 
 void VideoCapture::captureCamera()
 {
+    // 1. 创建设备会话和错误通知；设备 ID 来自 sources 的 WinRT 枚举。
     MediaCapture capture;
     MediaFrameReader reader{nullptr};
     event_token frameToken{};
@@ -225,6 +237,7 @@ void VideoCapture::captureCamera()
     const auto failedToken = capture.Failed([failure](const MediaCapture &, const MediaCaptureFailedEventArgs &args) {
         failure->store(args.Code() ? args.Code() : quint32(E_FAIL));
     });
+    // 8. 正常/异常都撤销 FrameArrived，StopAsync、Close Reader，再关闭会话。
     const auto cleanup = [&]() noexcept {
         if (reader) {
             try { if (frameToken.value) reader.FrameArrived(frameToken); } catch (...) {}
@@ -236,23 +249,28 @@ void VideoCapture::captureCamera()
         try { capture.Close(); } catch (...) {}
     };
     try {
+        // 2. 以设备 ID 初始化 MediaCapture，只读共享、只取视频，允许 GPU 表面。
         MediaCaptureInitializationSettings settings;
         settings.VideoDeviceId(m_source.id.toStdWString());
         settings.StreamingCaptureMode(StreamingCaptureMode::Video);
         settings.SharingMode(MediaCaptureSharingMode::SharedReadOnly);
         settings.MemoryPreference(MediaCaptureMemoryPreference::Auto);
         awaitOperation(capture.InitializeAsync(settings), this);
+        // 3. 从 FrameSources 选择 Color，避免误把深度/红外当彩色视频。
         MediaFrameSource source{nullptr};
         for (const auto &entry : capture.FrameSources())
             if (entry.Value().Info().SourceKind() == MediaFrameSourceKind::Color) { source = entry.Value(); break; }
         if (!source) throw std::runtime_error("摄像头没有可用的彩色视频源");
+        // 4. 创建 BGRA8 Reader，Realtime 优先新帧，不积压旧帧。
         reader = awaitOperation(capture.CreateFrameReaderAsync(source,
             winrt::Windows::Media::MediaProperties::MediaEncodingSubtypes::Bgra8()), this);
         reader.AcquisitionMode(MediaFrameReaderAcquisitionMode::Realtime);
+        // 5. 注册 FrameArrived，只唤醒线程；纹理操作放在下面的取帧循环。
         auto notification = std::make_shared<QSemaphore>();
         frameToken = reader.FrameArrived([notification](const auto &, const auto &) {
             if (!notification->available()) notification->release();
         });
+        // 6. StartAsync 成功后通知 GUI；启动成功不代表已经收到首帧。
         if (awaitOperation(reader.StartAsync(), this) != MediaFrameReaderStartStatus::Success)
             throw std::runtime_error("摄像头启动失败，请检查隐私权限或设备占用");
         emit opened();
@@ -260,6 +278,7 @@ void VideoCapture::captureCamera()
         while (!isInterruptionRequested()) {
             if (const auto code = failure->load()) check_hresult(HRESULT(code));
             notification->tryAcquire(1, 33);
+            // 7. 获取最新帧及 QPC 时间；优先 GPU 表面，CPU 位图兼容上传。
             auto frame = reader.TryAcquireLatestFrame();
             if (!frame) continue;
             auto video = frame.VideoMediaFrame();
@@ -305,10 +324,12 @@ void VideoCapture::captureCamera()
 
 void VideoCapture::publishTexture(ID3D11Texture2D *source, int width, int height, qint64 timestamp)
 {
+    // 1. 按时间戳去重，避免同一系统帧重复交付。
     {
         QMutexLocker lock(&m_mutex);
         if (m_latest.sequence && timestamp <= m_latest.timestamp100ns) return; // 同一摄像头帧不重复交付。
     }
+    // 2. 沿源纹理取设备和立即上下文，启用多线程保护。
     ComPtr<ID3D11Device> device;
     source->GetDevice(&device);
     ComPtr<ID3D11DeviceContext> context;
@@ -324,6 +345,7 @@ void VideoCapture::publishTexture(ID3D11Texture2D *source, int width, int height
     description.MipLevels = 1; description.ArraySize = 1;
     description.Usage = D3D11_USAGE_DEFAULT; description.BindFlags = D3D11_BIND_SHADER_RESOURCE;
     description.CPUAccessFlags = 0; description.MiscFlags = 0;
+    // 3. 创建独立 BGRA 快照并 GPU 复制；不让消费者引用系统会复用的帧池。
     VideoFrame output;
     check_hresult(device->CreateTexture2D(&description, nullptr, &output.texture));
     D3D11_BOX box{0, 0, 0, UINT(width), UINT(height), 1};
@@ -332,32 +354,9 @@ void VideoCapture::publishTexture(ID3D11Texture2D *source, int width, int height
     // Flush 只提交 GPU 工作，不在 GUI 线程等待；后面的帧池才有机会继续交付新帧。
     context->Flush();
     output.timestamp100ns = timestamp;
-    // GPU 帧始终保留；CPU 读回仅为现阶段 QLabel 预览，限制为 10fps。
-    if (timestamp - m_lastPreviewTime >= 1000000) {
-        D3D11_TEXTURE2D_DESC old{};
-        ComPtr<ID3D11Device> oldDevice;
-        if (m_staging) { m_staging->GetDesc(&old); m_staging->GetDevice(&oldDevice); }
-        if (!m_staging || old.Width != description.Width || old.Height != description.Height || oldDevice != device) {
-            description.Usage = D3D11_USAGE_STAGING; description.BindFlags = 0;
-            description.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-            m_staging.Reset();
-            check_hresult(device->CreateTexture2D(&description, nullptr, &m_staging));
-        }
-        context->CopyResource(m_staging.Get(), output.texture.Get());
-        D3D11_MAPPED_SUBRESOURCE mapped{};
-        check_hresult(context->Map(m_staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
-        QImage image(static_cast<const uchar *>(mapped.pData), width, height, int(mapped.RowPitch), QImage::Format_RGB32);
-        output.preview = image.scaled(960, 540, Qt::KeepAspectRatio, Qt::FastTransformation).copy();
-        output.previewTimestamp100ns = timestamp;
-        context->Unmap(m_staging.Get(), 0);
-        m_lastPreviewTime = timestamp;
-    }
+    // 4. 加锁替换单帧邮箱；输出始终留在 GPU，没有 Map/QImage 预览读回。
     QMutexLocker lock(&m_mutex);
     output.sequence = m_latest.sequence + 1;
-    if (output.preview.isNull()) {
-        output.preview = m_latest.preview;
-        output.previewTimestamp100ns = m_latest.previewTimestamp100ns;
-    }
     m_latest = std::move(output);
 }
 } // namespace csn

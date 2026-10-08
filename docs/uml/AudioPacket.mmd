@@ -1,4 +1,5 @@
 classDiagram
+%% 保留设备采样率与声道；不连续及估计时间标志
 class AudioPacket {
   +QByteArray pcm
   +int sampleRate
@@ -7,4 +8,4 @@ class AudioPacket {
   +bool discontinuity
   +bool timestampEstimated
 }
-WasapiCapture --> AudioPacket : Float32 / QPC
+AudioPacket *-- QByteArray : 交错Float32采样
