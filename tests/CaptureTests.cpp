@@ -25,6 +25,9 @@
 #include <QScrollBar>
 #include <QScreen>
 #include <QTest>
+#include <QSignalSpy>
+#include <QSpinBox>
+#include <QCheckBox>
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 #include <mmsystem.h>
@@ -172,6 +175,12 @@ bool captureMvc()
     CHECK(ticks > 0);
     login.completeLogin("test", "root", "root", 60);
     CHECK(start->isEnabled());
+    QSignalSpy mixChanges(&view, &MainWindow::audioMixChanged);
+    view.findChild<QSpinBox *>("microphoneGain")->setValue(150);
+    view.findChild<QCheckBox *>("microphoneMute")->setChecked(true);
+    CHECK(mixChanges.size() == 2 && mixChanges[0][0].value<CaptureSource::Kind>() == CaptureSource::Kind::Microphone);
+    CHECK(mixChanges[0][1].toFloat() == 1.5f && mixChanges[1][2].toBool());
+    CHECK(!player.findChild<QSpinBox *>("microphoneGain"));
     view.captureRequested({});
     CHECK(view.findChild<QLabel *>("captureStatusLabel")->text().contains(QStringLiteral("请至少选择")));
     view.captureRequested({{CaptureSource::Kind::Window, "invalid", "closed window", 1}});
@@ -246,10 +255,19 @@ bool previewUiLifecycle()
         {QStringLiteral("采集中：") + longName, QStringLiteral("未启用"), QStringLiteral("未启用")});
     const QSize compactSize = QSize(640, 480).boundedTo(initialSize);
     view.resize(compactSize);
+    view.showMixedAudio(0.3f, QStringLiteral("48kHz · 立体声 · 10ms\n已输出 100 包，削波 0 次"));
     QTest::qWait(30);
     CHECK(view.size() == compactSize);
     CHECK(scroll->widget()->width() <= scroll->viewport()->width());
     CHECK(scroll->verticalScrollBar()->maximum() > 0); // 小窗口可滚动访问底部房间操作。
+    auto *mixStatus = view.findChild<QLabel *>("audioMixStatusLabel");
+    CHECK(mixStatus && mixStatus->hasHeightForWidth());
+    CHECK(mixStatus->height() >= mixStatus->heightForWidth(mixStatus->width())); // 统计第二行不裁切。
+    view.showMixedAudio(0, QStringLiteral("48kHz · 立体声 · 10ms\n音频处理失败：") + QString(100, QChar(0x6d4b)));
+    QTest::qWait(30);
+    CHECK(mixStatus->height() >= mixStatus->heightForWidth(mixStatus->width())); // 错误详情可增高并滚动。
+    view.showMixedAudio(0.3f, QStringLiteral("48kHz · 立体声 · 10ms\n已输出 100 包，削波 0 次"));
+    QTest::qWait(30);
 
     // 只保存自建色块及人工构造的界面状态，不访问摄像头、麦克风或屏幕。
     const auto directory = qEnvironmentVariable("OBS_UI_SCREENSHOTS");
@@ -261,6 +279,7 @@ bool previewUiLifecycle()
             {QStringLiteral("视频采集中"), QStringLiteral("未启用"), QStringLiteral("未启用")});
         view.resize(initialSize); QTest::qWait(30);
         CHECK(view.grab().save(directory + QStringLiteral("/主窗口采集设置.png")));
+        CHECK(view.grab().save(directory + QStringLiteral("/音频重采样混音页面.png")));
         preview->resize(QSize(720, 480).boundedTo(preview->screen()->availableGeometry().size() - QSize(40, 80)));
         QTest::qWait(30);
         // 原生 SwapChain 不在 QWidget backing store 中；实际画面在 WGC 专项测试取证。
@@ -476,6 +495,85 @@ bool desktopHardware()
     qInfo("PASS WGC window / color / resize / restart / target close");
     return true;
 }
+bool loopbackMixHardware()
+{
+    qInfo("BEGIN WASAPI loopback to resampler / mixer / MVC / stop tail / logout");
+    MainWindow view(ClientRole::Publisher);
+    LoginModel login; HttpClient http; LoginController auth(&view, &login, &http);
+    SessionModel model; SignalClient signal;
+    SessionController controller(&view, &login, &model, &signal);
+    CHECK(until([&] { return view.findChild<QPushButton *>("refreshDevicesButton")->isEnabled(); }));
+    auto *combo = view.findChild<QComboBox *>("systemAudioCombo");
+    // 选与 WAVE_MAPPER 对应的默认输出，而不是假定机器只有一个输出设备。
+    QString defaultId;
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    HRESULT probe = apartment;
+    if (SUCCEEDED(apartment) || apartment == RPC_E_CHANGED_MODE) {
+        Microsoft::WRL::ComPtr<IMMDeviceEnumerator> manager;
+        Microsoft::WRL::ComPtr<IMMDevice> endpoint;
+        probe = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&manager));
+        if (SUCCEEDED(probe)) probe = manager->GetDefaultAudioEndpoint(eRender, eConsole, &endpoint);
+        LPWSTR id = nullptr;
+        if (SUCCEEDED(probe)) probe = endpoint->GetId(&id);
+        if (SUCCEEDED(probe)) { defaultId = QString::fromWCharArray(id); CoTaskMemFree(id); }
+    }
+    if (SUCCEEDED(apartment)) CoUninitialize();
+    int selected = -1;
+    for (int index = 1; index < combo->count(); ++index)
+        if (combo->itemData(index).value<CaptureSource>().id == defaultId) selected = index;
+    if (selected < 1) {
+        qInfo("SKIP loopback mix hardware: no enumerated default output; endpoints=%d HRESULT=0x%08x", combo->count() - 1, unsigned(probe));
+        qInfo().noquote() << view.findChild<QLabel *>("captureStatusLabel")->text();
+        return true;
+    }
+    combo->setCurrentIndex(selected);
+    login.completeLogin("test", "root", "root", 60);
+    int mixed = 0;
+    bool valid = true;
+    qint64 last = 0;
+    QObject::connect(&controller, &SessionController::mixedAudioReady, &view, [&](const AudioPacket &packet) {
+        ++mixed;
+        valid = valid && packet.channels == 2 && packet.channelMask == 3 && packet.sampleRate == 48000
+            && packet.pcm.size() == 480 * 8 && packet.timestamp100ns > last;
+        last = packet.timestamp100ns;
+    });
+    // 只播放人工静音以驱动默认输出，捕获数据不保存，不打开屏幕/摄像头/麦克风。
+    HWAVEOUT output = nullptr;
+    auto waveFormat = format(16);
+    const auto opened = waveOutOpen(&output, WAVE_MAPPER, &waveFormat, 0, 0, CALLBACK_NULL);
+    QByteArray silence(48000 * 4 * 3, '\0');
+    WAVEHDR header{}; header.lpData = silence.data(); header.dwBufferLength = DWORD(silence.size());
+    MMRESULT prepared = MMSYSERR_ERROR, written = MMSYSERR_ERROR;
+    bool received = false, stopped = false, restarted = false, loggedOut = false, noLate = false;
+    if (opened == MMSYSERR_NOERROR) {
+        prepared = waveOutPrepareHeader(output, &header, sizeof(header));
+        if (prepared == MMSYSERR_NOERROR) written = waveOutWrite(output, &header, sizeof(header));
+        if (written == MMSYSERR_NOERROR) {
+            view.findChild<QPushButton *>("startCaptureButton")->click();
+            received = until([&] { return mixed >= 15; });
+            view.findChild<QPushButton *>("stopCaptureButton")->click();
+            stopped = until([&] { return !view.findChild<QPushButton *>("stopCaptureButton")->isEnabled(); });
+            const int afterStop = mixed;
+            QTest::qWait(100); noLate = mixed == afterStop;
+            view.findChild<QPushButton *>("startCaptureButton")->click();
+            restarted = until([&] { return mixed > afterStop + 10; });
+            login.logout();
+            const int afterLogout = mixed;
+            loggedOut = until([&] { return !view.findChild<QPushButton *>("stopCaptureButton")->isEnabled(); });
+            QTest::qWait(100); noLate = noLate && mixed == afterLogout;
+        }
+        // 无论验证结果如何，先停止播放、归还缓冲，再做会提前return的断言。
+        waveOutReset(output);
+        if (prepared == MMSYSERR_NOERROR) waveOutUnprepareHeader(output, &header, sizeof(header));
+        waveOutClose(output);
+    }
+    qInfo().noquote() << view.findChild<QLabel *>("audioMixStatusLabel")->text();
+    CHECK(opened == MMSYSERR_NOERROR && prepared == MMSYSERR_NOERROR && written == MMSYSERR_NOERROR);
+    CHECK(received && stopped && restarted && loggedOut && noLate && valid);
+    qInfo("PASS WASAPI to fixed mixed packets: %d packets; stop/restart/logout, no late delivery", mixed);
+    return true;
+}
+
 bool deviceHardware()
 {
     MainWindow view(ClientRole::Publisher);
@@ -586,6 +684,7 @@ int main(int argc, char **argv)
     const bool hardware = app.arguments().contains("--hardware");
     if (app.arguments().contains("--ui-only")) return previewUiLifecycle() ? 0 : 1;
     if (app.arguments().contains("--window-preview")) return gpuOutputHardware() && desktopHardware() ? 0 : 1;
+    if (app.arguments().contains("--audio-mix")) return loopbackMixHardware() ? 0 : 1;
     if (hardware) return gpuOutputHardware() && desktopHardware() && deviceHardware() ? 0 : 1;
     if (!audioFormats() || !failedWorkerRestart() || !captureMvc() || !previewUiLifecycle()) return 1;
     qInfo("PASS 4 capture groups: PCM formats / failed worker restart / MVC and logout / independent preview");

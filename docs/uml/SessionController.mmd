@@ -20,10 +20,14 @@ class SessionController {
   -bool m_stoppingCapture
   -QString m_deviceMessage
   -quint64 m_lastSequence
+  -AudioMixer m_audioMixer
+  -quint64 m_mixedPackets
+  -QString m_audioError
   +SessionController(view, login, model, signal)
   +~SessionController()
   +videoFrameReady(frame) signal
   +audioPacketReady(kind, packet) signal
+  +mixedAudioReady(packet) signal
   -onLoginChanged() void
   -reconnect() void
   -refreshView() void
@@ -39,6 +43,9 @@ class SessionController {
   -refreshCaptureView() void
   -deliverCapture() void
   -bindCapture(worker, index) void
+  -consumeAudio() void
+  -finishAudio() void
+  -refreshAudioView() void
 }
 QObject <|-- SessionController
 SessionController --> MainWindow : view intents
@@ -48,3 +55,4 @@ SessionController --> SignalClient : async transport
 SessionController *-- QTimer : login expiry
 SessionController *-- VideoCapture : 推流端视频
 SessionController *-- WasapiCapture : 麦克风与回环
+SessionController *-- AudioMixer : 两路音频处理

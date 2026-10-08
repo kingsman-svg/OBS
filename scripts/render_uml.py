@@ -11,6 +11,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'AudioResampler': '音频重采样类图', 'AudioMixer': '音频混音类图',
+    'AudioMixTrack': '混音输入状态类图', 'audio-resample': '音频重采样时序图',
+    'audio-mix': '双路音频混音时序图', 'audio-finish': '混音停止排空时序图',
     'VideoRenderer': '视频GPU渲染类图', 'gpu-preview': 'GPU预览渲染时序图',
     'PreviewWindow': '独立画面窗口类图', 'preview-window': '独立画面窗口时序图',
     'CaptureSource': '采集源数据类图', 'VideoFrame': '视频帧数据类图',
@@ -162,7 +165,7 @@ def render_sequence(path):
         text(c, x, 96, label, 17, centered=True)
         line(c, x, 135, x, height-35, True)
     y = 175
-    group = None
+    groups = []
     for row in events:
         message = re.match(r'(\w+)(-->>|->>)(\w+):\s*(.*)', row)
         note = re.match(r'Note over (\w+)(?:,(\w+))?:\s*(.*)', row, re.I)
@@ -179,15 +182,18 @@ def render_sequence(path):
                 arrow(c, x1, y, x2, y, style == '-->>')
                 text(c, (x1+x2)/2, y-25, label, 14, centered=True)
         elif row.startswith('alt '):
-            group = y-28
-            text(c, 14, y-23, '[alt] '+row[4:], 14)
-            line(c, 8, group, width-8, group)
+            left, top = 8 + len(groups)*12, y-28
+            groups.append((left, top))
+            text(c, left+6, y-23, '[alt] '+row[4:], 14)
+            line(c, left, top, width-left, top)
         elif row.startswith('else '):
-            line(c, 8, y-28, width-8, y-28, True)
-            text(c, 14, y-23, '[else] '+row[5:], 14)
-        elif row == 'end' and group is not None:
-            line(c, 8, group, 8, y-22); line(c, width-8, group, width-8, y-22)
-            line(c, 8, y-22, width-8, y-22); group = None
+            left, _ = groups[-1]
+            line(c, left, y-28, width-left, y-28, True)
+            text(c, left+6, y-23, '[else] '+row[5:], 14)
+        elif row == 'end' and groups:
+            left, top = groups.pop()
+            line(c, left, top, left, y-22); line(c, width-left, top, width-left, y-22)
+            line(c, left, y-22, width-left, y-22)
         elif note:
             a, b, label = note.groups()
             note_width = max(210, c['draw'].textlength(label, font=ImageFont.truetype(str(FONT), 13))+30)

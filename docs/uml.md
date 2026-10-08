@@ -16,6 +16,9 @@
 | WasapiCapture | [源码](uml/WasapiCapture.mmd) | [音频采集类图](uml/音频采集类图.png) | [矢量图](uml/音频采集类图.svg) |
 | VideoRenderer | [源码](uml/VideoRenderer.mmd) | [视频GPU渲染类图](uml/视频GPU渲染类图.png) | [矢量图](uml/视频GPU渲染类图.svg) |
 | PreviewWindow | [源码](uml/PreviewWindow.mmd) | [独立画面窗口类图](uml/独立画面窗口类图.png) | [矢量图](uml/独立画面窗口类图.svg) |
+| AudioResampler | [源码](uml/AudioResampler.mmd) | [音频重采样类图](uml/音频重采样类图.png) | [矢量图](uml/音频重采样类图.svg) |
+| AudioMixer | [源码](uml/AudioMixer.mmd) | [音频混音类图](uml/音频混音类图.png) | [矢量图](uml/音频混音类图.svg) |
+| AudioMixTrack | [源码](uml/AudioMixTrack.mmd) | [混音输入状态类图](uml/混音输入状态类图.png) | [矢量图](uml/混音输入状态类图.svg) |
 
 MainWindow、SessionController 类图及退出登录时序已同步更新。采集时序图：
 
@@ -25,6 +28,9 @@ MainWindow、SessionController 类图及退出登录时序已同步更新。采�
 - [停止清理源码](uml/capture-stop.mmd) · [停止清理图](uml/采集停止清理时序图.png) · [SVG](uml/采集停止清理时序图.svg)
 - [GPU预览渲染源码](uml/gpu-preview.mmd) · [GPU预览渲染图](uml/GPU预览渲染时序图.png) · [SVG](uml/GPU预览渲染时序图.svg)
 - [独立画面窗口源码](uml/preview-window.mmd) · [独立画面窗口图](uml/独立画面窗口时序图.png) · [SVG](uml/独立画面窗口时序图.svg)
+- [音频重采样源码](uml/audio-resample.mmd) · [音频重采样图](uml/音频重采样时序图.png) · [SVG](uml/音频重采样时序图.svg)
+- [双路混音源码](uml/audio-mix.mmd) · [双路混音图](uml/双路音频混音时序图.png) · [SVG](uml/双路音频混音时序图.svg)
+- [混音停止源码](uml/audio-finish.mmd) · [混音停止排空图](uml/混音停止排空时序图.png) · [SVG](uml/混音停止排空时序图.svg)
 
 双端工作台新增类图：
 

@@ -22,6 +22,8 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 
 推流端已接入 WinRT 摄像头、WGC 窗口/屏幕、WASAPI 麦克风/系统声音，提供设备选择、启停、独立非模态预览和双路音量。主窗口仅放操作面板，小窗口可滚动；首帧打开预览，关闭画面后采集继续，可用“打开画面”恢复。底层只有 VideoCapture、WasapiCapture 两个采集类，由现有工作台控制器协调，预览已改为 D3D11 Shader + 双缓冲 SwapChain，生产路径不读回 CPU；采集与渲染成员及流程有中文编号注释。详见 [采集说明](docs/004-capture.md) 与 [GPU 渲染说明](docs/005-gpu-preview.md)。播放端支持直播/点播页面切换，本地文件与在线地址输入已预留；解码、编码、实际推拉流、GPU 美颜与 AI 继续逐步接入。LocalAuthServer 仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
 
+音频已接入 FFmpeg 7.1 libswresample，统一为 48kHz / 立体声 / Float32 / 10ms，按 QPC 对齐麦克风与系统回环，支持各路音量、静音、缺包补零和削波统计。正常停止排空尾部，退出登录丢弃迟到数据；提供混音后的媒体信号，后续接编码器。构建需配置 FFmpeg shared SDK，详见 [音频重采样与混音](docs/006-audio-mix.md)。
+
 ## 工作方式
 
 目录保持简单分级：
@@ -59,6 +61,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 003 步：两个客户端工作台](docs/003-two-clients.md)
 - [第 004 步：音视频采集](docs/004-capture.md)
 - [第 005 步：GPU 渲染与 SwapChain](docs/005-gpu-preview.md)
+- [第 006 步：音频重采样与混音](docs/006-audio-mix.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

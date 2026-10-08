@@ -1,0 +1,26 @@
+sequenceDiagram
+participant M as AudioMixer
+participant R as 每路AudioResampler
+participant S as FFmpeg libswresample
+M->>R: convert(原始Float32 AudioPacket)
+R->>R: 校验采样率、声道掩码、时间和包布局
+alt 输入无效或多声道布局不明
+R-->>M: 异常，控制器禁用此路并显示错误
+else 重复或倒序包
+R-->>M: 空包，不推进滤波状态
+else 合法新包
+alt 首包、格式变化或超过5ms时间跳变
+R->>S: swr_free，撤掉旧滤波状态
+R->>S: swr_alloc_set_opts2，输出48kHz立体声
+R->>S: 单声道复制矩阵 / swr_init
+R->>R: 记录本段QPC原点及不连续标记
+else 时间连续
+R->>R: 累计样本时钟，吸收小幅时间抖动
+end
+R->>S: swr_get_out_samples，预留含滤波延迟的容量
+R->>S: swr_convert，输入交错Float32
+S-->>R: 可变数量的立体声Float32帧
+R->>R: 按本段实际输出样本数计算QPC时间
+R-->>M: 转换包，保留不连续/估计时间标记
+end
+Note over R,S: 当前只做固定采样率转换；尚无自适应设备时钟漂移补偿

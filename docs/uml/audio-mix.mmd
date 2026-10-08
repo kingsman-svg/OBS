@@ -1,0 +1,32 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow
+participant C as SessionController
+participant W as 两路WasapiCapture
+participant M as AudioMixer
+participant R as 每路AudioResampler
+U->>V: 选择音频源，开始采集
+V-->>C: captureRequested
+C->>M: begin，清缓存，启用选中的输入路
+C->>W: begin，线程独立采集原始格式
+W-->>C: 队列中的PCM、声道布局、QPC时间
+C->>M: push(kind, packet)
+M->>R: convert，统一48kHz立体声
+R-->>M: 可变长重采样包
+M->>M: 首包建立QPC原点，每路最多缓存500ms
+C->>M: takeFrames(当前QPC)，留80ms对齐窗口
+M->>M: 按时间交集填480帧，缺包补零
+M->>M: 两路增益/静音，再相加、削波、计算RMS
+M-->>C: 固定10ms包与连续样本时间戳
+C->>C: emit mixedAudioReady，后续编码入口
+C->>V: 显示混音RMS、包数、削波统计
+U->>V: 改变音量或静音
+V-->>C: audioMixChanged
+C->>M: setControl，后续混音立即应用
+alt 一路设备或重采样失败
+C->>M: disable失败路，另一成功路继续
+C->>V: 保留失败说明
+else GUI长时间停顿或缓存溢出
+M->>M: 丢弃旧包，单次最多追赶200ms并标记不连续
+end
+Note over W,M: 静音仍消费时间，恢复不重放旧包；当前不监听回采声音

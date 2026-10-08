@@ -1,0 +1,11 @@
+classDiagram
+class AudioMixTrack {
+  +AudioResampler resampler
+  +deque_AudioPacket packets
+  +int queuedFrames
+  +bool enabled
+  +float gain
+  +bool muted
+}
+AudioMixTrack *-- AudioResampler : 每路独立滤波
+AudioMixTrack *-- AudioPacket : 最多500ms缓存

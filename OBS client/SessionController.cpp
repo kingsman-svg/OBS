@@ -6,6 +6,7 @@
 #include "VideoCapture.h"
 #include "WasapiCapture.h"
 #include <QCoreApplication>
+#include <windows.h>
 #include <winrt/base.h>
 #include <algorithm>
 #include <cmath>
@@ -19,6 +20,14 @@ bool validRoom(const QJsonObject &room)
         && !room.value(QStringLiteral("title")).toString().isEmpty()
         && room.value(QStringLiteral("streaming")).isBool()
         && room.value(QStringLiteral("viewers")).isDouble();
+}
+// 只读当前QPC，音频输出时钟仍按样本数推进，不按GUI回调次数累计。
+qint64 audioNow()
+{
+    LARGE_INTEGER value{}, frequency{};
+    QueryPerformanceCounter(&value); QueryPerformanceFrequency(&frequency);
+    return value.QuadPart / frequency.QuadPart * 10000000
+        + value.QuadPart % frequency.QuadPart * 10000000 / frequency.QuadPart;
 }
 }
 
@@ -106,6 +115,11 @@ void SessionController::setupCapture()
     connect(m_view, &MainWindow::captureRequested, this, &SessionController::startCapture);
     connect(m_view, &MainWindow::stopCaptureRequested, this, &SessionController::stopCapture);
     connect(m_view, &MainWindow::refreshDevicesRequested, this, &SessionController::refreshDevices);
+    connect(m_view, &MainWindow::audioMixChanged, this, [this](CaptureSource::Kind kind, float gain, bool muted) {
+        try { m_audioMixer.setControl(kind, gain, muted); }
+        catch (const std::exception &error) { m_audioError = QString::fromUtf8(error.what()); }
+        refreshAudioView();
+    });
     connect(qApp, &QCoreApplication::aboutToQuit, this, &SessionController::stopCapture);
     bindCapture(m_video, 0); bindCapture(m_microphone, 1); bindCapture(m_system, 2);
     connect(m_video, &VideoCapture::opened, this, [this] {
@@ -122,7 +136,9 @@ void SessionController::setupCapture()
             refreshCaptureView();
         });
         connect(worker, &WasapiCapture::failed, this, [this, index](const QString &error) {
+            m_audioMixer.disable(index == 1 ? CaptureSource::Kind::Microphone : CaptureSource::Kind::Loopback);
             m_captureErrors.insert(index); m_captureMessages[index] = error; refreshCaptureView();
+            refreshAudioView();
         });
     }
     m_captureDelivery.setInterval(33);
@@ -134,8 +150,12 @@ void SessionController::setupCapture()
 void SessionController::bindCapture(QThread *worker, int index)
 {
     connect(worker, &QThread::finished, this, [this, worker, index] {
+        // 1. finished之前端点缓冲已归还；仍需取走最后一批拥有字节数据的包。
+        if (index > 0) consumeAudio();
         // 直到 finished 被 GUI 处理才允许重新启动，避免迟到的旧信号覆盖新状态。
         m_pendingCapture.remove(worker);
+        // 2. 两个音频线程均退出才排空滤波尾部；不必等待视频线程。
+        if (index > 0 && !m_pendingCapture.contains(m_microphone) && !m_pendingCapture.contains(m_system)) finishAudio();
         if (!m_captureErrors.contains(index)) m_captureMessages[index] = tr("已停止");
         if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
         if (index == 0) m_view->showCapturePreview({});
@@ -185,6 +205,15 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
     m_captureErrors.clear();
     m_captureMessages = {tr("未启用"), tr("未启用"), tr("未启用")};
     m_lastSequence = 0;
+    // 1. 按用户本轮选择启用混音路，先清理上轮数据与处理错误。
+    bool microphone = false, system = false;
+    for (const auto &source : selection) {
+        microphone = microphone || source.kind == CaptureSource::Kind::Microphone;
+        system = system || source.kind == CaptureSource::Kind::Loopback;
+    }
+    m_audioMixer.begin(microphone, system); m_mixedPackets = 0; m_audioError.clear();
+    refreshAudioView();
+    // 2. 启动各采集线程；采集层仍输出设备原始采样率和布局。
     for (const auto &source : selection) {
         const int index = source.kind == CaptureSource::Kind::Microphone ? 1 : source.kind == CaptureSource::Kind::Loopback ? 2 : 0;
         QThread *worker = index == 0 ? static_cast<QThread *>(m_video) : index == 1 ? m_microphone : m_system;
@@ -202,6 +231,9 @@ void SessionController::stopCapture()
     if (!m_video) return;
     m_stoppingCapture = !m_pendingCapture.isEmpty();
     m_video->stop(); m_microphone->stop(); m_system->stop();
+    // 普通停止等音频finished后排空；退出登录立即丢弃，禁止交付迟到媒体。
+    if (!m_loggedIn) { m_audioMixer.clear(); refreshAudioView(); }
+    else if (!m_pendingCapture.contains(m_microphone) && !m_pendingCapture.contains(m_system)) finishAudio();
     const QList<QThread *> workers{m_video, m_microphone, m_system};
     for (int index = 0; index < workers.size(); ++index)
         if (m_pendingCapture.contains(workers[index]) && !m_captureErrors.contains(index)) m_captureMessages[index] = tr("正在停止");
@@ -227,14 +259,62 @@ void SessionController::deliverCapture()
         emit videoFrameReady(frame);
         m_view->showCapturePreview(frame);
     }
+    // 原始包可继续排入停止尾部，但普通交付只在采集运行期间进行。
+    consumeAudio();
+    if (deliver) {
+        for (const auto &packet : m_audioMixer.takeFrames(audioNow())) {
+            if (!m_loggedIn) break;
+            ++m_mixedPackets; emit mixedAudioReady(packet);
+        }
+    }
+    refreshAudioView();
+    m_view->showAudioLevels(deliver ? m_microphone->level() : 0, deliver ? m_system->level() : 0);
+}
+
+void SessionController::consumeAudio()
+{
+    // 1. 两路依次取走队列；即使退出也清掉迟到包，避免下一次登录重放。
     for (int index : {1, 2}) {
         auto *worker = index == 1 ? m_microphone : m_system;
-        const auto packets = worker->takePackets();
-        if (deliver && m_pendingCapture.contains(worker) && !m_captureErrors.contains(index))
-            for (const auto &packet : packets) emit audioPacketReady(
-                index == 1 ? CaptureSource::Kind::Microphone : CaptureSource::Kind::Loopback, packet);
+        const auto kind = index == 1 ? CaptureSource::Kind::Microphone : CaptureSource::Kind::Loopback;
+        for (const auto &packet : worker->takePackets()) {
+            if (!m_loggedIn || m_captureErrors.contains(index)) continue;
+            emit audioPacketReady(kind, packet); // 原始包保留为诊断入口，编码使用mixedAudioReady。
+            // 2. 重采样失败只撤掉这一路，另一成功路仍输出，错误保留在混音状态。
+            try { m_audioMixer.push(kind, packet); }
+            catch (const std::exception &error) {
+                m_audioMixer.disable(kind);
+                if (!m_audioError.isEmpty()) m_audioError += QStringLiteral("；");
+                m_audioError += tr("%1处理失败：%2").arg(index == 1 ? tr("麦克风") : tr("系统声音"), QString::fromUtf8(error.what()));
+            }
+        }
     }
-    m_view->showAudioLevels(deliver ? m_microphone->level() : 0, deliver ? m_system->level() : 0);
+}
+
+void SessionController::finishAudio()
+{
+    // 1. 退出只丢弃；2. 正常停止输出滤波尾部和最后补零包；3. 更新已停止状态。
+    if (!m_loggedIn) m_audioMixer.clear();
+    else {
+        try {
+            for (const auto &packet : m_audioMixer.finish()) {
+                if (!m_loggedIn) break;
+                ++m_mixedPackets; emit mixedAudioReady(packet);
+            }
+        } catch (const std::exception &error) { m_audioMixer.clear(); m_audioError = QString::fromUtf8(error.what()); }
+    }
+    refreshAudioView();
+}
+
+void SessionController::refreshAudioView()
+{
+    QString message;
+    if (m_audioMixer.active())
+        message = m_mixedPackets ? tr("48kHz · 立体声 · 10ms\n已输出 %1 包，削波 %2 次").arg(m_mixedPackets).arg(m_audioMixer.clippedSamples())
+            : tr("48kHz · 立体声 · 10ms\n等待首包音频，缓冲80ms");
+    else message = m_mixedPackets ? tr("混音已停止，共 %1 包，削波 %2 次").arg(m_mixedPackets).arg(m_audioMixer.clippedSamples()) : tr("未启用音频混音");
+    if (!m_audioError.isEmpty()) message += QStringLiteral("\n") + m_audioError;
+    m_view->showMixedAudio(m_audioMixer.level(), message);
 }
 
 void SessionController::reconnect()

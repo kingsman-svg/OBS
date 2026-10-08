@@ -1,5 +1,6 @@
 #pragma once
 #include "CaptureSource.h"
+#include "AudioMixer.h"
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QObject>
@@ -27,6 +28,7 @@ signals:
     // 当前在 GUI 线程交付；后续编码消费者应快速转交有界队列。
     void videoFrameReady(const csn::VideoFrame &frame);
     void audioPacketReady(csn::CaptureSource::Kind kind, const csn::AudioPacket &packet);
+    void mixedAudioReady(const csn::AudioPacket &packet); // 固定48kHz/立体声/10ms，供后续编码使用。
 private:
     void onLoginChanged();
     void reconnect();
@@ -44,6 +46,9 @@ private:
     void refreshCaptureView(); // 把线程状态和设备提示刷新到主窗口。
     void deliverCapture(); // GUI 每 33ms 取最新 GPU 帧及音频包，不让旧帧堆积。
     void bindCapture(QThread *worker, int index); // 绑定退出回调，index 为视频0/麦克风1/回环2。
+    void consumeAudio();                      // 取两路原始包、发诊断信号并交给独立重采样器。
+    void finishAudio();                       // 正常停止后排空混音，退出登录直接丢弃。
+    void refreshAudioView();                  // 更新混音输出状态，错误不覆盖设备采集状态。
     MainWindow *m_view;
     LoginModel *m_login;
     SessionModel *m_model;
@@ -63,7 +68,10 @@ private:
     QSet<int> m_captureErrors; // 失败源索引，防止 finished 抹掉错误提示。
     QStringList m_captureMessages{QString(), QString(), QString()}; // 视频、麦克风、回环各自的状态文字。
     QString m_deviceMessage; // 设备枚举结果或权限提示。
-    bool m_stoppingCapture = false; // 停止阶段拒绝交付迟到的帧/包。
+    bool m_stoppingCapture = false; // 暂停普通媒体交付；仍登录时允许音频尾部排空。
     quint64 m_lastSequence = 0; // 上次交付的视频序号，用于邮箱去重。
+    AudioMixer m_audioMixer;                  // GUI串行处理两路有限长度数据，不增加采集MVC。
+    quint64 m_mixedPackets = 0;                // 本轮已交付的固定10ms混音包数。
+    QString m_audioError;                     // 音频处理错误锁存到下一轮，其他成功路继续。
 };
 }

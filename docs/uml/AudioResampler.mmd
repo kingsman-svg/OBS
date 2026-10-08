@@ -1,0 +1,23 @@
+classDiagram
+class AudioResampler {
+  -SwrContext* m_context
+  -int m_inputRate
+  -int m_inputChannels
+  -quint64 m_inputMask
+  -qint64 m_origin
+  -qint64 m_inputFrames
+  -qint64 m_outputFrames
+  -qint64 m_lastTimestamp
+  -bool m_discontinuity
+  -bool m_estimated
+  +int OutputRate = 48000$
+  +AudioResampler()
+  +~AudioResampler()
+  +convert(input) AudioPacket
+  +drain() AudioPacket
+  +reset() void
+  -configure(input) void
+  -resample(data, frames) AudioPacket
+}
+AudioResampler *-- SwrContext : 独占滤波状态
+AudioResampler --> AudioPacket : 设备格式转48kHz立体声
