@@ -8,6 +8,12 @@ class MainWindow {
   -QListWidget* m_rooms
   -QComboBox* m_mode
   -bool m_loggedIn
+  -QLabel* m_preview
+  -QComboBox* m_videoSource
+  -QComboBox* m_micSource
+  -QComboBox* m_systemSource
+  -QProgressBar* m_micLevel
+  -QProgressBar* m_systemLevel
   +MainWindow(parent)
   +MainWindow(role, parent)
   +~MainWindow()
@@ -18,6 +24,10 @@ class MainWindow {
   +applySessionState(ready, busy, connecting, message, room, rooms) void
   +setLoginEndpoint(endpoint) void
   +setSignalEndpoint(host, port) void
+  +setCaptureSources(sources) void
+  +applyCaptureState(canStart, active, enumerating, devices, messages) void
+  +showCapturePreview(image) void
+  +showAudioLevels(microphone, system) void
   +loginRequested(endpoint, account, password) signal
   +cancelRequested() signal
   +logoutRequested() signal
@@ -26,6 +36,9 @@ class MainWindow {
   +refreshRoomsRequested() signal
   +joinRoomRequested(roomId) signal
   +leaveRoomRequested() signal
+  +captureRequested(sources) signal
+  +stopCaptureRequested() signal
+  +refreshDevicesRequested() signal
   #closeEvent(event) void
   -buildWorkspace() QWidget
 }

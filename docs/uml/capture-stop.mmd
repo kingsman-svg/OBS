@@ -1,0 +1,18 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow
+participant C as SessionController
+participant W as 三个采集工作线程
+participant S as Windows采集资源
+U->>V: 停止采集、退出登录或关闭窗口
+V-->>C: stopCaptureRequested 或登录状态变化
+C->>C: 停止交付数据，清空预览
+C->>W: stop / requestInterruption
+C->>V: 显示正在停止，禁用重新启动
+W->>W: 初始化等待或采集轮询检查停止标志
+W->>S: 停止及关闭Reader/Session/FramePool/AudioClient
+W->>W: 释放COM资源后反初始化MTA
+W-->>C: finished
+C->>C: 移除未完成线程；保留失败说明
+C->>V: 已停止，登录状态允许时可重新选择
+Note over C,W: GUI启停不wait；控制器析构必须wait，保证线程不访问已销毁对象

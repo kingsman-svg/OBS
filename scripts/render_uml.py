@@ -11,6 +11,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'CaptureSource': '采集源数据类图', 'VideoFrame': '视频帧数据类图',
+    'AudioPacket': '音频包数据类图', 'VideoCapture': '视频采集类图',
+    'WasapiCapture': '音频采集类图', 'capture-devices': '采集设备枚举时序图',
+    'capture-video': '视频采集预览时序图', 'capture-audio': '双路音频采集时序图',
+    'capture-stop': '采集停止清理时序图',
     'SignalClient': '客户端信令类图', 'SessionModel': '工作台模型类图',
     'SessionController': '工作台控制器类图',
     'client-session': '客户端信令连接时序图', 'client-frames': '客户端信令收发时序图',
@@ -105,6 +110,7 @@ def render_class(path):
     members = [s.strip() for s in match.group(1).splitlines() if s.strip()]
     relations = re.findall(r'^(\w+)\s+(<\|--|\*--|-->|\.\.>)\s+(\w+)(?:\s*:\s*(.*))?$', source, re.M)
     peers = list(dict.fromkeys(b if a == name else a for a, _, b, _ in relations))
+    aliases = dict(re.findall(r'class (\w+)\["([^"]+)"\]', source))
     height = max(220 + len(members)*30, 170 + len(peers)*150)
     c = canvas(1220, height)
     text(c, 40, 22, f'{name} · UML 类图', 26)
@@ -121,7 +127,7 @@ def render_class(path):
     for i, peer in enumerate(peers):
         py = 110 + i*150
         rect(c, 950, py, 235, 54, '#f1f5f9')
-        text(c, 1067, py+12, peer, 17, centered=True)
+        text(c, 1067, py+12, aliases.get(peer, peer), 17, centered=True)
     for a, symbol, b, label in relations:
         peer = b if a == name else a
         py = 137 + peers.index(peer)*150

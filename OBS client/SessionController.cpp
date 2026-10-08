@@ -3,6 +3,10 @@
 #include "SessionModel.h"
 #include "SignalClient.h"
 #include "mainwindow.h"
+#include "VideoCapture.h"
+#include "WasapiCapture.h"
+#include <QCoreApplication>
+#include <winrt/base.h>
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -54,7 +58,18 @@ SessionController::SessionController(MainWindow *view, LoginModel *login, Sessio
     connect(signal, &SignalClient::response, this, &SessionController::onResponse);
     connect(signal, &SignalClient::eventReceived, this, &SessionController::onEvent);
     refreshView();
+    if (view->role() == ClientRole::Publisher) setupCapture();
     onLoginChanged();
+}
+
+SessionController::~SessionController()
+{
+    m_captureDelivery.stop();
+    if (!m_video) return;
+    m_video->stop(); m_microphone->stop(); m_system->stop();
+    // 日常停止异步进行；析构等待退出，保证工作线程不访问已销毁对象。
+    if (m_enumerator) m_enumerator->wait();
+    m_video->wait(); m_microphone->wait(); m_system->wait();
 }
 
 void SessionController::onLoginChanged()
@@ -66,9 +81,11 @@ void SessionController::onLoginChanged()
         scheduleExpiry();
         reconnect();
     } else {
+        stopCapture();
         m_expiry.stop();
         m_signal->disconnectFromServer(tr("已退出登录。"));
     }
+    refreshCaptureView();
 }
 
 void SessionController::scheduleExpiry()
@@ -79,6 +96,147 @@ void SessionController::scheduleExpiry()
         return;
     }
     m_expiry.start(int(std::min<qint64>(remaining, std::numeric_limits<int>::max())));
+}
+
+void SessionController::setupCapture()
+{
+    m_video = new VideoCapture(this);
+    m_microphone = new WasapiCapture(this);
+    m_system = new WasapiCapture(this);
+    connect(m_view, &MainWindow::captureRequested, this, &SessionController::startCapture);
+    connect(m_view, &MainWindow::stopCaptureRequested, this, &SessionController::stopCapture);
+    connect(m_view, &MainWindow::refreshDevicesRequested, this, &SessionController::refreshDevices);
+    connect(qApp, &QCoreApplication::aboutToQuit, this, &SessionController::stopCapture);
+    bindCapture(m_video, 0); bindCapture(m_microphone, 1); bindCapture(m_system, 2);
+    connect(m_video, &VideoCapture::opened, this, [this] {
+        if (!m_stoppingCapture) m_captureMessages[0] = tr("视频采集中");
+        refreshCaptureView();
+    });
+    connect(m_video, &VideoCapture::failed, this, [this](const QString &error) {
+        m_captureErrors.insert(0); m_captureMessages[0] = error; refreshCaptureView();
+    });
+    for (int index : {1, 2}) {
+        auto *worker = index == 1 ? m_microphone : m_system;
+        connect(worker, &WasapiCapture::opened, this, [this, index] {
+            if (!m_stoppingCapture) m_captureMessages[index] = tr("音频采集中");
+            refreshCaptureView();
+        });
+        connect(worker, &WasapiCapture::failed, this, [this, index](const QString &error) {
+            m_captureErrors.insert(index); m_captureMessages[index] = error; refreshCaptureView();
+        });
+    }
+    m_captureDelivery.setInterval(33);
+    connect(&m_captureDelivery, &QTimer::timeout, this, &SessionController::deliverCapture);
+    m_captureDelivery.start();
+    refreshDevices();
+}
+
+void SessionController::bindCapture(QThread *worker, int index)
+{
+    connect(worker, &QThread::finished, this, [this, worker, index] {
+        // 直到 finished 被 GUI 处理才允许重新启动，避免迟到的旧信号覆盖新状态。
+        m_pendingCapture.remove(worker);
+        if (!m_captureErrors.contains(index)) m_captureMessages[index] = tr("已停止");
+        if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
+        if (index == 0) m_view->showCapturePreview({});
+        refreshCaptureView();
+    });
+}
+
+void SessionController::refreshDevices()
+{
+    if (!m_video || m_enumerator || !m_pendingCapture.isEmpty()) return;
+    m_enumerator = QThread::create([this] {
+        QList<CaptureSource> sources;
+        QStringList errors;
+        bool initialized = false;
+        try {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            initialized = true;
+            QString warning;
+            try { sources += VideoCapture::sources(&warning); }
+            catch (const winrt::hresult_error &error) { errors << QString::fromStdWString(error.message().c_str()); }
+            if (!warning.isEmpty()) errors << warning;
+            for (bool loopback : {false, true}) {
+                try { sources += WasapiCapture::devices(loopback); }
+                catch (const winrt::hresult_error &error) { errors << QString::fromStdWString(error.message().c_str()); }
+            }
+        } catch (const winrt::hresult_error &error) { errors << QString::fromStdWString(error.message().c_str()); }
+        if (initialized) winrt::uninit_apartment();
+        const auto message = errors.isEmpty() ? tr("已发现 %1 个采集目标；更换设备后可刷新。").arg(sources.size())
+            : tr("部分设备枚举失败：%1").arg(errors.join(QStringLiteral("；")));
+        QMetaObject::invokeMethod(this, [this, sources, message] {
+            m_view->setCaptureSources(sources);
+            m_deviceMessage = message;
+        }, Qt::QueuedConnection);
+    });
+    m_enumerator->setParent(this);
+    connect(m_enumerator, &QThread::finished, this, [this] {
+        m_enumerator->deleteLater(); m_enumerator = nullptr; refreshCaptureView();
+    });
+    refreshCaptureView();
+    m_enumerator->start();
+}
+
+void SessionController::startCapture(const QList<CaptureSource> &selection)
+{
+    if (!m_video || !m_loggedIn || m_enumerator || !m_pendingCapture.isEmpty()) return;
+    if (selection.isEmpty()) { m_captureMessages[0] = tr("请至少选择一个采集源"); refreshCaptureView(); return; }
+    m_captureErrors.clear();
+    m_captureMessages = {tr("未启用"), tr("未启用"), tr("未启用")};
+    m_lastSequence = 0; m_lastPreviewTimestamp = 0;
+    for (const auto &source : selection) {
+        const int index = source.kind == CaptureSource::Kind::Microphone ? 1 : source.kind == CaptureSource::Kind::Loopback ? 2 : 0;
+        QThread *worker = index == 0 ? static_cast<QThread *>(m_video) : index == 1 ? m_microphone : m_system;
+        if (m_pendingCapture.contains(worker)) continue;
+        m_captureMessages[index] = tr("正在打开 %1").arg(source.name);
+        m_pendingCapture.insert(worker);
+        const bool started = index == 0 ? m_video->begin(source) : index == 1 ? m_microphone->begin(source) : m_system->begin(source);
+        if (!started) { m_pendingCapture.remove(worker); m_captureMessages[index] = tr("采集线程正在退出，请稍后重试"); }
+    }
+    refreshCaptureView();
+}
+
+void SessionController::stopCapture()
+{
+    if (!m_video) return;
+    m_stoppingCapture = !m_pendingCapture.isEmpty();
+    m_video->stop(); m_microphone->stop(); m_system->stop();
+    const QList<QThread *> workers{m_video, m_microphone, m_system};
+    for (int index = 0; index < workers.size(); ++index)
+        if (m_pendingCapture.contains(workers[index]) && !m_captureErrors.contains(index)) m_captureMessages[index] = tr("正在停止");
+    m_view->showCapturePreview({});
+    refreshCaptureView();
+}
+
+void SessionController::refreshCaptureView()
+{
+    if (!m_video) return;
+    const bool active = !m_pendingCapture.isEmpty();
+    m_view->applyCaptureState(m_loggedIn && !active && !m_enumerator, active, m_enumerator != nullptr,
+        m_deviceMessage, m_captureMessages);
+}
+
+void SessionController::deliverCapture()
+{
+    const bool deliver = m_loggedIn && !m_stoppingCapture;
+    const auto frame = m_video->latestFrame();
+    if (deliver && m_pendingCapture.contains(m_video) && !m_captureErrors.contains(0)
+        && frame.texture && frame.sequence != m_lastSequence) {
+        m_lastSequence = frame.sequence;
+        emit videoFrameReady(frame);
+        if (!frame.preview.isNull() && frame.previewTimestamp100ns != m_lastPreviewTimestamp) {
+            m_lastPreviewTimestamp = frame.previewTimestamp100ns; m_view->showCapturePreview(frame.preview);
+        }
+    }
+    for (int index : {1, 2}) {
+        auto *worker = index == 1 ? m_microphone : m_system;
+        const auto packets = worker->takePackets();
+        if (deliver && m_pendingCapture.contains(worker) && !m_captureErrors.contains(index))
+            for (const auto &packet : packets) emit audioPacketReady(
+                index == 1 ? CaptureSource::Kind::Microphone : CaptureSource::Kind::Loopback, packet);
+    }
+    m_view->showAudioLevels(deliver ? m_microphone->level() : 0, deliver ? m_system->level() : 0);
 }
 
 void SessionController::reconnect()

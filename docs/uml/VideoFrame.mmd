@@ -1,0 +1,11 @@
+classDiagram
+class VideoFrame {
+  +ComPtr_ID3D11Texture2D texture
+  +QImage preview
+  +qint64 previewTimestamp100ns
+  +qint64 timestamp100ns
+  +quint64 sequence
+}
+VideoFrame *-- ID3D11Texture2D : 独立GPU快照
+VideoFrame *-- QImage : 预览≤960×540
+VideoCapture --> VideoFrame : 最新帧邮箱

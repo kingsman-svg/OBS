@@ -1,0 +1,23 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow
+participant C as SessionController
+participant T as 枚举线程
+participant W as Windows设备API
+U->>V: 启动推流端或刷新设备
+V-->>C: refreshDevicesRequested
+C->>C: 未在采集且没有枚举任务才执行
+C->>T: QThread::create 启动 MTA 线程
+T->>W: 枚举显示器和可见窗口
+T->>W: WinRT 枚举摄像头
+T->>W: WASAPI 枚举输入及输出端点
+alt 某类设备枚举失败
+W-->>T: HRESULT 错误
+T->>T: 保留其他可用设备并附错误说明
+else 枚举成功
+W-->>T: CaptureSource 列表
+end
+T-->>C: queued invokeMethod 更新选择项
+T-->>C: finished，允许刷新和开始
+C->>V: 展示设备，默认不采集
+Note over C,T: GUI 不等待设备枚举；析构才等待线程退出

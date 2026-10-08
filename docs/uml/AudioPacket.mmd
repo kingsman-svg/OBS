@@ -1,0 +1,10 @@
+classDiagram
+class AudioPacket {
+  +QByteArray pcm
+  +int sampleRate
+  +int channels
+  +qint64 timestamp100ns
+  +bool discontinuity
+  +bool timestampEstimated
+}
+WasapiCapture --> AudioPacket : Float32 / QPC

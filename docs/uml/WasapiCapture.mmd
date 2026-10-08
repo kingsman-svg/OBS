@@ -1,0 +1,23 @@
+classDiagram
+class WasapiCapture {
+  -CaptureSource m_source
+  -QMutex m_mutex
+  -QList_AudioPacket m_packets
+  -float m_level
+  -qint64 m_lastPacketTime
+  +WasapiCapture(parent)
+  +~WasapiCapture()
+  +devices(loopback) QList_CaptureSource$
+  +decode(data, frames, format, flags, timestamp) AudioPacket$
+  +begin(source) bool
+  +stop() void
+  +takePackets() QList_AudioPacket
+  +level() float
+  +opened() signal
+  +failed(message) signal
+  #run() void
+}
+QThread <|-- WasapiCapture
+WasapiCapture --> IAudioClient : 共享设备格式
+WasapiCapture --> IAudioCaptureClient : 麦克风 / 回环
+WasapiCapture *-- AudioPacket : 最多50包

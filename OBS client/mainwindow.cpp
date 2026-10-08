@@ -1,4 +1,10 @@
 #include "mainwindow.h"
+#include <QProgressBar>
+#include <QGridLayout>
+#include <QPixmap>
+#include <QSignalBlocker>
+#include <cmath>
+#include <algorithm>
 #include "ui_mainwindow.h"
 #include <QCloseEvent>
 #include <QComboBox>
@@ -78,14 +84,63 @@ QWidget *MainWindow::buildWorkspace()
     layout->addLayout(top);
     connect(m_reconnect, &QPushButton::clicked, this, &MainWindow::reconnectRequested);
     auto *preview = new QLabel(m_role == csn::ClientRole::Publisher
-        ? tr("采集预览\n下一步接入摄像头与麦克风")
+        ? tr("采集预览\n选择视频源后开始采集")
         : tr("播放画面\n下一步接入 FFmpeg 解码与音视频输出"), home);
     preview->setObjectName(QStringLiteral("previewPlaceholder"));
     preview->setAlignment(Qt::AlignCenter);
     preview->setMinimumHeight(175);
+    preview->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     preview->setStyleSheet(QStringLiteral("background:#152235; color:#d7e4f7; border-radius:8px; font-size:18px;"));
     layout->addWidget(preview, 1);
+    m_preview = preview;
     if (m_role == csn::ClientRole::Publisher) {
+        auto *capture = new QGroupBox(tr("音视频采集"), home);
+        auto *grid = new QGridLayout(capture);
+        m_videoSource = new QComboBox(capture);
+        m_videoSource->setObjectName(QStringLiteral("videoSourceCombo"));
+        m_micSource = new QComboBox(capture);
+        m_micSource->setObjectName(QStringLiteral("microphoneCombo"));
+        m_systemSource = new QComboBox(capture);
+        m_systemSource->setObjectName(QStringLiteral("systemAudioCombo"));
+        m_micLevel = new QProgressBar(capture);
+        m_micLevel->setObjectName(QStringLiteral("microphoneLevel"));
+        m_systemLevel = new QProgressBar(capture);
+        m_systemLevel->setObjectName(QStringLiteral("systemAudioLevel"));
+        for (auto *level : {m_micLevel, m_systemLevel}) { level->setRange(0, 100); level->setValue(0); level->setTextVisible(false); level->setMaximumWidth(140); }
+        grid->addWidget(new QLabel(tr("视频源"), capture), 0, 0);
+        grid->addWidget(m_videoSource, 0, 1, 1, 2);
+        grid->addWidget(new QLabel(tr("麦克风"), capture), 1, 0);
+        grid->addWidget(m_micSource, 1, 1);
+        grid->addWidget(m_micLevel, 1, 2);
+        grid->addWidget(new QLabel(tr("系统声音"), capture), 2, 0);
+        grid->addWidget(m_systemSource, 2, 1);
+        grid->addWidget(m_systemLevel, 2, 2);
+        grid->setColumnStretch(1, 1);
+        auto *actions = new QHBoxLayout;
+        m_refreshDevices = new QPushButton(tr("刷新设备"), capture);
+        m_refreshDevices->setObjectName(QStringLiteral("refreshDevicesButton"));
+        m_startCapture = new QPushButton(tr("开始采集"), capture);
+        m_startCapture->setObjectName(QStringLiteral("startCaptureButton"));
+        m_stopCapture = new QPushButton(tr("停止采集"), capture);
+        m_stopCapture->setObjectName(QStringLiteral("stopCaptureButton"));
+        actions->addWidget(m_refreshDevices); actions->addStretch();
+        actions->addWidget(m_startCapture); actions->addWidget(m_stopCapture);
+        grid->addLayout(actions, 3, 0, 1, 3);
+        m_captureStatus = new QLabel(tr("正在枚举设备…"), capture);
+        m_captureStatus->setObjectName(QStringLiteral("captureStatusLabel"));
+        m_captureStatus->setWordWrap(true);
+        grid->addWidget(m_captureStatus, 4, 0, 1, 3);
+        layout->addWidget(capture);
+        connect(m_refreshDevices, &QPushButton::clicked, this, &MainWindow::refreshDevicesRequested);
+        connect(m_stopCapture, &QPushButton::clicked, this, &MainWindow::stopCaptureRequested);
+        connect(m_startCapture, &QPushButton::clicked, this, [this] {
+            QList<csn::CaptureSource> selected;
+            for (auto *combo : {m_videoSource, m_micSource, m_systemSource})
+                if (combo->currentData().isValid()) selected.append(combo->currentData().value<csn::CaptureSource>());
+            emit captureRequested(selected);
+        });
+        setCaptureSources({});
+        applyCaptureState(false, false, false, tr("正在准备采集模块"), {});
         auto *group = new QGroupBox(tr("直播房间"), home);
         auto *row = new QHBoxLayout(group);
         m_roomTitle = new QLineEdit(tr("我的直播间"), group);
@@ -97,7 +152,7 @@ QWidget *MainWindow::buildWorkspace()
         row->addWidget(m_create);
         connect(m_create, &QPushButton::clicked, this, [this] { emit createRoomRequested(m_roomTitle->text().trimmed()); });
         layout->addWidget(group);
-        auto *media = new QLabel(tr("媒体功能待接入：设备选择 → 音视频采集 → GPU 特效 → 编码 → 推流 / 录制"), home);
+        auto *media = new QLabel(tr("采集可独立预览；GPU 特效、编码及推流将在后续接入。"), home);
         media->setWordWrap(true);
         layout->addWidget(media);
     } else {
@@ -228,3 +283,51 @@ void MainWindow::setSignalEndpoint(const QString &host, quint16 port) { m_signal
 void MainWindow::setLoginEndpoint(const QUrl &endpoint) { ui->endpointEdit->setText(endpoint.toString()); }
 void MainWindow::closeEvent(QCloseEvent *event) { emit logoutRequested(); QMainWindow::closeEvent(event); }
 MainWindow::~MainWindow() { delete ui; }
+
+void MainWindow::setCaptureSources(const QList<csn::CaptureSource> &sources)
+{
+    if (!m_videoSource) return;
+    for (auto *combo : {m_videoSource, m_micSource, m_systemSource}) {
+        const auto old = combo->currentData().value<csn::CaptureSource>();
+        QSignalBlocker blocker(combo);
+        combo->clear();
+        combo->addItem(tr("不采集")); // 默认关闭采集，用户明确选择后才打开设备。
+        for (const auto &source : sources) {
+            const bool microphone = source.kind == csn::CaptureSource::Kind::Microphone;
+            const bool system = source.kind == csn::CaptureSource::Kind::Loopback;
+            if ((combo == m_micSource && microphone) || (combo == m_systemSource && system)
+                || (combo == m_videoSource && !microphone && !system)) {
+                combo->addItem(source.name, QVariant::fromValue(source));
+                if (source.kind == old.kind && source.id == old.id && !old.id.isEmpty()) combo->setCurrentIndex(combo->count() - 1);
+            }
+        }
+    }
+}
+void MainWindow::applyCaptureState(bool canStart, bool active, bool enumerating,
+                                   const QString &devices, const QStringList &messages)
+{
+    if (!m_videoSource) return;
+    for (auto *combo : {m_videoSource, m_micSource, m_systemSource}) combo->setEnabled(canStart);
+    m_startCapture->setEnabled(canStart);
+    m_stopCapture->setEnabled(active);
+    m_refreshDevices->setEnabled(!active && !enumerating);
+    QStringList text;
+    text << (enumerating ? tr("正在枚举设备…") : devices);
+    const QStringList names{tr("视频"), tr("麦克风"), tr("系统声音")};
+    for (int index = 0; index < std::min(3, int(messages.size())); ++index)
+        if (!messages[index].isEmpty()) text << names[index] + QStringLiteral("：") + messages[index];
+    m_captureStatus->setText(text.join(QLatin1Char('\n')));
+}
+void MainWindow::showCapturePreview(const QImage &image)
+{
+    if (m_role != csn::ClientRole::Publisher) return;
+    if (image.isNull()) { m_preview->setPixmap({}); m_preview->setText(tr("采集预览\n选择视频源后开始采集")); }
+    else m_preview->setPixmap(QPixmap::fromImage(image).scaled(m_preview->size(), Qt::KeepAspectRatio, Qt::FastTransformation));
+}
+void MainWindow::showAudioLevels(float microphone, float system)
+{
+    if (!m_micLevel) return;
+    // dBFS 映射到 -60..0dB，低声说话也能看到变化；不播放回采声音，避免声反馈。
+    const auto level = [](float value) { return value > 0 ? int(std::clamp((20.0f * std::log10(value) + 60.0f) / 60.0f, 0.0f, 1.0f) * 100) : 0; };
+    m_micLevel->setValue(level(microphone)); m_systemLevel->setValue(level(system));
+}
