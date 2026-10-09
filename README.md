@@ -24,6 +24,8 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 
 音频已接入 FFmpeg 7.1 libswresample，统一为 48kHz / 立体声 / Float32 / 10ms，按 QPC 对齐麦克风与系统回环，支持各路音量、静音、缺包补零和削波统计。正常停止排空尾部，退出登录丢弃迟到数据；提供混音后的媒体信号，后续接编码器。构建需配置 FFmpeg shared SDK，详见 [音频重采样与混音](docs/006-audio-mix.md)。
 
+独立模型优化工程位于 `cpp/FaceOptimizer.sln`，使用原生 C++ / TensorRT，优化 SCRFD-10G-KPS，比较 FP32、FP16、INT8 PTQ，提供可选 2:4 剪枝和验证报告。输出 `.engine`，本阶段与 OBS 分离；详见 [模型优化说明](docs/007-model-optimization.md)。
+
 ## 工作方式
 
 目录保持简单分级：
@@ -32,6 +34,7 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 CourseStudioNext/
 ├─ OBS client/       应用源码、界面和 CMakeLists.txt（源码平铺）
 ├─ OBS server/ Linux 服务端源码和 Docker 开发环境（挂载到 /workspace）
+├─ cpp/       独立 Visual Studio 模型优化工程（源码平铺）
 ├─ tests/     行为测试
 ├─ docs/      需求、设计、接口和阶段记录
 │  └─ uml/   Mermaid 源码、中文命名的 SVG/PNG 图片
@@ -62,6 +65,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 004 步：音视频采集](docs/004-capture.md)
 - [第 005 步：GPU 渲染与 SwapChain](docs/005-gpu-preview.md)
 - [第 006 步：音频重采样与混音](docs/006-audio-mix.md)
+- [第 007 步：独立 TensorRT 模型优化](docs/007-model-optimization.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64"><Configuration>Debug</Configuration><Platform>x64</Platform></ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64"><Configuration>Release</Configuration><Platform>x64</Platform></ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{9906E5BB-5311-4ABD-9389-9328B19C93DA}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword><RootNamespace>FaceOptimizer</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType><PlatformToolset>v145</PlatformToolset><CharacterSet>Unicode</CharacterSet>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Debug'">true</UseDebugLibraries>
+    <UseDebugLibraries Condition="'$(Configuration)'=='Release'">false</UseDebugLibraries>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets"><Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" /></ImportGroup>
+  <PropertyGroup>
+    <OpenCVRoot Condition="'$(OpenCVRoot)'==''">C:\dev\opencv\opencv\build</OpenCVRoot>
+    <OnnxRuntimeRoot Condition="'$(OnnxRuntimeRoot)'==''">$(ProjectDir)out\sdk\onnxruntime-win-x64-1.30.0</OnnxRuntimeRoot>
+    <OutDir>$(ProjectDir)out\$(Configuration)\</OutDir><IntDir>$(ProjectDir)out\obj\$(Configuration)\</IntDir>
+    <LocalDebuggerWorkingDirectory>$(ProjectDir)</LocalDebuggerWorkingDirectory>
+    <LocalDebuggerCommandArguments>--smoke</LocalDebuggerCommandArguments>
+    <LocalDebuggerEnvironment>PATH=$(TENSORRT_ROOT)\bin;$(CUDA_PATH)\bin;$(OpenCVRoot)\x64\vc16\bin;$(OnnxRuntimeRoot)\lib;%PATH%</LocalDebuggerEnvironment>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level4</WarningLevel><SDLCheck>true</SDLCheck><LanguageStandard>stdcpp17</LanguageStandard>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;ORT_API_MANUAL_INIT;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(TENSORRT_ROOT)\include;$(CUDA_PATH)\include;$(OpenCVRoot)\include;$(OnnxRuntimeRoot)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem><GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalLibraryDirectories>$(TENSORRT_ROOT)\lib;$(CUDA_PATH)\lib\x64;$(OpenCVRoot)\x64\vc16\lib;$(OnnxRuntimeRoot)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>nvinfer_11.lib;nvonnxparser_11.lib;cudart.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)'=='Release'">opencv_world4130.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)'=='Debug'">opencv_world4130d.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+  <Target Name="CheckSdkPaths" BeforeTargets="PrepareForBuild">
+    <Error Condition="!Exists('$(TENSORRT_ROOT)\include\NvInfer.h')" Text="设置 TENSORRT_ROOT 为 TensorRT 11.2 SDK 根目录，然后重启 Visual Studio。" />
+    <Error Condition="!Exists('$(CUDA_PATH)\include\cuda_runtime_api.h')" Text="设置 CUDA_PATH 为 CUDA SDK 根目录。" />
+    <Error Condition="!Exists('$(OpenCVRoot)\include\opencv2\core.hpp')" Text="使用 /p:OpenCVRoot=... 指定 OpenCV 4.13 SDK。" />
+    <Error Condition="!Exists('$(OnnxRuntimeRoot)\include\onnxruntime_cxx_api.h')" Text="先运行 scripts/prepare_face_model.ps1 安装本地 ONNX Runtime C++ 参考 SDK。" />
+  </Target>
+  <ItemGroup><ClCompile Include="main.cpp" /><ClCompile Include="EngineSession.cpp" /><ClCompile Include="ModelOptimizer.cpp" /></ItemGroup>
+  <ItemGroup><ClInclude Include="TrtLogger.h" /><ClInclude Include="EngineSession.h" /><ClInclude Include="ModelOptimizer.h" /></ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CopyReferenceRuntime" AfterTargets="Build">
+    <ItemGroup><ReferenceRuntime Include="$(OnnxRuntimeRoot)\lib\onnxruntime*.dll" /></ItemGroup>
+    <Copy SourceFiles="@(ReferenceRuntime)" DestinationFolder="$(OutDir)" SkipUnchangedFiles="true" />
+  </Target>
+</Project>

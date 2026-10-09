@@ -1,0 +1,26 @@
+sequenceDiagram
+participant O as 优化 / 校准调用者
+participant S as EngineSession
+participant T as TensorRT Runtime
+participant G as CUDA stream
+O->>S: 序列化 plan 和 TrtLogger
+S->>T: deserializeCudaEngine / createExecutionContext
+alt 版本 / GPU / 张量格式不兼容
+S->>S: release 清理已分配资源
+S-->>O: 异常退出
+else 固定形状 Float32 单输入
+S->>G: 创建 stream，分配全部 I/O
+S->>T: setTensorAddress 绑定命名缓冲
+O->>S: run(input)
+S->>G: 输入 H2D
+S->>T: enqueueV3(stream)
+S->>G: 输出 D2H、同步
+alt CUDA / 推理失败或输出非有限值
+S-->>O: 抛出异常，不交付有效结果
+else 输出有效
+S-->>O: 本次命名输出张量
+end
+O->>S: 析构
+S->>G: 同步后释放缓冲和 stream
+S->>T: Context → Engine → Runtime 释放
+end

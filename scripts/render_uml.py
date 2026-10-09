@@ -11,6 +11,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'TrtLogger': '推理日志类图', 'EngineSession': '推理引擎会话类图',
+    'ModelOptimizer': '模型优化器类图', 'model-optimize': '独立模型优化时序图',
+    'engine-infer': '推理引擎执行时序图',
     'AudioResampler': '音频重采样类图', 'AudioMixer': '音频混音类图',
     'AudioMixTrack': '混音输入状态类图', 'audio-resample': '音频重采样时序图',
     'audio-mix': '双路音频混音时序图', 'audio-finish': '混音停止排空时序图',

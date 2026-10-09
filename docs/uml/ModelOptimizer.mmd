@@ -1,0 +1,11 @@
+classDiagram
+class ModelOptimizer {
+  -TrtLogger m_logger
+  +run(onnx, calibration, validation, output, sparse, smoke) void
+  +selfTest() void$
+}
+ModelOptimizer *-- TrtLogger : 覆盖构建和验证寿命
+ModelOptimizer ..> EngineSession : 校准 / 对照 / 测速
+ModelOptimizer ..> TensorRT : 原始图解析与候选构建
+ModelOptimizer ..> OpenCV : 图片预处理和 NMS
+ModelOptimizer ..> ONNXRuntime : 原 ONNX 的 CPU 参考
