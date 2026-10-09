@@ -1,6 +1,7 @@
 # CourseStudioNext 工作约定
 
 - 在 `OBS client/` 这个应用工程内逐步推进，使用 Git 记录完成并验证的小步骤。
+- 用户明确要求模型优化工具独立放在 `cpp/`：原生 C++ / TensorRT、Visual Studio 工程、输出 `.engine`，模型改用 SCRFD-10G-KPS；先完成独立工程，OBS 接入后续进行。
 - 当前优先实现网络与登录；界面采用简单 MVC。
 - 首期登录重新设计 HTTP JSON 接口，不沿用 yzj 的 TCP 登录协议。
 - View 负责输入与展示，Controller 编排流程，Model 保存业务状态。网络类负责通信，协议类负责封包和解析。

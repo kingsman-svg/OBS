@@ -125,6 +125,16 @@ ClientRole 是区分两个入口的枚举，不含手写类。MainWindow、Login
 安装了 Pillow 的 Python 环境中执行 `python scripts/render_uml.py`。
 工程脚本支持本目录当前使用的 Mermaid 子集。修改源码后重新生成，并检查图像和代码是否一致。
 
+## 独立模型优化工程
+
+| 对象/流程 | Mermaid | PNG | SVG |
+| --- | --- | --- | --- |
+| TrtLogger | [源码](uml/TrtLogger.mmd) | [推理日志类图](uml/推理日志类图.png) | [矢量图](uml/推理日志类图.svg) |
+| EngineSession | [源码](uml/EngineSession.mmd) | [推理引擎会话类图](uml/推理引擎会话类图.png) | [矢量图](uml/推理引擎会话类图.svg) |
+| ModelOptimizer | [源码](uml/ModelOptimizer.mmd) | [模型优化器类图](uml/模型优化器类图.png) | [矢量图](uml/模型优化器类图.svg) |
+| model-optimize | [源码](uml/model-optimize.mmd) | [独立模型优化时序图](uml/独立模型优化时序图.png) | [矢量图](uml/独立模型优化时序图.svg) |
+| engine-infer | [源码](uml/engine-infer.mmd) | [推理引擎执行时序图](uml/推理引擎执行时序图.png) | [矢量图](uml/推理引擎执行时序图.svg) |
+
 ## 独立服务端类图
 
 | 对象/流程 | Mermaid | PNG | SVG |

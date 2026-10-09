@@ -1,0 +1,21 @@
+classDiagram
+class EngineSession {
+  -IRuntime m_runtime
+  -ICudaEngine m_engine
+  -IExecutionContext m_context
+  -cudaStream m_stream
+  -string m_inputName
+  -size_t m_inputCount
+  -map m_device
+  -map m_outputs
+  +EngineSession(plan, logger)
+  +~EngineSession()
+  +run(input) Outputs
+  +benchmark(input, iterations) float
+  +inspect() string
+  -release() void noexcept
+}
+EngineSession *-- IRuntime : 独占运行时与引擎
+EngineSession *-- IExecutionContext : 串行执行上下文
+EngineSession *-- CUDA : stream 与复用的 I/O 缓冲
+EngineSession ..> TrtLogger : 日志寿命由调用者保证

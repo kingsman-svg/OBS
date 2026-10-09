@@ -1,0 +1,45 @@
+sequenceDiagram
+actor U as 开发者 / Visual Studio
+participant O as ModelOptimizer
+participant B as TensorRT Builder
+participant S as EngineSession
+participant C as ONNX Runtime CPU
+participant F as 本地输出文件
+U->>O: 原 ONNX、校准集、验证集、输出路径
+O->>O: 校验 ORT DLL/API，手动初始化
+O->>O: 检查已有输出及数据集隔离
+alt DLL/API 不匹配 / 路径无效 / 图片重叠
+O-->>U: 失败退出，不写 engine
+else 输入有效
+O->>B: 解析 ONNX、固定 640×640、构建 FP32
+B-->>O: 基线 plan
+O->>C: 验证图预处理、原 ONNX forward
+C-->>O: 三尺度 score / bbox / kps
+O->>S: 基线推理、检测解码、结果对照
+alt ONNX Runtime 与 FP32 不一致
+O->>F: 保存失败诊断报告
+O-->>U: 退出，不发布 engine
+else 基线通过
+O->>B: 显式 FP16 转换，Float32 I/O
+O->>S: 对照 FP16，CUDA event 测速
+O->>B: 可选 2:4 剪枝、标记卷积输入观察输出
+O->>S: 仅校准集统计激活范围
+O->>B: 激活和权重 Q/DQ，构建 INT8
+O->>S: 对照 INT8，测速，保存层信息
+alt 候选检测未过门限
+O->>O: 排除该候选，保留原通过候选
+else 候选检测通过
+O->>O: 纳入速度比较
+end
+O->>O: 选择通过检查的最快候选
+O->>F: 写报告与暂存引擎
+O->>S: 重载暂存引擎并推理
+alt 磁盘写入 / 引擎重载失败
+O->>F: 删除本轮暂存，保留失败报告
+O-->>U: 失败退出
+else 验证完成
+O->>F: 暂存重命名为最终 engine
+O-->>U: 输出引擎、报告、示例验证范围
+end
+end
+end
