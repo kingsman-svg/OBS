@@ -200,6 +200,13 @@ bool previewUiLifecycle()
     MainWindow view(ClientRole::Publisher);
     view.show();
     const QSize initialSize = view.size();
+    // 布局取证只构造界面状态；包含登录页及滚动区下方的 AI 控件。
+    const auto directory = qEnvironmentVariable("OBS_UI_SCREENSHOTS");
+    if (!directory.isEmpty()) {
+        CHECK(QDir().mkpath(directory));
+        QTest::qWait(30);
+        CHECK(view.grab().save(directory + QStringLiteral("/登录页面布局.png")));
+    }
     view.applyLoginState(QStringLiteral("已登录：root"), false, true);
     auto *preview = view.findChild<PreviewWindow *>("previewWindow");
     auto *open = view.findChild<QPushButton *>("showPreviewButton");
@@ -270,16 +277,30 @@ bool previewUiLifecycle()
     QTest::qWait(30);
 
     // 只保存自建色块及人工构造的界面状态，不访问摄像头、麦克风或屏幕。
-    const auto directory = qEnvironmentVariable("OBS_UI_SCREENSHOTS");
     if (!directory.isEmpty()) {
-        CHECK(QDir().mkpath(directory));
         CHECK(view.grab().save(directory + QStringLiteral("/主窗口紧凑布局.png")));
+        scroll->ensureWidgetVisible(view.findChild<QLabel *>("captureStatusLabel"));
+        QTest::qWait(30);
+        CHECK(view.grab().save(directory + QStringLiteral("/采集状态换行布局.png")));
+        scroll->verticalScrollBar()->setValue(0);
         view.setCaptureSources({{CaptureSource::Kind::Window, "layout", QStringLiteral("窗口 · 采集验证色块"), 1}});
         view.applyCaptureState(false, true, false, QStringLiteral("已发现 3 个采集目标"),
             {QStringLiteral("视频采集中"), QStringLiteral("未启用"), QStringLiteral("未启用")});
         view.resize(initialSize); QTest::qWait(30);
         CHECK(view.grab().save(directory + QStringLiteral("/主窗口采集设置.png")));
         CHECK(view.grab().save(directory + QStringLiteral("/音频重采样混音页面.png")));
+        view.findChild<QCheckBox *>("faceDetectionCheck")->setChecked(true);
+        view.showFaceStatus(QStringLiteral("1 张人脸 · GPU 2.30 ms · 处理 5 ms · 帧龄 38 ms\n替换待处理帧 0 次 · 纹理注册 1 次"));
+        scroll->ensureWidgetVisible(view.findChild<QLabel *>("faceStatusLabel"));
+        QTest::qWait(30);
+        CHECK(view.grab().save(directory + QStringLiteral("/推流端人脸检测布局.png")));
+        view.resize(compactSize);
+        view.showFaceStatus(QStringLiteral("人脸检测失败，已恢复原画面：") + QString(100, QChar(0x6d4b)));
+        QTest::qWait(30);
+        scroll->ensureWidgetVisible(view.findChild<QLabel *>("faceStatusLabel"));
+        QTest::qWait(30);
+        CHECK(view.grab().save(directory + QStringLiteral("/人脸检测错误换行布局.png")));
+        view.resize(initialSize);
         preview->resize(QSize(720, 480).boundedTo(preview->screen()->availableGeometry().size() - QSize(40, 80)));
         QTest::qWait(30);
         // 原生 SwapChain 不在 QWidget backing store 中；实际画面在 WGC 专项测试取证。
