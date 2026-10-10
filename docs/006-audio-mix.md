@@ -2,6 +2,8 @@
 
 在现有推流端接通 WASAPI → AudioResampler → AudioMixer → `SessionController::mixedAudioReady`。统一输出为 **48kHz、立体声、交错 Float32、每包 10ms**，供后续音频编码使用。没有新增 Demo、采集 Model 或 Controller；源码继续平铺在 `OBS client/`。
 
+第 009 步已接入编码前同步：`mixedAudioReady` 保留诊断用途，编码改用 `synchronizedAudioReady`，与 `synchronizedVideoReady` 共用媒体原点。详见 [音视频同步](009-media-sync.md)。以下说明中的 80ms 是混音窗口，新增同步层的总等待为 120ms。
+
 ## 封装与调用顺序
 
 | 文件 / 对象 | 职责 |

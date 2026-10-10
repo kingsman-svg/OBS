@@ -68,6 +68,7 @@ add_library(OBSClientCore STATIC
     ClientRole.h SessionModel.cpp SessionModel.h SessionController.cpp SessionController.h
     CaptureSource.h VideoCapture.cpp VideoCapture.h WasapiCapture.cpp WasapiCapture.h
     AudioPacket.h AudioResampler.cpp AudioResampler.h AudioMixer.cpp AudioMixer.h
+    MediaTimeline.cpp MediaTimeline.h
     FaceDetection.h FaceDetection.cpp GpuFaceDetector.h GpuFaceDetector.cpp
 )
 target_include_directories(OBSClientCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -117,6 +118,10 @@ if(BUILD_TESTING)
     target_link_libraries(OBSAudioTests PRIVATE OBSClientCore Qt6::Test)
     add_test(NAME client.audio COMMAND OBSAudioTests)
     set_tests_properties(client.audio PROPERTIES TIMEOUT 20)
+    add_executable(OBSMediaTests ../tests/MediaTimelineTests.cpp)
+    target_link_libraries(OBSMediaTests PRIVATE OBSClientCore)
+    add_test(NAME client.media_sync COMMAND OBSMediaTests)
+    set_tests_properties(client.media_sync PROPERTIES TIMEOUT 20)
     add_executable(OBSFaceTests ../tests/FaceTests.cpp)
     target_link_libraries(OBSFaceTests PRIVATE OBSClientCore Qt6::Test)
     add_test(NAME client.face COMMAND OBSFaceTests)
@@ -151,6 +156,7 @@ if(MSVC)
         target_compile_options(OBSClientTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSCaptureTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSAudioTests PRIVATE /utf-8 /W4)
+        target_compile_options(OBSMediaTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSFaceTests PRIVATE /utf-8 /W4)
     endif()
 endif()

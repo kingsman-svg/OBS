@@ -6,8 +6,8 @@ participant P as PreviewWindow
 participant R as VideoRenderer
 U->>V: 开始采集
 V-->>C: captureRequested
-C->>V: 首个有效预览 showCapturePreview
-V->>P: setFrame(VideoFrame)
+C->>V: 首个同步视频帧 showFacePreview
+V->>P: setFrame(VideoFrame,同帧框点)
 P->>R: 缓存GPU纹理，show后绘制
 U->>P: 关闭画面窗口
 P->>P: 隐藏，保留最新画面和本轮打开标记

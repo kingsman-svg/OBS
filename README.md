@@ -52,6 +52,8 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - 后续功能在已有版本上继续增加，Qt 界面随核心能力逐步完善。
 - UI 采用简单 MVC；完整流程配 UML 时序图，后续不再绘制类图。
 
+编码前音视频同步已接入：共同 QPC 原点、视频 30fps 调度、音频 48kHz 样本 PTS、有界缓冲及启停排空。详见 [同步实现与后续 FFmpeg 接入设计](docs/009-media-sync.md)。FFmpeg 编码、媒体服务推拉流和播放端音频时钟将在后续步骤完成。
+
 ## 文档
 
 - [需求与待定事项](docs/requirements.md)

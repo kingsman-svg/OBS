@@ -8,9 +8,11 @@ participant F as GpuFaceDetector线程
 participant S as Windows采集源
 participant G as D3D11
 participant R as VideoRenderer
+participant T as MediaTimeline
 U->>V: 选择摄像头或窗口/屏幕，开始采集
 V-->>C: captureRequested
 C->>C: 检查登录、枚举及未完成启停
+C->>T: begin，共同QPC原点和120ms调度窗口
 C->>W: begin(source)
 W->>W: 初始化 MTA；检查目标有效性
 alt 摄像头
@@ -25,15 +27,19 @@ W->>G: GPU复制独立纹理；CPU位图才上传
 W->>G: Flush提交复制，不依赖SwapChain Present
 W->>W: 更新单帧邮箱和QPC时间戳
 C->>W: 每33ms取 latestFrame
-C-->>C: videoFrameReady，后续接特效/编码
+C-->>C: videoFrameReady，保留原始诊断
 alt 未启用检测或检测失败
-C->>V: showCapturePreview 最新GPU快照
+C->>T: pushVideo 原始GPU快照
 else 启用人脸检测
 C->>F: submit 最新GPU快照，慢处理替换待处理帧
 F->>F: D3D11/CUDA预处理、TensorRT、解码与NMS
 C->>F: 定时取latestResult
-C->>V: showFacePreview 同帧纹理和框点
+C->>T: pushVideo 同帧纹理和框点
 end
+C->>T: takeFrames(当前QPC)，按30fps时间格调度
+T-->>C: TimedVideoFrame，来源时间与PTS独立
+C-->>C: synchronizedVideoReady，后续编码入口
+C->>V: showFacePreview 调度后的同帧画面
 V->>P: setFrame，首帧非模态显示
 P->>R: setFrame 换最新纹理和可选同帧框点
 R->>G: Shader等比采样 / Draw / SwapChain Present
