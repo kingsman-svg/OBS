@@ -42,10 +42,11 @@ MainWindow::MainWindow(csn::ClientRole role, QWidget *parent)
     m_signalPort->setObjectName(QStringLiteral("signalPortSpin"));
     m_signalPort->setRange(1, 65535);
     m_signalPort->setValue(9000);
+    ui->formLayout->setRowWrapPolicy(QFormLayout::WrapLongRows);
     ui->formLayout->addRow(tr("信令主机"), m_signalHost);
     ui->formLayout->addRow(tr("信令端口"), m_signalPort);
     auto *loginForm = takeCentralWidget();
-    loginForm->setMinimumWidth(480);
+    loginForm->setMinimumWidth(qMin(480, minimumWidth() - 48));
     loginForm->setMaximumWidth(620);
     loginForm->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     auto *loginPage = new QWidget(this);
@@ -68,6 +69,7 @@ MainWindow::MainWindow(csn::ClientRole role, QWidget *parent)
     setStyleSheet(QStringLiteral(
         "QMainWindow { background:#f3f5f9; } QLabel { color:#26354a; }"
         "QLineEdit,QSpinBox,QComboBox { padding:6px; min-height:20px; background:white; border:1px solid #ccd5e1; border-radius:5px; }"
+        "QComboBox { padding-right:24px; } QSpinBox { padding-right:40px; }"
         "QPushButton { padding:7px 14px; min-height:20px; border:1px solid #ccd5e1; border-radius:5px; background:white; }"
         "QPushButton:hover { background:#edf3fc; } QPushButton:disabled { color:#9aa5b4; background:#f5f7fa; }"
         "QPushButton#startCaptureButton,QPushButton#loginButton { background:#2864dc; color:white; border-color:#2864dc; }"
@@ -102,6 +104,8 @@ QWidget *MainWindow::buildWorkspace()
     heading->setStyleSheet(QStringLiteral("font-size:22px; font-weight:600;"));
     identity->addWidget(heading);
     m_welcome = new QLabel(home);
+    m_welcome->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    m_welcome->setWordWrap(true);
     identity->addWidget(m_welcome);
     header->addLayout(identity, 1);
     m_showPreview = new QPushButton(tr("打开画面"), home);
@@ -115,8 +119,9 @@ QWidget *MainWindow::buildWorkspace()
     auto *connection = new QHBoxLayout;
     m_signalStatus = new QLabel(home);
     m_signalStatus->setObjectName(QStringLiteral("signalStatusLabel"));
+    // 先设置尺寸策略，再启用换行，避免重设策略时丢失 heightForWidth。
+    m_signalStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
     m_signalStatus->setWordWrap(true);
-    m_signalStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     connection->addWidget(m_signalStatus, 1);
     m_reconnect = new QPushButton(tr("重新连接"), home);
     m_reconnect->setObjectName(QStringLiteral("reconnectButton"));
@@ -134,6 +139,7 @@ QWidget *MainWindow::buildWorkspace()
     auto *panels = new QVBoxLayout(content);
     panels->setContentsMargins(0, 0, 8, 0);
     panels->setSpacing(18);
+    panels->setSizeConstraint(QLayout::SetMinimumSize);
     panels->addWidget(m_role == csn::ClientRole::Publisher ? buildCapturePanel(content) : buildPlayerPanel(content));
 
     auto *room = new QGroupBox(tr("直播房间"), content);
@@ -156,8 +162,8 @@ QWidget *MainWindow::buildWorkspace()
     auto *membership = new QHBoxLayout;
     m_roomInfo = new QLabel(room);
     m_roomInfo->setObjectName(QStringLiteral("roomInfoLabel"));
+    m_roomInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
     m_roomInfo->setWordWrap(true);
-    m_roomInfo->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     membership->addWidget(m_roomInfo, 1);
     m_leave = new QPushButton(m_role == csn::ClientRole::Publisher ? tr("关闭房间") : tr("退出房间"), room);
     m_leave->setObjectName(QStringLiteral("leaveRoomButton"));
@@ -173,7 +179,14 @@ QWidget *MainWindow::buildWorkspace()
 
 QWidget *MainWindow::buildCapturePanel(QWidget *parent)
 {
-    auto *capture = new QGroupBox(tr("音视频采集"), parent);
+    // 1. 采集与人脸检测分成两张卡片，所有内容按自然高度进入工作台滚动区。
+    auto *panel = new QWidget(parent);
+    auto *panels = new QVBoxLayout(panel);
+    panels->setContentsMargins(0, 0, 0, 0);
+    panels->setSpacing(18);
+    auto *capture = new QGroupBox(tr("音视频采集"), panel);
+    capture->setObjectName(QStringLiteral("captureGroup"));
+    panels->addWidget(capture);
     auto *layout = new QVBoxLayout(capture);
     layout->setContentsMargins(16, 24, 16, 16);
     layout->setSpacing(14);
@@ -202,28 +215,32 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     m_mixedLevel->setObjectName(QStringLiteral("mixedAudioLevel"));
     for (auto *level : {m_micLevel, m_systemLevel, m_mixedLevel}) {
         level->setRange(0, 100); level->setValue(0); level->setTextVisible(false);
-        level->setFixedWidth(72);
+        level->setMinimumWidth(80);
+        level->setMaximumWidth(160);
+        level->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     }
     grid->addWidget(new QLabel(tr("视频源"), capture), 0, 0);
-    grid->addWidget(m_videoSource, 0, 1, 1, 2);
+    grid->addWidget(m_videoSource, 0, 1);
     grid->addWidget(new QLabel(tr("麦克风"), capture), 1, 0);
     grid->addWidget(m_micSource, 1, 1);
-    grid->addWidget(m_micLevel, 1, 2);
     grid->addWidget(new QLabel(tr("系统声音"), capture), 3, 0);
     grid->addWidget(m_systemSource, 3, 1);
-    grid->addWidget(m_systemLevel, 3, 2);
-    // 1. 每路仅增加音量和静音；控件放下一行，保持设备选择区宽度简单。
+    // 2. 设备下拉框独占输入列；音量、静音和电平另起一行，避免挤压设备名。
     for (int index = 0; index < 2; ++index) {
         auto *controls = new QHBoxLayout;
         controls->addWidget(new QLabel(tr("音量"), capture));
         m_audioGain[index] = new QSpinBox(capture);
         m_audioGain[index]->setObjectName(index == 0 ? QStringLiteral("microphoneGain") : QStringLiteral("systemAudioGain"));
         m_audioGain[index]->setRange(0, 200); m_audioGain[index]->setSuffix(QStringLiteral("%")); m_audioGain[index]->setValue(100);
+        m_audioGain[index]->setMinimumWidth(m_audioGain[index]->fontMetrics().horizontalAdvance(QStringLiteral("200%")) + 52);
+        m_audioGain[index]->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         m_audioMute[index] = new QCheckBox(tr("静音"), capture);
         m_audioMute[index]->setObjectName(index == 0 ? QStringLiteral("microphoneMute") : QStringLiteral("systemAudioMute"));
-        controls->addWidget(m_audioGain[index]); controls->addWidget(m_audioMute[index]); controls->addStretch();
-        grid->addLayout(controls, index == 0 ? 2 : 4, 1, 1, 2);
-        // 2. 输入改变只发意图；混音器由现有 SessionController 串行操控。
+        controls->addWidget(m_audioGain[index]); controls->addWidget(m_audioMute[index]); controls->addStretch(1);
+        controls->addWidget(new QLabel(tr("电平"), capture));
+        controls->addWidget(index == 0 ? m_micLevel : m_systemLevel, 1);
+        grid->addLayout(controls, index == 0 ? 2 : 4, 0, 1, 2);
+        // 3. 输入改变只发意图；混音器由现有 SessionController 串行操控。
         const auto changed = [this, index] {
             emit audioMixChanged(index == 0 ? csn::CaptureSource::Kind::Microphone : csn::CaptureSource::Kind::Loopback,
                 m_audioGain[index]->value() / 100.0f, m_audioMute[index]->isChecked());
@@ -231,15 +248,19 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
         connect(m_audioGain[index], &QSpinBox::valueChanged, this, changed);
         connect(m_audioMute[index], &QCheckBox::toggled, this, changed);
     }
-    grid->addWidget(new QLabel(tr("混音输出"), capture), 5, 0);
+    grid->setColumnStretch(1, 1);
+    layout->addLayout(grid);
+    auto *mixed = new QHBoxLayout;
+    mixed->addWidget(new QLabel(tr("混音输出"), capture));
+    mixed->addStretch(1);
+    mixed->addWidget(m_mixedLevel, 1);
+    layout->addLayout(mixed);
     m_mixStatus = new QLabel(tr("未启用音频混音"), capture);
     m_mixStatus->setObjectName(QStringLiteral("audioMixStatusLabel"));
     m_mixStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
     m_mixStatus->setWordWrap(true); // 在 sizePolicy 后设置，保留 heightForWidth 换行测量。
     m_mixStatus->setMinimumHeight(m_mixStatus->fontMetrics().lineSpacing() * 2);
-    grid->addWidget(m_mixStatus, 5, 1); grid->addWidget(m_mixedLevel, 5, 2);
-    grid->setColumnStretch(1, 1);
-    layout->addLayout(grid);
+    layout->addWidget(m_mixStatus); // 格式、统计及错误详情独占整行，可随文本增高。
     auto *actions = new QHBoxLayout;
     m_startCapture = new QPushButton(tr("开始采集"), capture);
     m_startCapture->setObjectName(QStringLiteral("startCaptureButton"));
@@ -254,30 +275,41 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     layout->addLayout(actions);
     m_captureStatus = new QLabel(tr("正在枚举设备…"), capture);
     m_captureStatus->setObjectName(QStringLiteral("captureStatusLabel"));
+    m_captureStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
     m_captureStatus->setWordWrap(true);
-    m_captureStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     m_captureStatus->setStyleSheet(QStringLiteral("color:#596b82; font-weight:normal;"));
     layout->addWidget(m_captureStatus);
     auto *hint = new QLabel(tr("首帧自动打开独立画面窗口，关闭画面不会停止采集。"), capture);
+    hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
     hint->setWordWrap(true);
-    hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     layout->addWidget(hint);
-    // 3. AI 只增加一个开关、引擎路径和状态；模型优化仍在独立 cpp 工程。
-    m_faceDetection = new QCheckBox(tr("显示人脸框与五点"), capture);
+    // 4. 人脸开关、引擎路径和状态独立排布；完整路径可在提示中查看。
+    auto *face = new QGroupBox(tr("人脸检测"), panel);
+    face->setObjectName(QStringLiteral("faceDetectionGroup"));
+    auto *faceLayout = new QVBoxLayout(face);
+    faceLayout->setContentsMargins(16, 24, 16, 16);
+    faceLayout->setSpacing(12);
+    panels->addWidget(face);
+    m_faceDetection = new QCheckBox(tr("显示人脸框与五点"), face);
     m_faceDetection->setObjectName(QStringLiteral("faceDetectionCheck"));
-    layout->addWidget(m_faceDetection);
+    faceLayout->addWidget(m_faceDetection);
+    faceLayout->addWidget(new QLabel(tr("引擎文件（.engine）"), face));
     auto *engineRow = new QHBoxLayout;
-    m_faceEngine = new QLineEdit(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("models/scrfd_10g.engine")), capture);
+    m_faceEngine = new QLineEdit(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("models/scrfd_10g.engine")), face);
     m_faceEngine->setObjectName(QStringLiteral("faceEngineEdit"));
     m_faceEngine->setMinimumWidth(0);
-    m_chooseEngine = new QPushButton(tr("选择引擎"), capture);
+    m_faceEngine->setToolTip(QDir::toNativeSeparators(m_faceEngine->text()));
+    connect(m_faceEngine, &QLineEdit::textChanged, m_faceEngine, &QWidget::setToolTip);
+    m_chooseEngine = new QPushButton(tr("选择引擎"), face);
     m_chooseEngine->setObjectName(QStringLiteral("chooseFaceEngineButton"));
     engineRow->addWidget(m_faceEngine, 1); engineRow->addWidget(m_chooseEngine);
-    layout->addLayout(engineRow);
-    m_faceStatus = new QLabel(tr("人脸检测未启用"), capture);
+    faceLayout->addLayout(engineRow);
+    m_faceStatus = new QLabel(tr("人脸检测未启用"), face);
     m_faceStatus->setObjectName(QStringLiteral("faceStatusLabel"));
     m_faceStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
-    m_faceStatus->setWordWrap(true); layout->addWidget(m_faceStatus);
+    m_faceStatus->setWordWrap(true);
+    m_faceStatus->setMinimumHeight(m_faceStatus->fontMetrics().lineSpacing() * 2);
+    faceLayout->addWidget(m_faceStatus);
     connect(m_chooseEngine, &QPushButton::clicked, this, [this] {
         const auto path = QFileDialog::getOpenFileName(this, tr("选择本机优化工程生成的引擎"), m_faceEngine->text(), tr("TensorRT 引擎 (*.engine)"));
         if (!path.isEmpty()) m_faceEngine->setText(QDir::toNativeSeparators(path));
@@ -292,7 +324,7 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     });
     setCaptureSources({});
     applyCaptureState(false, false, false, tr("正在准备采集模块"), {});
-    return capture;
+    return panel;
 }
 
 QWidget *MainWindow::buildPlayerPanel(QWidget *parent)
