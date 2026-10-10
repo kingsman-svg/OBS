@@ -45,6 +45,7 @@ public:
     void showFaceStatus(const QString &message);        // 独立状态文字，失败不覆盖采集/音频状态。
     void showAudioLevels(float microphone, float system); // 展示归一化 RMS，不播放音频。
     void showMixedAudio(float level, const QString &message); // 混音后的电平、格式及削波统计。
+    void showMediaSyncStatus(const QString &message);    // 编码前时间线的输出/重复/丢弃计数。
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
@@ -95,6 +96,7 @@ private:
     std::array<QCheckBox *, 2> m_audioMute{};  // 两路静音选择，恢复时不重放旧数据。
     QProgressBar *m_mixedLevel = nullptr;     // 削波后混音 RMS，独立于原始输入电平。
     QLabel *m_mixStatus = nullptr;            // 输出格式、包数、削波和处理错误。
+    QLabel *m_syncStatus = nullptr;           // 同步状态独占整行，文字增高后由滚动区承载。
     QCheckBox *m_faceDetection = nullptr;     // 勾选后启用实时检测；默认关闭。
     QLineEdit *m_faceEngine = nullptr;        // 本地 .engine 路径，可浏览选择。
     QPushButton *m_chooseEngine = nullptr;    // 仅停止时允许更换引擎。

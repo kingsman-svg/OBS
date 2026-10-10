@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'media-sync': '音视频同步时序图',
     'gpu-face': 'GPU人脸检测时序图',
     'TrtLogger': '推理日志类图', 'EngineSession': '推理引擎会话类图',
     'ModelOptimizer': '模型优化器类图', 'model-optimize': '独立模型优化时序图',

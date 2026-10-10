@@ -129,6 +129,11 @@ ClientRole 是区分两个入口的枚举，不含手写类。MainWindow、Login
 ## 实时 GPU 人脸检测
 
 - [流程源码](uml/gpu-face.mmd) · [GPU人脸检测时序图](uml/GPU人脸检测时序图.png) · [SVG](uml/GPU人脸检测时序图.svg)
+
+## 编码前音视频同步
+
+- [流程源码](uml/media-sync.mmd) · [音视频同步时序图](uml/音视频同步时序图.png) · [SVG](uml/音视频同步时序图.svg)
+- 采集、检测、混音和停止时序图已更新同步入口与尾部交付；本步不新增类图。
 - 采集、GPU 预览与停止时序同步更新；本步不绘制新类图。实现与验收见 [第 008 步](008-gpu-face.md)。
 
 ## 独立模型优化工程

@@ -261,6 +261,11 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     m_mixStatus->setWordWrap(true); // 在 sizePolicy 后设置，保留 heightForWidth 换行测量。
     m_mixStatus->setMinimumHeight(m_mixStatus->fontMetrics().lineSpacing() * 2);
     layout->addWidget(m_mixStatus); // 格式、统计及错误详情独占整行，可随文本增高。
+    m_syncStatus = new QLabel(tr("音视频同步未开始"), capture);
+    m_syncStatus->setObjectName(QStringLiteral("mediaSyncStatusLabel"));
+    m_syncStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    m_syncStatus->setWordWrap(true);
+    layout->addWidget(m_syncStatus);
     auto *actions = new QHBoxLayout;
     m_startCapture = new QPushButton(tr("开始采集"), capture);
     m_startCapture->setObjectName(QStringLiteral("startCaptureButton"));
@@ -528,3 +533,4 @@ void MainWindow::showMixedAudio(float level, const QString &message)
     m_mixedLevel->setValue(value);
     m_mixStatus->setText(message);
 }
+void MainWindow::showMediaSyncStatus(const QString &message) { if (m_syncStatus) m_syncStatus->setText(message); }

@@ -263,6 +263,7 @@ bool previewUiLifecycle()
     const QSize compactSize = QSize(640, 480).boundedTo(initialSize);
     view.resize(compactSize);
     view.showMixedAudio(0.3f, QStringLiteral("48kHz · 立体声 · 10ms\n已输出 100 包，削波 0 次"));
+    view.showMediaSyncStatus(QStringLiteral("同步运行中 · 视频30fps / 音频48kHz · 总等待120ms\n视频 30 帧（复用 10，丢弃 0）· 音频 100 包（丢弃 0）"));
     QTest::qWait(30);
     CHECK(view.size() == compactSize);
     CHECK(scroll->widget()->width() <= scroll->viewport()->width());
@@ -270,6 +271,9 @@ bool previewUiLifecycle()
     auto *mixStatus = view.findChild<QLabel *>("audioMixStatusLabel");
     CHECK(mixStatus && mixStatus->hasHeightForWidth());
     CHECK(mixStatus->height() >= mixStatus->heightForWidth(mixStatus->width())); // 统计第二行不裁切。
+    auto *syncStatus = view.findChild<QLabel *>("mediaSyncStatusLabel");
+    CHECK(syncStatus && syncStatus->hasHeightForWidth());
+    CHECK(syncStatus->height() >= syncStatus->heightForWidth(syncStatus->width())); // 同步状态两行完整显示。
     view.showMixedAudio(0, QStringLiteral("48kHz · 立体声 · 10ms\n音频处理失败：") + QString(100, QChar(0x6d4b)));
     QTest::qWait(30);
     CHECK(mixStatus->height() >= mixStatus->heightForWidth(mixStatus->width())); // 错误详情可增高并滚动。
@@ -279,6 +283,9 @@ bool previewUiLifecycle()
     // 只保存自建色块及人工构造的界面状态，不访问摄像头、麦克风或屏幕。
     if (!directory.isEmpty()) {
         CHECK(view.grab().save(directory + QStringLiteral("/主窗口紧凑布局.png")));
+        scroll->ensureWidgetVisible(syncStatus);
+        QTest::qWait(30);
+        CHECK(view.grab().save(directory + QStringLiteral("/音视频同步状态布局.png")));
         scroll->ensureWidgetVisible(view.findChild<QLabel *>("captureStatusLabel"));
         QTest::qWait(30);
         CHECK(view.grab().save(directory + QStringLiteral("/采集状态换行布局.png")));
@@ -470,9 +477,15 @@ bool desktopHardware()
         view.setCaptureSources({source});
         view.findChild<QComboBox *>("videoSourceCombo")->setCurrentIndex(1);
         int delivered = 0;
+        int synchronized = 0; qint64 lastPts = -1; bool timedValid = true;
         QObject::connect(&controller, &SessionController::videoFrameReady, &view, [&delivered](const VideoFrame &) { ++delivered; });
+        QObject::connect(&controller, &SessionController::synchronizedVideoReady, &view, [&](const TimedVideoFrame &frame) {
+            timedValid = timedValid && frame.source.video.texture && frame.pts > lastPts;
+            lastPts = frame.pts; ++synchronized;
+        });
         view.findChild<QPushButton *>("startCaptureButton")->click();
-        CHECK(until([&] { return delivered > 3; }));
+        CHECK(until([&] { return delivered > 3 && synchronized > 3; }));
+        CHECK(timedValid);
         auto *preview = view.findChild<PreviewWindow *>("previewWindow");
         CHECK(preview && preview->isVisible() && preview->windowModality() == Qt::NonModal);
         preview->close();
@@ -501,9 +514,12 @@ bool desktopHardware()
             CHECK(rendered.save(QFileInfo(screenshot).absolutePath() + QStringLiteral("/独立窗口真实采集.png")));
         }
         login.logout();
+        const int afterLogout = synchronized;
         CHECK(!preview->isVisible());
         CHECK(until([&] { return !view.findChild<QPushButton *>("stopCaptureButton")->isEnabled(); }));
         CHECK(!view.findChild<QPushButton *>("startCaptureButton")->isEnabled());
+        QTest::qWait(100); CHECK(synchronized == afterLogout);
+        qInfo("PASS WGC controller synchronized video: %d frames, monotonic PTS, logout discard", synchronized);
     }
     worker.stop(); CHECK(worker.wait(10000));
     // 停止后，消费者保留的快照仍有效；系统采集池不会复用它。
@@ -516,7 +532,7 @@ bool desktopHardware()
     qInfo("PASS WGC window / color / resize / restart / target close");
     return true;
 }
-bool loopbackMixHardware()
+bool loopbackMixHardware(bool withVideo = false)
 {
     qInfo("BEGIN WASAPI loopback to resampler / mixer / MVC / stop tail / logout");
     MainWindow view(ClientRole::Publisher);
@@ -548,8 +564,27 @@ bool loopbackMixHardware()
         return true;
     }
     combo->setCurrentIndex(selected);
+    QWidget target;
+    QTimer animation;
+    if (withVideo) {
+        const auto endpoint = combo->currentData().value<CaptureSource>();
+        target.setWindowTitle(QStringLiteral("音视频同步验证色块"));
+        target.setStyleSheet(QStringLiteral("background:rgb(32,160,96)"));
+        target.resize(320, 180); target.show();
+        CHECK(QTest::qWaitForWindowExposed(&target));
+        view.setCaptureSources({endpoint, {CaptureSource::Kind::Window, "sync-fixture", QStringLiteral("同步验证色块"), quintptr(target.winId())}});
+        view.findChild<QComboBox *>("videoSourceCombo")->setCurrentIndex(1);
+        animation.setInterval(100);
+        QObject::connect(&animation, &QTimer::timeout, &target, [&target] {
+            static bool light = false; light = !light;
+            target.setStyleSheet(light ? QStringLiteral("background:rgb(64,128,192)") : QStringLiteral("background:rgb(32,160,96)"));
+        });
+        animation.start();
+    }
     login.completeLogin("test", "root", "root", 60);
     int mixed = 0;
+    int synchronized = 0; qint64 lastPts = -1;
+    int synchronizedVideo = 0; qint64 lastVideoPts = -1, origin = 0;
     bool valid = true;
     qint64 last = 0;
     QObject::connect(&controller, &SessionController::mixedAudioReady, &view, [&](const AudioPacket &packet) {
@@ -557,6 +592,21 @@ bool loopbackMixHardware()
         valid = valid && packet.channels == 2 && packet.channelMask == 3 && packet.sampleRate == 48000
             && packet.pcm.size() == 480 * 8 && packet.timestamp100ns > last;
         last = packet.timestamp100ns;
+    });
+    QObject::connect(&controller, &SessionController::synchronizedAudioReady, &view, [&](const TimedAudioPacket &packet) {
+        valid = valid && packet.pts >= 0 && packet.pts > lastPts && packet.source.pcm.size() == 480 * 8;
+        const qint64 inferred = packet.source.timestamp100ns - packet.pts * 10000000 / 48000;
+        if (!origin) origin = inferred;
+        valid = valid && std::abs(inferred - origin) <= 220; // 音频PTS取整误差最多一个48k采样。
+        lastPts = packet.pts; ++synchronized;
+    });
+    QObject::connect(&controller, &SessionController::synchronizedVideoReady, &view, [&](const TimedVideoFrame &frame) {
+        valid = valid && frame.pts > lastVideoPts && frame.source.video.texture;
+        if (origin) {
+            const qint64 presentation = origin + frame.pts * 10000000 / 30;
+            valid = valid && frame.source.video.timestamp100ns <= presentation + 220;
+        }
+        lastVideoPts = frame.pts; ++synchronizedVideo;
     });
     // 只播放人工静音以驱动默认输出，捕获数据不保存，不打开屏幕/摄像头/麦克风。
     HWAVEOUT output = nullptr;
@@ -571,17 +621,23 @@ bool loopbackMixHardware()
         if (prepared == MMSYSERR_NOERROR) written = waveOutWrite(output, &header, sizeof(header));
         if (written == MMSYSERR_NOERROR) {
             view.findChild<QPushButton *>("startCaptureButton")->click();
-            received = until([&] { return mixed >= 15; });
+            received = until([&] { return mixed >= 15 && synchronized >= 10 && (!withVideo || synchronizedVideo >= 3); });
             view.findChild<QPushButton *>("stopCaptureButton")->click();
             stopped = until([&] { return !view.findChild<QPushButton *>("stopCaptureButton")->isEnabled(); });
             const int afterStop = mixed;
-            QTest::qWait(100); noLate = mixed == afterStop;
+            const int syncAfterStop = synchronized;
+            const int videoAfterStop = synchronizedVideo;
+            QTest::qWait(100); noLate = mixed == afterStop && synchronized == syncAfterStop && synchronizedVideo == videoAfterStop;
+            lastPts = -1; // 新一轮共用原点重置，PTS从新时间线重新开始。
+            lastVideoPts = -1; origin = 0;
             view.findChild<QPushButton *>("startCaptureButton")->click();
             restarted = until([&] { return mixed > afterStop + 10; });
             login.logout();
             const int afterLogout = mixed;
+            const int syncAfterLogout = synchronized;
+            const int videoAfterLogout = synchronizedVideo;
             loggedOut = until([&] { return !view.findChild<QPushButton *>("stopCaptureButton")->isEnabled(); });
-            QTest::qWait(100); noLate = noLate && mixed == afterLogout;
+            QTest::qWait(100); noLate = noLate && mixed == afterLogout && synchronized == syncAfterLogout && synchronizedVideo == videoAfterLogout;
         }
         // 无论验证结果如何，先停止播放、归还缓冲，再做会提前return的断言。
         waveOutReset(output);
@@ -591,7 +647,8 @@ bool loopbackMixHardware()
     qInfo().noquote() << view.findChild<QLabel *>("audioMixStatusLabel")->text();
     CHECK(opened == MMSYSERR_NOERROR && prepared == MMSYSERR_NOERROR && written == MMSYSERR_NOERROR);
     CHECK(received && stopped && restarted && loggedOut && noLate && valid);
-    qInfo("PASS WASAPI to fixed mixed packets: %d packets; stop/restart/logout, no late delivery", mixed);
+    qInfo("PASS WASAPI to mixed/synchronized packets: %d / %d packets; stop/restart/logout, no late delivery", mixed, synchronized);
+    if (withVideo) qInfo("PASS joint WGC/WASAPI timeline: %d synchronized video frames, shared origin / restart / no late delivery", synchronizedVideo);
     return true;
 }
 
@@ -706,6 +763,7 @@ int main(int argc, char **argv)
     if (app.arguments().contains("--ui-only")) return previewUiLifecycle() ? 0 : 1;
     if (app.arguments().contains("--window-preview")) return gpuOutputHardware() && desktopHardware() ? 0 : 1;
     if (app.arguments().contains("--audio-mix")) return loopbackMixHardware() ? 0 : 1;
+    if (app.arguments().contains("--media-sync")) return loopbackMixHardware(true) ? 0 : 1;
     if (hardware) return gpuOutputHardware() && desktopHardware() && deviceHardware() ? 0 : 1;
     if (!audioFormats() || !failedWorkerRestart() || !captureMvc() || !previewUiLifecycle()) return 1;
     qInfo("PASS 4 capture groups: PCM formats / failed worker restart / MVC and logout / independent preview");

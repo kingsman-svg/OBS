@@ -5,6 +5,7 @@ participant C as SessionController
 participant W as 两路WasapiCapture
 participant M as AudioMixer
 participant R as 每路AudioResampler
+participant T as MediaTimeline
 U->>V: 选择音频源，开始采集
 V-->>C: captureRequested
 C->>M: begin，清缓存，启用选中的输入路
@@ -18,7 +19,10 @@ C->>M: takeFrames(当前QPC)，留80ms对齐窗口
 M->>M: 按时间交集填480帧，缺包补零
 M->>M: 两路增益/静音，再相加、削波、计算RMS
 M-->>C: 固定10ms包与连续样本时间戳
-C->>C: emit mixedAudioReady，后续编码入口
+C->>C: emit mixedAudioReady，保留混音诊断
+C->>T: pushAudio，共同原点换算PTS
+C->>T: takeFrames，总等待120ms包含已有80ms
+T-->>C: synchronizedAudioReady，后续编码入口
 C->>V: 显示混音RMS、包数、削波统计
 U->>V: 改变音量或静音
 V-->>C: audioMixChanged

@@ -131,6 +131,7 @@ void SessionController::setupCapture()
         refreshCaptureView();
     });
     connect(m_video, &VideoCapture::failed, this, [this](const QString &error) {
+        m_media.disableVideo();
         m_captureErrors.insert(0); m_captureMessages[0] = error; refreshCaptureView();
     });
     for (int index : {1, 2}) {
@@ -141,6 +142,7 @@ void SessionController::setupCapture()
         });
         connect(worker, &WasapiCapture::failed, this, [this, index](const QString &error) {
             m_audioMixer.disable(index == 1 ? CaptureSource::Kind::Microphone : CaptureSource::Kind::Loopback);
+            if (!m_audioMixer.active()) m_media.disableAudio();
             m_captureErrors.insert(index); m_captureMessages[index] = error; refreshCaptureView();
             refreshAudioView();
         });
@@ -161,8 +163,11 @@ void SessionController::bindCapture(QThread *worker, int index)
         // 2. 两个音频线程均退出才排空滤波尾部；不必等待视频线程。
         if (index > 0 && !m_pendingCapture.contains(m_microphone) && !m_pendingCapture.contains(m_system)) finishAudio();
         if (!m_captureErrors.contains(index)) m_captureMessages[index] = tr("已停止");
-        if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
-        if (index == 0) { m_faces->stop(); m_view->showCapturePreview({}); }
+        if (index == 0) {
+            m_faces->stop(); m_view->showCapturePreview({});
+            if (!m_stoppingCapture) m_media.disableVideo();
+        }
+        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = false; }
         refreshCaptureView();
     });
 }
@@ -204,7 +209,7 @@ void SessionController::refreshDevices()
 
 void SessionController::startCapture(const QList<CaptureSource> &selection)
 {
-    if (!m_video || !m_loggedIn || m_enumerator || !m_pendingCapture.isEmpty()) return;
+    if (!m_video || !m_loggedIn || m_enumerator || m_stoppingCapture || !m_pendingCapture.isEmpty()) return;
     if (selection.isEmpty()) { m_captureMessages[0] = tr("请至少选择一个采集源"); refreshCaptureView(); return; }
     m_captureErrors.clear();
     m_captureMessages = {tr("未启用"), tr("未启用"), tr("未启用")};
@@ -228,6 +233,8 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
         system = system || source.kind == CaptureSource::Kind::Loopback;
     }
     m_audioMixer.begin(microphone, system); m_mixedPackets = 0; m_audioError.clear();
+    m_media.begin(audioNow(), videoSelected, microphone || system);
+    refreshMediaView();
     refreshAudioView();
     // 2. 启动各采集线程；采集层仍输出设备原始采样率和布局。
     for (const auto &source : selection) {
@@ -250,12 +257,13 @@ void SessionController::stopCapture()
     m_faces->stop();
     if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
     // 普通停止等音频finished后排空；退出登录立即丢弃，禁止交付迟到媒体。
-    if (!m_loggedIn) { m_audioMixer.clear(); refreshAudioView(); }
+    if (!m_loggedIn) { m_audioMixer.clear(); m_media.clear(); refreshAudioView(); refreshMediaView(); }
     else if (!m_pendingCapture.contains(m_microphone) && !m_pendingCapture.contains(m_system)) finishAudio();
     const QList<QThread *> workers{m_video, m_microphone, m_system};
     for (int index = 0; index < workers.size(); ++index)
         if (m_pendingCapture.contains(workers[index]) && !m_captureErrors.contains(index)) m_captureMessages[index] = tr("正在停止");
     m_view->showCapturePreview({});
+    if (m_pendingCapture.isEmpty()) finishMedia();
     refreshCaptureView();
 }
 
@@ -276,14 +284,14 @@ void SessionController::deliverCapture()
         m_lastSequence = frame.sequence;
         emit videoFrameReady(frame);
         if (m_pendingCapture.contains(m_faces) && !m_faceFailed) m_faces->submit(frame);
-        else m_view->showCapturePreview(frame);
+        else m_media.pushVideo(FaceFrame{frame});
     }
     // 检测结果连同同一原帧交付，禁止用旧框点叠加到最新采集帧。
     if (deliver && m_pendingCapture.contains(m_video) && m_pendingCapture.contains(m_faces) && !m_faceFailed) {
         const auto result = m_faces->latestResult();
         if (result.video.texture && result.video.sequence != m_lastFaceSequence) {
             m_lastFaceSequence = result.video.sequence;
-            m_view->showFacePreview(result);
+            m_media.pushVideo(result);
             const qint64 ageMs = std::max<qint64>(0, (audioNow() - result.video.timestamp100ns) / 10000);
             m_faceMessage = tr("%1 张人脸 · GPU %2 ms · 处理 %3 ms · 帧龄 %4 ms\n替换待处理帧 %5 次 · 纹理注册 %6 次")
                 .arg(result.faces.size()).arg(result.gpuMs, 0, 'f', 2).arg(result.processingMs).arg(ageMs)
@@ -297,8 +305,11 @@ void SessionController::deliverCapture()
         for (const auto &packet : m_audioMixer.takeFrames(audioNow())) {
             if (!m_loggedIn) break;
             ++m_mixedPackets; emit mixedAudioReady(packet);
+            if (m_loggedIn) m_media.pushAudio(packet);
         }
+        if (m_loggedIn && !m_stoppingCapture) deliverMedia(m_media.takeFrames(audioNow()), true);
     }
+    refreshMediaView();
     refreshAudioView();
     m_view->showAudioLevels(deliver ? m_microphone->level() : 0, deliver ? m_system->level() : 0);
 }
@@ -311,11 +322,12 @@ void SessionController::consumeAudio()
         const auto kind = index == 1 ? CaptureSource::Kind::Microphone : CaptureSource::Kind::Loopback;
         for (const auto &packet : worker->takePackets()) {
             if (!m_loggedIn || m_captureErrors.contains(index)) continue;
-            emit audioPacketReady(kind, packet); // 原始包保留为诊断入口，编码使用mixedAudioReady。
+            emit audioPacketReady(kind, packet); // 原始包保留为诊断入口，编码使用synchronizedAudioReady。
             // 2. 重采样失败只撤掉这一路，另一成功路仍输出，错误保留在混音状态。
             try { m_audioMixer.push(kind, packet); }
             catch (const std::exception &error) {
                 m_audioMixer.disable(kind);
+                if (!m_audioMixer.active()) m_media.disableAudio();
                 if (!m_audioError.isEmpty()) m_audioError += QStringLiteral("；");
                 m_audioError += tr("%1处理失败：%2").arg(index == 1 ? tr("麦克风") : tr("系统声音"), QString::fromUtf8(error.what()));
             }
@@ -336,13 +348,13 @@ void SessionController::setupFaceDetection()
     connect(m_faces, &GpuFaceDetector::failed, this, [this](const QString &message) {
         if (m_stoppingCapture || !m_loggedIn) return;
         m_faceFailed = true; m_faceMessage = message; m_view->showFaceStatus(message);
-        if (m_pendingCapture.contains(m_video)) m_view->showCapturePreview(m_video->latestFrame());
+        if (m_pendingCapture.contains(m_video)) m_media.pushVideo(FaceFrame{m_video->latestFrame()});
     });
     // 3. finished 前 GPU 资源已注销；控制器收到 finished 才允许重新启动。
     connect(m_faces, &QThread::finished, this, [this] {
         m_pendingCapture.remove(m_faces);
         if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
-        if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
+        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = false; }
         refreshCaptureView();
     });
 }
@@ -350,16 +362,48 @@ void SessionController::setupFaceDetection()
 void SessionController::finishAudio()
 {
     // 1. 退出只丢弃；2. 正常停止输出滤波尾部和最后补零包；3. 更新已停止状态。
-    if (!m_loggedIn) m_audioMixer.clear();
+    if (!m_loggedIn) { m_audioMixer.clear(); m_media.clear(); }
     else {
         try {
             for (const auto &packet : m_audioMixer.finish()) {
                 if (!m_loggedIn) break;
                 ++m_mixedPackets; emit mixedAudioReady(packet);
+                if (m_loggedIn) m_media.pushAudio(packet);
             }
         } catch (const std::exception &error) { m_audioMixer.clear(); m_audioError = QString::fromUtf8(error.what()); }
     }
     refreshAudioView();
+}
+
+void SessionController::deliverMedia(const MediaBatch &batch, bool preview)
+{
+    // 1. 同步层已完成等待与PTS计算；GUI只交付，消费者不得在信号槽里阻塞编码/网络。
+    for (const auto &packet : batch.audio) {
+        if (!m_loggedIn || (preview && m_stoppingCapture)) return;
+        emit synchronizedAudioReady(packet);
+    }
+    for (const auto &frame : batch.video) {
+        if (!m_loggedIn || (preview && m_stoppingCapture)) return;
+        emit synchronizedVideoReady(frame);
+        if (preview && m_loggedIn && !m_stoppingCapture) m_view->showFacePreview(frame.source);
+    }
+}
+
+void SessionController::finishMedia()
+{
+    // 2. 混音尾部已入队，采集/检测全部退出后才排空；退出时拒绝任何迟到媒体。
+    if (m_loggedIn) deliverMedia(m_media.finish(), false);
+    else m_media.clear();
+    refreshMediaView();
+}
+
+void SessionController::refreshMediaView()
+{
+    const auto &stats = m_media.stats();
+    m_view->showMediaSyncStatus(tr("同步%1 · 视频30fps / 音频48kHz · 总等待120ms\n视频 %2 帧（复用 %3，丢弃 %4）· 音频 %5 包（丢弃 %6）")
+        .arg(m_media.active() ? tr("运行中") : tr("已停止"))
+        .arg(stats.videoFrames).arg(stats.repeatedVideo).arg(stats.droppedVideo)
+        .arg(stats.audioPackets).arg(stats.droppedAudio));
 }
 
 void SessionController::refreshAudioView()

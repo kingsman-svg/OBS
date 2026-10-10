@@ -1,0 +1,48 @@
+sequenceDiagram
+actor U as 用户
+participant C as SessionController
+participant W as VideoCapture
+participant F as GpuFaceDetector
+participant M as AudioMixer
+participant T as MediaTimeline
+participant P as GPU预览
+participant E as 后续编码入口
+U->>C: 开始采集
+C->>T: begin(当前QPC, 视频选择, 音频选择)
+T->>T: 记录共同T0，清队列、时间格和统计
+C->>W: begin，工作线程采集
+C->>M: begin，双路重采样与混音
+W-->>C: 独立纹理、采集QPC时间与序号
+alt 启用且成功的人脸检测
+C->>F: submit原始帧
+F-->>C: 同一纹理与检测框点，保留采集时间
+C->>T: pushVideo(FaceFrame)
+else 原画面或检测失败回退
+C->>T: pushVideo(原始VideoFrame)
+end
+C->>M: takeFrames(当前QPC)，混音已有80ms等待
+M-->>C: 48kHz立体声Float32，每包480个采样帧
+C->>T: pushAudio，转为1/48000秒PTS
+C->>T: takeFrames(当前QPC)
+T->>T: 使用总等待120ms的共同截止线
+T->>T: 视频按1/30秒时间格选最新合适纹理
+alt 静止画面没有新采集帧
+T->>T: 复用上一张图和同帧框点，PTS继续递增
+else 输入迟到、溢出或GUI积压
+T->>T: 丢弃旧数据、跳过旧时间格、标记不连续
+end
+T-->>C: 两路到期批次与独立PTS
+C-->>E: synchronizedVideoReady / synchronizedAudioReady
+C->>P: 显示同一调度视频帧，关闭后只更新缓存
+alt 普通停止
+C->>M: 音频线程退出后finish
+M-->>C: 滤波和混音尾部
+C->>T: pushAudio尾部
+C->>T: 全部采集和检测finished后finish
+T-->>C: 最后有界批次，最多500ms
+C-->>E: 交付尾部，预览不重新打开
+else 退出登录或失效
+C->>T: clear，丢弃数据与纹理引用
+T->>T: 拒绝本轮迟到输入
+end
+Note over T,E: PTS共用T0但单位不同；编码消费者必须快速转入有界工作队列
