@@ -4,6 +4,7 @@
 #include "SignalClient.h"
 #include "mainwindow.h"
 #include "VideoCapture.h"
+#include "GpuFaceDetector.h"
 #include "WasapiCapture.h"
 #include <QCoreApplication>
 #include <windows.h>
@@ -76,9 +77,11 @@ SessionController::~SessionController()
     m_captureDelivery.stop();
     if (!m_video) return;
     m_video->stop(); m_microphone->stop(); m_system->stop();
+    m_faces->stop();
     // 日常停止异步进行；析构等待退出，保证工作线程不访问已销毁对象。
     if (m_enumerator) m_enumerator->wait();
     m_video->wait(); m_microphone->wait(); m_system->wait();
+    m_faces->wait();
 }
 
 void SessionController::onLoginChanged()
@@ -112,6 +115,7 @@ void SessionController::setupCapture()
     m_video = new VideoCapture(this);
     m_microphone = new WasapiCapture(this);
     m_system = new WasapiCapture(this);
+    setupFaceDetection();
     connect(m_view, &MainWindow::captureRequested, this, &SessionController::startCapture);
     connect(m_view, &MainWindow::stopCaptureRequested, this, &SessionController::stopCapture);
     connect(m_view, &MainWindow::refreshDevicesRequested, this, &SessionController::refreshDevices);
@@ -158,7 +162,7 @@ void SessionController::bindCapture(QThread *worker, int index)
         if (index > 0 && !m_pendingCapture.contains(m_microphone) && !m_pendingCapture.contains(m_system)) finishAudio();
         if (!m_captureErrors.contains(index)) m_captureMessages[index] = tr("已停止");
         if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
-        if (index == 0) m_view->showCapturePreview({});
+        if (index == 0) { m_faces->stop(); m_view->showCapturePreview({}); }
         refreshCaptureView();
     });
 }
@@ -205,6 +209,18 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
     m_captureErrors.clear();
     m_captureMessages = {tr("未启用"), tr("未启用"), tr("未启用")};
     m_lastSequence = 0;
+    m_lastFaceSequence = 0; m_faceFailed = false;
+    bool videoSelected = false;
+    for (const auto &source : selection)
+        videoSelected = videoSelected || (source.kind != CaptureSource::Kind::Microphone && source.kind != CaptureSource::Kind::Loopback);
+    // 检测只在选择视频源时启用；文件读取和 CUDA 初始化都在检测线程。
+    m_faceMessage = tr("人脸检测未启用");
+    if (m_view->faceDetectionEnabled() && videoSelected) {
+        m_faceMessage = tr("正在等待视频帧并加载引擎…");
+        if (m_faces->begin(m_view->faceEnginePath())) m_pendingCapture.insert(m_faces);
+        else { m_faceFailed = true; m_faceMessage = tr("检测线程尚未退出，当前显示原画面"); }
+    }
+    m_view->showFaceStatus(m_faceMessage);
     // 1. 按用户本轮选择启用混音路，先清理上轮数据与处理错误。
     bool microphone = false, system = false;
     for (const auto &source : selection) {
@@ -231,6 +247,8 @@ void SessionController::stopCapture()
     if (!m_video) return;
     m_stoppingCapture = !m_pendingCapture.isEmpty();
     m_video->stop(); m_microphone->stop(); m_system->stop();
+    m_faces->stop();
+    if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
     // 普通停止等音频finished后排空；退出登录立即丢弃，禁止交付迟到媒体。
     if (!m_loggedIn) { m_audioMixer.clear(); refreshAudioView(); }
     else if (!m_pendingCapture.contains(m_microphone) && !m_pendingCapture.contains(m_system)) finishAudio();
@@ -257,7 +275,21 @@ void SessionController::deliverCapture()
         && frame.texture && frame.sequence != m_lastSequence) {
         m_lastSequence = frame.sequence;
         emit videoFrameReady(frame);
-        m_view->showCapturePreview(frame);
+        if (m_pendingCapture.contains(m_faces) && !m_faceFailed) m_faces->submit(frame);
+        else m_view->showCapturePreview(frame);
+    }
+    // 检测结果连同同一原帧交付，禁止用旧框点叠加到最新采集帧。
+    if (deliver && m_pendingCapture.contains(m_video) && m_pendingCapture.contains(m_faces) && !m_faceFailed) {
+        const auto result = m_faces->latestResult();
+        if (result.video.texture && result.video.sequence != m_lastFaceSequence) {
+            m_lastFaceSequence = result.video.sequence;
+            m_view->showFacePreview(result);
+            const qint64 ageMs = std::max<qint64>(0, (audioNow() - result.video.timestamp100ns) / 10000);
+            m_faceMessage = tr("%1 张人脸 · GPU %2 ms · 处理 %3 ms · 帧龄 %4 ms\n替换待处理帧 %5 次 · 纹理注册 %6 次")
+                .arg(result.faces.size()).arg(result.gpuMs, 0, 'f', 2).arg(result.processingMs).arg(ageMs)
+                .arg(result.replacedFrames).arg(result.registrations);
+            m_view->showFaceStatus(m_faceMessage);
+        }
     }
     // 原始包可继续排入停止尾部，但普通交付只在采集运行期间进行。
     consumeAudio();
@@ -289,6 +321,30 @@ void SessionController::consumeAudio()
             }
         }
     }
+}
+
+void SessionController::setupFaceDetection()
+{
+    // 1. 线程只负责模型和 GPU；登录、采集和 View 仍由本控制器编排。
+    m_faces = new GpuFaceDetector(this);
+    connect(m_faces, &GpuFaceDetector::opened, this, [this] {
+        if (!m_stoppingCapture && m_loggedIn && !m_faceFailed) {
+            m_faceMessage = tr("引擎已加载，等待首个检测结果…"); m_view->showFaceStatus(m_faceMessage);
+        }
+    });
+    // 2. 本轮失败锁存一次，后续交付恢复原帧，音频和采集不受影响。
+    connect(m_faces, &GpuFaceDetector::failed, this, [this](const QString &message) {
+        if (m_stoppingCapture || !m_loggedIn) return;
+        m_faceFailed = true; m_faceMessage = message; m_view->showFaceStatus(message);
+        if (m_pendingCapture.contains(m_video)) m_view->showCapturePreview(m_video->latestFrame());
+    });
+    // 3. finished 前 GPU 资源已注销；控制器收到 finished 才允许重新启动。
+    connect(m_faces, &QThread::finished, this, [this] {
+        m_pendingCapture.remove(m_faces);
+        if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
+        if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
+        refreshCaptureView();
+    });
 }
 
 void SessionController::finishAudio()

@@ -14,7 +14,7 @@
 
 ## 当前进度
 
-已实现同一 CMake 工程中的两个客户端：OBS_Publisher 推流端、OBS_Player 播放端。简单 MVC，共享异步 HTTP 登录与 TCP 信令，已完成节点调度、认证、心跳、房间创建/列表/加入/退出、成员更新、断线重连和会话到期。每个类和流程均提供 UML。
+已实现同一 CMake 工程中的两个客户端：OBS_Publisher 推流端、OBS_Player 播放端。简单 MVC，共享异步 HTTP 登录与 TCP 信令，已完成节点调度、认证、心跳、房间创建/列表/加入/退出、成员更新、断线重连和会话到期。保留历史类图，后续按最新约定只维护流程时序图。
 
 Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。注释、类图、时序图与真实进程测试同步维护，启动方法见 [服务端说明](docs/server-services.md)。当前使用 root 开发账号，生产账号系统和媒体转发后续实现。
 
@@ -25,6 +25,8 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 音频已接入 FFmpeg 7.1 libswresample，统一为 48kHz / 立体声 / Float32 / 10ms，按 QPC 对齐麦克风与系统回环，支持各路音量、静音、缺包补零和削波统计。正常停止排空尾部，退出登录丢弃迟到数据；提供混音后的媒体信号，后续接编码器。构建需配置 FFmpeg shared SDK，详见 [音频重采样与混音](docs/006-audio-mix.md)。
 
 独立模型优化工程位于 `cpp/FaceOptimizer.sln`，使用原生 C++ / TensorRT，优化 SCRFD-10G-KPS，比较 FP32、FP16、INT8 PTQ，提供可选 2:4 剪枝和验证报告。输出 `.engine`，本阶段与 OBS 分离；详见 [模型优化说明](docs/007-model-optimization.md)。
+
+推流端已接入实时 GPU 人脸检测：专用 D3D11 纹理与 CUDA 互操作、GPU 预处理、TensorRT runtime、CPU 解码/NMS及同帧 Shader 框点叠加。采集面板勾选“显示人脸框与五点”，选择本机生成的引擎即可；失败恢复原预览，音频继续。新模块只增加一个公开工作类，中文成员与编号流程注释完整；详见 [第 008 步](docs/008-gpu-face.md)。本步是检测定位，磨皮、提亮与精细变形仍待实现。
 
 ## 工作方式
 
@@ -48,7 +50,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - 每次只推进一个明确的小步骤：说明设计、实现、运行验证、记录结果。
 - 使用 Git 保存完成并验证的小步骤；阶段成果通过提交历史回溯。
 - 后续功能在已有版本上继续增加，Qt 界面随核心能力逐步完善。
-- UI 采用简单 MVC；每个类配 UML 类图，每个完整流程配 UML 时序图。
+- UI 采用简单 MVC；完整流程配 UML 时序图，后续不再绘制类图。
 
 ## 文档
 
@@ -66,6 +68,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 005 步：GPU 渲染与 SwapChain](docs/005-gpu-preview.md)
 - [第 006 步：音频重采样与混音](docs/006-audio-mix.md)
 - [第 007 步：独立 TensorRT 模型优化](docs/007-model-optimization.md)
+- [第 008 步：实时 GPU 人脸检测](docs/008-gpu-face.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

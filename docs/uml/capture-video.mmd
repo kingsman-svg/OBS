@@ -4,6 +4,7 @@ participant V as MainWindow
 participant P as PreviewWindow
 participant C as SessionController
 participant W as VideoCapture工作线程
+participant F as GpuFaceDetector线程
 participant S as Windows采集源
 participant G as D3D11
 participant R as VideoRenderer
@@ -25,9 +26,16 @@ W->>G: Flush提交复制，不依赖SwapChain Present
 W->>W: 更新单帧邮箱和QPC时间戳
 C->>W: 每33ms取 latestFrame
 C-->>C: videoFrameReady，后续接特效/编码
+alt 未启用检测或检测失败
 C->>V: showCapturePreview 最新GPU快照
+else 启用人脸检测
+C->>F: submit 最新GPU快照，慢处理替换待处理帧
+F->>F: D3D11/CUDA预处理、TensorRT、解码与NMS
+C->>F: 定时取latestResult
+C->>V: showFacePreview 同帧纹理和框点
+end
 V->>P: setFrame，首帧非模态显示
-P->>R: setFrame 只换最新纹理
+P->>R: setFrame 换最新纹理和可选同帧框点
 R->>G: Shader等比采样 / Draw / SwapChain Present
 alt WGC目标尺寸变化
 W->>S: 释放旧帧后 Recreate 帧池

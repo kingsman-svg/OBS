@@ -12,6 +12,8 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QFileDialog>
+#include <QCoreApplication>
+#include <QDir>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QListWidget>
@@ -260,6 +262,26 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     hint->setWordWrap(true);
     hint->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
     layout->addWidget(hint);
+    // 3. AI 只增加一个开关、引擎路径和状态；模型优化仍在独立 cpp 工程。
+    m_faceDetection = new QCheckBox(tr("显示人脸框与五点"), capture);
+    m_faceDetection->setObjectName(QStringLiteral("faceDetectionCheck"));
+    layout->addWidget(m_faceDetection);
+    auto *engineRow = new QHBoxLayout;
+    m_faceEngine = new QLineEdit(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("models/scrfd_10g.engine")), capture);
+    m_faceEngine->setObjectName(QStringLiteral("faceEngineEdit"));
+    m_faceEngine->setMinimumWidth(0);
+    m_chooseEngine = new QPushButton(tr("选择引擎"), capture);
+    m_chooseEngine->setObjectName(QStringLiteral("chooseFaceEngineButton"));
+    engineRow->addWidget(m_faceEngine, 1); engineRow->addWidget(m_chooseEngine);
+    layout->addLayout(engineRow);
+    m_faceStatus = new QLabel(tr("人脸检测未启用"), capture);
+    m_faceStatus->setObjectName(QStringLiteral("faceStatusLabel"));
+    m_faceStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    m_faceStatus->setWordWrap(true); layout->addWidget(m_faceStatus);
+    connect(m_chooseEngine, &QPushButton::clicked, this, [this] {
+        const auto path = QFileDialog::getOpenFileName(this, tr("选择本机优化工程生成的引擎"), m_faceEngine->text(), tr("TensorRT 引擎 (*.engine)"));
+        if (!path.isEmpty()) m_faceEngine->setText(QDir::toNativeSeparators(path));
+    });
     connect(m_refreshDevices, &QPushButton::clicked, this, &MainWindow::refreshDevicesRequested);
     connect(m_stopCapture, &QPushButton::clicked, this, &MainWindow::stopCaptureRequested);
     connect(m_startCapture, &QPushButton::clicked, this, [this] {
@@ -433,6 +455,9 @@ void MainWindow::applyCaptureState(bool canStart, bool active, bool enumerating,
     m_startCapture->setEnabled(canStart);
     m_stopCapture->setEnabled(active);
     m_refreshDevices->setEnabled(!active && !enumerating);
+    m_faceDetection->setEnabled(canStart);
+    m_faceEngine->setEnabled(canStart);
+    m_chooseEngine->setEnabled(canStart);
     for (int index = 0; index < 2; ++index) {
         m_audioGain[index]->setEnabled(canStart || active);
         m_audioMute[index]->setEnabled(canStart || active);
@@ -448,6 +473,13 @@ void MainWindow::showCapturePreview(const csn::VideoFrame &frame)
 {
     if (m_role == csn::ClientRole::Publisher && m_loggedIn) m_preview->setFrame(frame);
 }
+bool MainWindow::faceDetectionEnabled() const { return m_faceDetection && m_faceDetection->isChecked(); }
+QString MainWindow::faceEnginePath() const { return m_faceEngine ? m_faceEngine->text().trimmed() : QString(); }
+void MainWindow::showFacePreview(const csn::FaceFrame &frame)
+{
+    if (m_role == csn::ClientRole::Publisher && m_loggedIn) m_preview->setFrame(frame.video, frame.faces);
+}
+void MainWindow::showFaceStatus(const QString &message) { if (m_faceStatus) m_faceStatus->setText(message); }
 void MainWindow::showAudioLevels(float microphone, float system)
 {
     if (!m_micLevel) return;

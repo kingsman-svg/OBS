@@ -5,7 +5,7 @@ participant D as D3D11设备
 participant C as 专用DeferredContext
 participant I as 共享ImmediateContext
 participant S as DXGI交换链
-P->>R: setFrame(VideoFrame)，只缓存最新纹理
+P->>R: setFrame(VideoFrame, faces)，缓存同帧纹理和可选框点
 R->>R: paintEvent，获取HWND物理像素尺寸
 alt 首帧或输入设备/句柄变化
 R->>R: 释放旧视图和交换链，Flush
@@ -19,7 +19,9 @@ R->>S: ResizeBuffers / GetBuffer
 R->>D: 创建新的RTV
 end
 R->>D: 输入BGRA纹理创建SRV
+R->>C: 更新框点常量缓冲，原图坐标与纹理共用视口
 R->>C: 清背景，绑定SRV/Shader/等比视口，Draw(3)
+Note over R,C: PixelShader叠加绿色人脸框和五个红点，最多16张脸
 R->>C: FinishCommandList(FALSE)，重置录制状态
 C-->>R: CommandList
 R->>I: ExecuteCommandList(TRUE)，恢复共享状态

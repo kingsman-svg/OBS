@@ -14,6 +14,7 @@ class SessionModel;
 class SignalClient;
 class VideoCapture;
 class WasapiCapture;
+class GpuFaceDetector;
 struct VideoFrame;
 struct AudioPacket;
 
@@ -22,23 +23,23 @@ class SessionController final : public QObject {
     Q_OBJECT
 public:
     SessionController(MainWindow *view, LoginModel *login, SessionModel *model,
-                      SignalClient *signal, QObject *parent = nullptr);
-    ~SessionController() override;
+                      SignalClient *signal, QObject *parent = nullptr); // 绑定界面/信令回调，推流端再建立采集与检测。
+    ~SessionController() override; // 正常启停异步；销毁时等待所有工作线程归还资源。
 signals:
     // 当前在 GUI 线程交付；后续编码消费者应快速转交有界队列。
     void videoFrameReady(const csn::VideoFrame &frame);
     void audioPacketReady(csn::CaptureSource::Kind kind, const csn::AudioPacket &packet);
     void mixedAudioReady(const csn::AudioPacket &packet); // 固定48kHz/立体声/10ms，供后续编码使用。
 private:
-    void onLoginChanged();
-    void reconnect();
-    void refreshView();
-    void execute(const QString &type, const QJsonObject &fields = {});
-    void refreshRooms();
+    void onLoginChanged(); // 登录后连接信令；退出时停止采集、检测和会话计时。
+    void reconnect();      // 使用有效登录会话重新连接，避免重复连接请求。
+    void refreshView();    // 只把 SessionModel 状态映射到工作台控件。
+    void execute(const QString &type, const QJsonObject &fields = {}); // 单个在途房间请求，保存响应编号。
+    void refreshRooms();   // 从第一页开始拉取房间列表，后续响应继续分页。
     void onResponse(const QString &id, const QString &type, bool ok,
-                    const QJsonObject &data, const QString &error);
-    void onEvent(const QString &event, const QJsonObject &data);
-    void scheduleExpiry();
+                    const QJsonObject &data, const QString &error); // 按请求编号校验并更新对应房间业务。
+    void onEvent(const QString &event, const QJsonObject &data); // 处理当前房间的关闭/成员/开播变化。
+    void scheduleExpiry(); // 到期退出登录；长生命周期分段安排 Qt 定时器。
     void setupCapture(); // 创建三个采集线程并绑定 opened/failed/finished，启动交付定时器。
     void refreshDevices(); // MTA 后台枚举设备，结果排队回 GUI；枚举期间禁止启动。
     void startCapture(const QList<CaptureSource> &selection); // 根据选择启动视频/麦克风/回环，不重复启动同一线程。
@@ -49,22 +50,23 @@ private:
     void consumeAudio();                      // 取两路原始包、发诊断信号并交给独立重采样器。
     void finishAudio();                       // 正常停止后排空混音，退出登录直接丢弃。
     void refreshAudioView();                  // 更新混音输出状态，错误不覆盖设备采集状态。
-    MainWindow *m_view;
-    LoginModel *m_login;
-    SessionModel *m_model;
-    SignalClient *m_signal;
-    QTimer m_expiry;
-    bool m_loggedIn = false;
-    QString m_pending;
-    QString m_closedRoom;
-    QJsonArray m_listing;
-    int m_offset = 0;
+    void setupFaceDetection();                // 绑定检测 opened/failed/finished；仍由现有控制器协调。
+    MainWindow *m_view;        // 非拥有 View，控制器仅调用其展示接口。
+    LoginModel *m_login;       // 非拥有登录状态与凭据，不能打印其中令牌。
+    SessionModel *m_model;     // 非拥有工作台业务状态，网络与媒体仍由模块处理。
+    SignalClient *m_signal;   // 非拥有异步信令客户端。
+    QTimer m_expiry;           // GUI 线程单次会话到期计时器。
+    bool m_loggedIn = false;  // 上次处理的登录状态，避免重复启动/停止。
+    QString m_pending;        // 当前在途房间请求编号，不是访问令牌。
+    QString m_closedRoom;     // 已关闭房间ID，防止迟到加入响应恢复旧房间。
+    QJsonArray m_listing;     // 当前分页累积的房间列表，完成后交给 Model。
+    int m_offset = 0;         // 已请求的房间分页偏移，用于拒绝倒退/循环页。
     VideoCapture *m_video = nullptr; // 唯一视频采集线程，由控制器拥有。
     WasapiCapture *m_microphone = nullptr; // 麦克风线程，音频原始格式交付。
     WasapiCapture *m_system = nullptr; // 系统输出回环线程，与麦克风独立启停。
     QTimer m_captureDelivery; // GUI 线程取帧/包定时器，避免逐帧跨线程信号积压。
     QThread *m_enumerator = nullptr; // 临时 MTA 枚举线程，完成后 deleteLater。
-    QSet<QThread *> m_pendingCapture; // 已启动且 GUI 尚未收到 finished 的线程。
+    QSet<QThread *> m_pendingCapture; // 已启动且 GUI 尚未收到 finished 的采集/检测线程。
     QSet<int> m_captureErrors; // 失败源索引，防止 finished 抹掉错误提示。
     QStringList m_captureMessages{QString(), QString(), QString()}; // 视频、麦克风、回环各自的状态文字。
     QString m_deviceMessage; // 设备枚举结果或权限提示。
@@ -73,5 +75,9 @@ private:
     AudioMixer m_audioMixer;                  // GUI串行处理两路有限长度数据，不增加采集MVC。
     quint64 m_mixedPackets = 0;                // 本轮已交付的固定10ms混音包数。
     QString m_audioError;                     // 音频处理错误锁存到下一轮，其他成功路继续。
+    GpuFaceDetector *m_faces = nullptr;        // 独立检测 worker，单帧输入/结果邮箱。
+    bool m_faceFailed = false;                // 本轮失败后继续原预览，不逐帧重试引擎。
+    quint64 m_lastFaceSequence = 0;           // 已显示检测帧的序号，防止重复提交。
+    QString m_faceMessage;                    // 独立检测状态，停止保留本轮错误。
 };
 }
