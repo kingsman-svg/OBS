@@ -7,7 +7,7 @@
 #include <QUrl>
 #include <array>
 namespace Ui { class MainWindow; }
-namespace csn { struct VideoFrame; }
+namespace csn { struct VideoFrame; struct FaceFrame; }
 class QStackedWidget;
 class QLabel;
 class QLineEdit;
@@ -39,6 +39,10 @@ public:
     void applyCaptureState(bool canStart, bool active, bool enumerating,
                            const QString &devices, const QStringList &messages); // 同步按钮及各路状态。
     void showCapturePreview(const csn::VideoFrame &frame); // 交给独立 GPU 预览窗口；空帧清理。
+    bool faceDetectionEnabled() const;                 // 本轮开始前读取勾选，运行期间锁定。
+    QString faceEnginePath() const;                    // 已选本地引擎路径，不在 View 读取文件。
+    void showFacePreview(const csn::FaceFrame &frame);   // 原画面与检测框点一起交给预览。
+    void showFaceStatus(const QString &message);        // 独立状态文字，失败不覆盖采集/音频状态。
     void showAudioLevels(float microphone, float system); // 展示归一化 RMS，不播放音频。
     void showMixedAudio(float level, const QString &message); // 混音后的电平、格式及削波统计。
 signals:
@@ -91,6 +95,10 @@ private:
     std::array<QCheckBox *, 2> m_audioMute{};  // 两路静音选择，恢复时不重放旧数据。
     QProgressBar *m_mixedLevel = nullptr;     // 削波后混音 RMS，独立于原始输入电平。
     QLabel *m_mixStatus = nullptr;            // 输出格式、包数、削波和处理错误。
+    QCheckBox *m_faceDetection = nullptr;     // 勾选后启用实时检测；默认关闭。
+    QLineEdit *m_faceEngine = nullptr;        // 本地 .engine 路径，可浏览选择。
+    QPushButton *m_chooseEngine = nullptr;    // 仅停止时允许更换引擎。
+    QLabel *m_faceStatus = nullptr;           // 人脸数、耗时、邮箱替换数或失败信息。
     bool m_loggedIn = false;
     bool m_ready = false;
     bool m_busy = false;

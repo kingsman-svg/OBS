@@ -1,5 +1,6 @@
 #pragma once
 #include "VideoCapture.h"
+#include "FaceDetection.h"
 #include <QWidget>
 
 class QLabel;
@@ -11,7 +12,7 @@ class PreviewWindow final : public QWidget {
     Q_OBJECT
 public:
     explicit PreviewWindow(const QString &title, const QString &placeholder, QWidget *parent); // 创建文字层和原生画布。
-    void setFrame(const csn::VideoFrame &frame); // 换最新帧，每轮首帧仅自动打开一次。
+    void setFrame(const csn::VideoFrame &frame, const QVector<csn::FaceDetection> &faces = {}); // 同帧框点随原画面提交。
     void present();                            // 用户主动打开或恢复窗口，不改变采集状态。
 signals:
     void failed(const QString &message);        // 转发预览错误，便于主窗口显示。

@@ -7,10 +7,13 @@ participant C as SessionController
 participant W as 三个采集工作线程
 participant S as Windows采集资源
 participant M as AudioMixer
+participant F as GpuFaceDetector线程
+participant G as CUDA资源
 U->>V: 停止采集或退出登录
 V-->>C: stopCaptureRequested 或登录状态变化
 C->>C: 停止视频/普通音频交付，清空预览
 C->>W: stop / requestInterruption
+C->>F: stop，清空输入/结果并唤醒
 C->>V: 显示正在停止，禁用重新启动
 V->>P: 清空画面并隐藏独立窗口
 P->>R: clear，释放SRV/RTV/SwapChain和帧引用
@@ -31,5 +34,10 @@ C->>C: emit mixedAudioReady
 else 已退出登录
 C->>C: 丢弃迟到包，不交付混音
 end
-C->>V: 已停止，登录状态允许时可重新选择
+C->>V: 采集已退出，等待检测线程清理
+F->>F: 已提交GPU任务完成后丢弃迟到结果
+F->>G: 同步、注销中间纹理、释放推理和显存资源
+F-->>C: finished，移除未完成线程
+C->>V: 全部已停止，登录状态允许时可重新选择
+Note over C,F: 采集与检测全部finished后才解锁重新启动；GUI不等待GPU
 Note over C,W: 关闭程序时控制器析构wait并释放滤波器；不保证尾部交付

@@ -1,0 +1,50 @@
+sequenceDiagram
+actor U as 用户
+participant C as SessionController
+participant W as VideoCapture
+participant F as GpuFaceDetector线程
+participant D as D3D11纹理
+participant G as CUDA和TensorRT
+participant P as GPU预览
+U->>C: 勾选框点并选择本地engine，开始采集
+C->>F: begin(enginePath)，不在GUI加载
+C->>W: begin(source)，采集与模型初始化独立
+F->>F: 读取有界引擎文件
+alt 文件缺失或读取失败
+F-->>C: failed，锁存本轮错误
+C->>P: 立即恢复已有最新原帧，后续原帧继续预览
+else 文件可读
+W->>D: 独立BGRA GPU快照
+C->>W: 每33ms取最新帧
+C->>F: submit，替换单帧输入邮箱
+F->>D: 取得源设备和DXGI adapter
+alt 首帧或源设备变化
+F->>G: 选择同adapter CUDA device，反序列化，校验十个I/O
+F->>G: 创建context、stream、events和复用显存
+else 同设备后续帧
+F->>F: 复用执行上下文和显存
+end
+alt 首帧或尺寸变化
+F->>D: 创建专用中间纹理
+F->>G: 注册一次CUDA graphics resource
+end
+F->>D: CopyResource并Flush，视频像素不读回CPU
+F->>G: map，取得array和texture object
+F->>G: CUDA等比缩放补黑、BGRA转RGB、归一化、NCHW
+F->>G: 等预处理完成，销毁采样对象并unmap
+F->>G: enqueueV3，同stream读回模型输出并同步
+F->>F: CPU解码、NMS、还原原图框点
+F->>F: 原子发布FaceFrame，持有同一原始纹理
+C->>F: 每33ms取最新完成结果
+C->>P: 同帧纹理加框点，Shader绘制后Present
+end
+alt 设备不支持或反序列化/执行失败
+F-->>C: failed，释放本轮GPU资源后finished
+C->>P: 原帧预览继续，音频和采集继续
+else 停止或退出登录
+C->>F: stop，清空输入/结果并唤醒
+F->>F: 正在执行的帧完成后也不再发布
+F->>G: 同步、注销纹理、释放context/显存/stream
+F-->>C: finished，才允许下一轮启动
+end
+Note over F,P: 始终使用同帧结果；GPU耗时与处理耗时、帧龄分别显示

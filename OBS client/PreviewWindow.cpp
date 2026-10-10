@@ -33,10 +33,10 @@ PreviewWindow::PreviewWindow(const QString &title, const QString &placeholder, Q
     // 不设置 DeleteOnClose：主窗口拥有此对象，用户可重复隐藏、打开。
 }
 
-void PreviewWindow::setFrame(const csn::VideoFrame &frame)
+void PreviewWindow::setFrame(const csn::VideoFrame &frame, const QVector<csn::FaceDetection> &faces)
 {
     // 1. 无论是否隐藏，都让画布保留最新纹理。
-    m_renderer->setFrame(frame);
+    m_renderer->setFrame(frame, faces);
     // 2. 空帧代表停止，清除资源/错误/自动打开标志。
     if (!frame.texture) {
         m_presented = false; m_renderFailed = false;

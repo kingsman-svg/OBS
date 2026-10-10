@@ -22,8 +22,32 @@ Vertex vsMain(uint id : SV_VertexID) {
 }
 Texture2D video : register(t0);
 SamplerState linearClamp : register(s0);
-float4 psMain(Vertex v) : SV_TARGET { return float4(video.Sample(linearClamp, v.uv).rgb, 1); }
+struct Face { float4 box; float4 p01; float4 p23; float4 p4; };
+cbuffer Overlay : register(b0) { float4 image; Face faces[16]; };
+float4 psMain(Vertex v) : SV_TARGET {
+    float3 color = video.Sample(linearClamp, v.uv).rgb;
+    float2 pixel = v.uv * image.xy;
+    // image.w 是原图像素单位的线宽，随等比视口缩放，屏幕上的宽度保持约2px。
+    for (int i = 0; i < (int)image.z; ++i) {
+        float4 box = faces[i].box;
+        bool vertical = min(abs(pixel.x - box.x), abs(pixel.x - box.z)) <= image.w && pixel.y >= box.y && pixel.y <= box.w;
+        bool horizontal = min(abs(pixel.y - box.y), abs(pixel.y - box.w)) <= image.w && pixel.x >= box.x && pixel.x <= box.z;
+        if (vertical || horizontal) color = float3(0.1, 1, 0.3);
+        float radius = image.w * 1.75;
+        if (distance(pixel, faces[i].p01.xy) <= radius || distance(pixel, faces[i].p01.zw) <= radius ||
+            distance(pixel, faces[i].p23.xy) <= radius || distance(pixel, faces[i].p23.zw) <= radius ||
+            distance(pixel, faces[i].p4.xy) <= radius) color = float3(1, 0.2, 0.15);
+    }
+    return float4(color, 1);
+}
 )";
+
+// HLSL float4 对齐；不用 Qt 绘图覆盖原生 SwapChain，框点同样由 GPU Shader 输出。
+struct OverlayConstants {
+    float image[4]{};       // 原图宽、高、检测数量、原图单位线宽。
+    float faces[16][16]{};  // 每张脸依次是框LTRB、点01、点23、点4及两个填充值。
+};
+static_assert(sizeof(OverlayConstants) % 16 == 0);
 
 // Shader 编译失败时保留 HLSL 诊断，交给统一错误出口。
 ComPtr<ID3DBlob> compile(const char *entry, const char *profile)
@@ -51,18 +75,19 @@ VideoRenderer::VideoRenderer(QWidget *parent) : QWidget(parent)
 VideoRenderer::~VideoRenderer() { releaseResources(); }
 QPaintEngine *VideoRenderer::paintEngine() const { return nullptr; }
 
-void VideoRenderer::setFrame(const csn::VideoFrame &frame)
+void VideoRenderer::setFrame(const csn::VideoFrame &frame, const QVector<csn::FaceDetection> &faces)
 {
     Q_ASSERT(QThread::currentThread() == thread());
     if (!frame.texture) { clear(); return; }
     m_frame = frame;
+    m_faces = faces.mid(0, 16);
     if (!m_failed) update(); // 隐藏时仍换缓存，Qt 不会为隐藏画布执行 Present。
 }
 
 void VideoRenderer::clear()
 {
     Q_ASSERT(QThread::currentThread() == thread());
-    m_frame = {}; m_failed = false;
+    m_frame = {}; m_faces.clear(); m_failed = false;
     releaseResources();
 }
 
@@ -99,6 +124,10 @@ void VideoRenderer::initialize(ID3D11Device *device, HWND window)
     const auto ps = compile("psMain", "ps_4_0");
     winrt::check_hresult(m_device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &m_vertex));
     winrt::check_hresult(m_device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &m_pixel));
+    D3D11_BUFFER_DESC overlay{};
+    overlay.ByteWidth = sizeof(OverlayConstants); overlay.Usage = D3D11_USAGE_DEFAULT;
+    overlay.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    winrt::check_hresult(m_device->CreateBuffer(&overlay, nullptr, &m_overlay));
     // 3. 固定二维绘制状态：线性采样、边缘钳制、不剔除、不做深度测试。
     D3D11_SAMPLER_DESC sampler{};
     sampler.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -172,12 +201,24 @@ void VideoRenderer::render()
     m_deferred->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     m_deferred->VSSetShader(m_vertex.Get(), nullptr, 0); m_deferred->PSSetShader(m_pixel.Get(), nullptr, 0);
     m_deferred->PSSetShaderResources(0, 1, &source); m_deferred->PSSetSamplers(0, 1, &sampler);
-    // 4. 录制 Draw，再用 TRUE 恢复共享上下文状态；线程保护串行化整次提交。
+    // 4. 框点坐标以原视频像素为单位；与纹理使用同一视口，自动适配留边和高 DPI。
+    OverlayConstants overlay{};
+    overlay.image[0] = float(description.Width); overlay.image[1] = float(description.Height);
+    overlay.image[2] = float(m_faces.size()); overlay.image[3] = 2.0f / scale;
+    for (qsizetype i = 0; i < m_faces.size(); ++i) {
+        const auto &face = m_faces[i]; auto *values = overlay.faces[i];
+        values[0] = float(face.box.left()); values[1] = float(face.box.top());
+        values[2] = float(face.box.right()); values[3] = float(face.box.bottom());
+        for (int j = 0; j < 5; ++j) { values[4 + 2 * j] = float(face.landmarks[j].x()); values[5 + 2 * j] = float(face.landmarks[j].y()); }
+    }
+    m_deferred->UpdateSubresource(m_overlay.Get(), 0, nullptr, &overlay, 0, 0);
+    auto *constants = m_overlay.Get(); m_deferred->PSSetConstantBuffers(0, 1, &constants);
+    // 5. 录制 Draw，再用 TRUE 恢复共享上下文状态；线程保护串行化整次提交。
     m_deferred->Draw(3, 0);
     ComPtr<ID3D11CommandList> commands;
     winrt::check_hresult(m_deferred->FinishCommandList(FALSE, &commands));
     m_immediate->ExecuteCommandList(commands.Get(), TRUE);
-    // 5. 非阻塞 Present；队列繁忙/遮挡时跳过，下一帧再尝试。
+    // 6. 非阻塞 Present；队列繁忙/遮挡时跳过，下一帧再尝试。
     const HRESULT result = m_swapChain->Present(0, DXGI_PRESENT_DO_NOT_WAIT);
     if (result == DXGI_ERROR_WAS_STILL_DRAWING) {
         // 静止源可能不再产生新帧；延迟重试一次，避免首帧忙碌后永久黑屏。
@@ -197,7 +238,7 @@ void VideoRenderer::releaseResources()
     // 1. 撤销独立上下文和视图引用；不能 ClearState 共享立即上下文。
     if (m_deferred) m_deferred->ClearState();
     m_source.Reset(); m_target.Reset(); m_swapChain.Reset();
-    m_vertex.Reset(); m_pixel.Reset(); m_sampler.Reset(); m_rasterizer.Reset(); m_depth.Reset();
+    m_vertex.Reset(); m_pixel.Reset(); m_overlay.Reset(); m_sampler.Reset(); m_rasterizer.Reset(); m_depth.Reset();
     m_deferred.Reset();
     // 2. Flush 促使旧 flip 链销毁，同一个 HWND 才能绑定下一条交换链。
     if (m_immediate) m_immediate->Flush();

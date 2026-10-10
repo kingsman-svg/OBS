@@ -5,12 +5,14 @@ Supports one detailed class per file and the sequence constructs used here.
 """
 from pathlib import Path
 import math
+import argparse
 import re
 import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'gpu-face': 'GPU人脸检测时序图',
     'TrtLogger': '推理日志类图', 'EngineSession': '推理引擎会话类图',
     'ModelOptimizer': '模型优化器类图', 'model-optimize': '独立模型优化时序图',
     'engine-infer': '推理引擎执行时序图',
@@ -210,9 +212,13 @@ def render_sequence(path):
         y += 57
     save(c, path)
 
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--classes', action='store_true', help='Also regenerate historical class diagrams (default: sequences only).')
+args = parser.parse_args()
 sources = sorted(ROOT.glob('*.mmd'))
 class_sources = [p for p in sources if p.read_text(encoding='utf-8').startswith('classDiagram')]
 sequence_sources = [p for p in sources if p.read_text(encoding='utf-8').startswith('sequenceDiagram')]
-for source in class_sources: render_class(source)
+if args.classes:
+    for source in class_sources: render_class(source)
 for source in sequence_sources: render_sequence(source)
-print(f'Rendered {len(class_sources)} class diagrams and {len(sequence_sources)} sequence diagrams (SVG + PNG).')
+print(f'Rendered {len(class_sources) if args.classes else 0} class diagrams and {len(sequence_sources)} sequence diagrams (SVG + PNG).')
