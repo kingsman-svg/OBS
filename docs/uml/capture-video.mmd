@@ -9,10 +9,12 @@ participant S as Windows采集源
 participant G as D3D11
 participant R as VideoRenderer
 participant T as MediaTimeline
+participant E as MediaPublisher线程
 U->>V: 选择摄像头或窗口/屏幕，开始采集
 V-->>C: captureRequested
 C->>C: 检查登录、枚举及未完成启停
 C->>T: begin，共同QPC原点和120ms调度窗口
+C->>E: 勾选录制时begin，开放有界入口
 C->>W: begin(source)
 W->>W: 初始化 MTA；检查目标有效性
 alt 摄像头
@@ -38,7 +40,8 @@ C->>T: pushVideo 同帧纹理和框点
 end
 C->>T: takeFrames(当前QPC)，按30fps时间格调度
 T-->>C: TimedVideoFrame，来源时间与PTS独立
-C-->>C: synchronizedVideoReady，后续编码入口
+C-->>E: synchronizedVideoReady，快速入队
+E->>E: GPU输出独立AVFrame、NVENC编码、MP4封装
 C->>V: showFacePreview 调度后的同帧画面
 V->>P: setFrame，首帧非模态显示
 P->>R: setFrame 换最新纹理和可选同帧框点

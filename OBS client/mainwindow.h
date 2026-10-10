@@ -46,6 +46,9 @@ public:
     void showAudioLevels(float microphone, float system); // 展示归一化 RMS，不播放音频。
     void showMixedAudio(float level, const QString &message); // 混音后的电平、格式及削波统计。
     void showMediaSyncStatus(const QString &message);    // 编码前时间线的输出/重复/丢弃计数。
+    bool recordingEnabled() const;                     // 开始采集时读取；默认仅预览。
+    QString recordingDirectory() const;                // 本地MP4保存目录，文件名由Controller生成。
+    void showRecordingStatus(const QString &message);   // 编码计数、封存结果或独立错误提示。
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
@@ -101,6 +104,10 @@ private:
     QLineEdit *m_faceEngine = nullptr;        // 本地 .engine 路径，可浏览选择。
     QPushButton *m_chooseEngine = nullptr;    // 仅停止时允许更换引擎。
     QLabel *m_faceStatus = nullptr;           // 人脸数、耗时、邮箱替换数或失败信息。
+    QCheckBox *m_recording = nullptr;          // 勾选后本轮采集同时编码到MP4。
+    QLineEdit *m_recordDirectory = nullptr;    // 保存目录，运行期间锁定。
+    QPushButton *m_chooseRecordDirectory = nullptr; // 选择目录，不打开文件或启动编码。
+    QLabel *m_recordStatus = nullptr;         // 独占整行，长路径换行，由滚动区承载。
     bool m_loggedIn = false;
     bool m_ready = false;
     bool m_busy = false;

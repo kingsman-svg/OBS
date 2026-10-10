@@ -10,6 +10,7 @@ participant M as AudioMixer
 participant F as GpuFaceDetector线程
 participant G as CUDA资源
 participant T as MediaTimeline
+participant E as MediaPublisher线程
 U->>V: 停止采集或退出登录
 V-->>C: stopCaptureRequested 或登录状态变化
 C->>C: 停止视频/普通音频交付，清空预览
@@ -21,6 +22,7 @@ P->>R: clear，释放SRV/RTV/SwapChain和帧引用
 alt 退出登录或登录失效
 C->>M: clear，立即丢弃缓存与滤波尾部
 C->>T: clear，立即丢弃同步队列和纹理
+C->>E: stop，封存已入队数据
 else 普通停止
 C->>C: 保留音频尾部，等线程结束后排空
 end
@@ -44,6 +46,9 @@ F-->>C: finished，移除未完成线程
 C->>T: 全部线程退出后finish，退出登录则clear
 T-->>C: 最后同步批次，最多保留500ms
 C->>C: 发同步尾部信号，预览不重新打开
+C->>E: 同步尾部入队后stop
+E->>E: 排空编码器、写MP4 trailer、原子改名
+E-->>C: completed或failed，再finished
 C->>V: 全部已停止，登录状态允许时可重新选择
-Note over C,F: 采集与检测全部finished后才解锁重新启动；GUI不等待GPU
-Note over C,W: 关闭程序时控制器析构wait并释放滤波器；不保证尾部交付
+Note over C,E: 采集、检测及录制全部finished后才解锁；GUI不等待GPU/写出
+Note over C,W: 析构wait回收资源、封存已编码输入；未交付同步尾部不保证补送

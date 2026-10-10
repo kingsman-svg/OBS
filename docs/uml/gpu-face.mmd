@@ -7,6 +7,7 @@ participant D as D3D11纹理
 participant G as CUDA和TensorRT
 participant P as GPU预览
 participant T as MediaTimeline
+participant E as MediaPublisher线程
 U->>C: 勾选框点并选择本地engine，开始采集
 C->>F: begin(enginePath)，不在GUI加载
 C->>W: begin(source)，采集与模型初始化独立
@@ -41,6 +42,7 @@ C->>T: pushVideo同帧纹理加框点，保留采集QPC
 C->>T: takeFrames，120ms总等待与30fps时间格
 T-->>C: 带PTS的同帧数据
 C->>P: 同步预览，Shader绘制后Present
+C->>E: 可选同步帧入队，GPU绘制框点后NVENC编码
 end
 alt 设备不支持或反序列化/执行失败
 F-->>C: failed，释放本轮GPU资源后finished

@@ -7,13 +7,13 @@
 ```text
 VideoCapture → 可选 GpuFaceDetector → 同帧纹理/框点 → MediaTimeline
 WasapiCapture → AudioResampler → AudioMixer → 48kHz PCM → MediaTimeline
-MediaTimeline → synchronizedVideoReady / synchronizedAudioReady → 后续编码器
+MediaTimeline → synchronizedVideoReady / synchronizedAudioReady → MediaPublisher 有界编码队列
               └ 视频 → 现有独立 GPU 预览窗口
 ```
 
 `videoFrameReady`、`audioPacketReady`、`mixedAudioReady` 保留为原始/处理数据诊断出口。后续编码使用两个 **synchronized** 信号，避免绕过媒体时间线。信号当前仍在 GUI 线程发出，消费者只做有界入队，编码、封装和网络写入在工作线程执行。
 
-同步层不修改纹理像素、不读回 CPU。`TimedVideoFrame.source` 保存原始纹理和同帧检测框点；框点目前仍由预览 Shader 绘制，编码前还要补独立 GPU 处理输出纹理。人脸耗时状态中的帧龄表示检测结果交付时刻，不包含新增的同步等待或最终显示器扫描。
+同步层不修改纹理像素、不读回 CPU。`TimedVideoFrame.source` 保存原始纹理和同帧检测框点；预览Shader和第010步的GpuVideoOutput分别绘制到预览/编码输出，编码使用独立GPU硬件帧。人脸耗时状态中的帧龄表示检测结果交付时刻，不包含新增的同步等待或最终显示器扫描。
 
 ## 时间和调度
 
@@ -30,7 +30,7 @@ MediaTimeline → synchronizedVideoReady / synchronizedAudioReady → 后续编�
 
 正常停止暂停普通交付并清空预览。两路 WASAPI 退出后先排空重采样/混音尾部，再等采集与检测全部 finished，最后排空同步层已经接受的有界媒体数据。尾部同步信号交付给后续编码器，预览不会重新弹出；最后视频时间格可能比音频尾部多不到一个视频帧周期。重复 finish 不重复输出。
 
-退出登录立即 `clear`，丢弃尾部和 GPU 引用，迟到数据不发信号。重新开始建立新原点、清统计。停止排空过程中拒绝启动新一轮。程序退出仍保证线程与资源回收，尚未接入编码器 flush 和网络关闭流程。
+退出登录立即 `clear`，丢弃尾部和 GPU 引用，迟到数据不发信号。重新开始建立新原点、清统计。第010步新增编码器flush和MP4封存：已进入编码队列的数据正常收尾，采集/检测/录制全部finished后才允许重启；程序退出封存已入队媒体，GUI未交付尾部不保证补送。
 
 ## 验证和调试
 
@@ -69,7 +69,7 @@ python scripts/run_capture_checks.py --window-preview
 | MediaPlayer | 文件或URL输入、解封装、解码；复用同一播放实现支持直播和点播 |
 | AudioOutput | WASAPI 扬声器播放；播放端以实际音频播放时钟调度视频，无音频时使用单调时钟 |
 
-视频优先验证本机 `h264_nvenc`，音频使用 AAC；本机 SDK 列出了 NVENC 的 D3D11/CUDA 硬件格式支持，实际 GPU 编码互操作尚未实现/验收。需要先补 GPU 处理输出纹理、像素格式/硬件 AVFrame 与资源寿命。音频 10ms 包通过 FIFO 按编码器 `frame_size` 聚合，处理时间缺口和停止尾部；不能假定每个输入必定产生一个编码包。
+第010步已实现并验证本机 `h264_nvenc` D3D11互操作与AAC：GPU输出独立BGRA硬件AVFrame，音频10ms包通过FIFO按编码器frame_size聚合，保留时间缺口与实际停止尾部。不能假定每个输入必定产生一个编码包，详见 [当前编码实现](010-ffmpeg-encode.md)。
 
 RTMP 协议读写交给 libavformat，现有 TCP 网络库继续负责信令。媒体服务另行部署，建议 SRS 独立 Docker 服务；已有信令返回 pushUrl/pullUrl，但当前 live.start 提前设置 streaming，接入媒体时应改为准备地址与实际开播确认两个阶段。部署时核对既有端口占用。播放端优先验证 Windows D3D11VA 硬解，并让渲染器支持解码后的 NV12 纹理；软件解码保留兼容路径。
 

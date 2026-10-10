@@ -36,18 +36,20 @@ set(OBS_FFMPEG_ROOT "$ENV{FFMPEG_7_HOME}" CACHE PATH "FFmpeg 7.x shared SDK root
 if(NOT OBS_FFMPEG_ROOT)
     set(OBS_FFMPEG_ROOT "C:/dev/ffmpeg-7.1-full_build-shared" CACHE PATH "FFmpeg 7.x shared SDK root" FORCE)
 endif()
-foreach(dependency include/libswresample/swresample.h include/libavutil/channel_layout.h
-        lib/swresample.lib lib/avutil.lib bin/swresample-5.dll bin/avutil-59.dll)
+foreach(dependency include/libswresample/swresample.h include/libavutil/channel_layout.h include/libavcodec/avcodec.h include/libavformat/avformat.h
+        lib/swresample.lib lib/avutil.lib lib/avcodec.lib lib/avformat.lib
+        bin/swresample-5.dll bin/avutil-59.dll bin/avcodec-61.dll bin/avformat-61.dll)
     if(NOT EXISTS "${OBS_FFMPEG_ROOT}/${dependency}")
         message(FATAL_ERROR "Missing ${OBS_FFMPEG_ROOT}/${dependency}. Set OBS_FFMPEG_ROOT to a FFmpeg 7.x shared SDK.")
     endif()
 endforeach()
-add_library(OBSFFmpeg INTERFACE)
-target_include_directories(OBSFFmpeg INTERFACE "${OBS_FFMPEG_ROOT}/include")
-target_link_libraries(OBSFFmpeg INTERFACE "${OBS_FFMPEG_ROOT}/lib/swresample.lib" "${OBS_FFMPEG_ROOT}/lib/avutil.lib")
-# 所有当前目标共用一个输出目录；配置时复制两个实际链接的运行库。
-configure_file("${OBS_FFMPEG_ROOT}/bin/swresample-5.dll" "${CMAKE_CURRENT_BINARY_DIR}/swresample-5.dll" COPYONLY)
-configure_file("${OBS_FFMPEG_ROOT}/bin/avutil-59.dll" "${CMAKE_CURRENT_BINARY_DIR}/avutil-59.dll" COPYONLY)
+add_library(OBSFFmpegAudio INTERFACE)
+target_include_directories(OBSFFmpegAudio INTERFACE "${OBS_FFMPEG_ROOT}/include")
+target_link_libraries(OBSFFmpegAudio INTERFACE "${OBS_FFMPEG_ROOT}/lib/swresample.lib" "${OBS_FFMPEG_ROOT}/lib/avutil.lib")
+# 所有可执行文件共用父目录；编码与封装DLL也复制到这里。
+foreach(runtime swresample-5 avutil-59 avcodec-61 avformat-61)
+    configure_file("${OBS_FFMPEG_ROOT}/bin/${runtime}.dll" "${CMAKE_CURRENT_BINARY_DIR}/${runtime}.dll" COPYONLY)
+endforeach()
 
 # The helper provides the installed compiler's locale prefix when older CMake
 # versions decode localized /showIncludes output incorrectly on Windows.
@@ -59,25 +61,27 @@ add_library(OBSNetwork STATIC HttpClient.cpp HttpClient.h SignalClient.cpp Signa
 target_include_directories(OBSNetwork PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(OBSNetwork PUBLIC Qt6::Network)
 
-add_library(OBSClientCore STATIC
-    mainwindow.cpp mainwindow.h mainwindow.ui
+add_library(OBSMediaCore STATIC
     PreviewWindow.cpp PreviewWindow.h
     VideoRenderer.cpp VideoRenderer.h
-    LoginModel.cpp LoginModel.h
-    LoginController.cpp LoginController.h
-    ClientRole.h SessionModel.cpp SessionModel.h SessionController.cpp SessionController.h
     CaptureSource.h VideoCapture.cpp VideoCapture.h WasapiCapture.cpp WasapiCapture.h
     AudioPacket.h AudioResampler.cpp AudioResampler.h AudioMixer.cpp AudioMixer.h
     MediaTimeline.cpp MediaTimeline.h
     FaceDetection.h FaceDetection.cpp GpuFaceDetector.h GpuFaceDetector.cpp
 )
-target_include_directories(OBSClientCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(OBSClientCore PUBLIC Qt6::Widgets OBSNetwork OBSFFmpeg OBSFaceGpu d3d11 dxgi d3dcompiler windowsapp ole32 uuid)
+target_include_directories(OBSMediaCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(OBSMediaCore PUBLIC Qt6::Widgets OBSFFmpegAudio OBSFaceGpu d3d11 dxgi d3dcompiler windowsapp ole32 uuid)
+add_subdirectory(ffmpeg)
+add_library(OBSClientUi STATIC
+    mainwindow.cpp mainwindow.h mainwindow.ui LoginModel.cpp LoginModel.h LoginController.cpp LoginController.h
+    ClientRole.h SessionModel.cpp SessionModel.h SessionController.cpp SessionController.h)
+target_include_directories(OBSClientUi PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(OBSClientUi PUBLIC OBSNetwork OBSMediaCore OBSFFmpegCore)
 qt_add_executable(OBS_Publisher main.cpp)
 qt_add_executable(OBS_Player main.cpp)
 target_compile_definitions(OBS_Player PRIVATE OBS_PLAYER)
 foreach(client OBS_Publisher OBS_Player)
-    target_link_libraries(${client} PRIVATE OBSClientCore)
+    target_link_libraries(${client} PRIVATE OBSClientUi)
     set_target_properties(${client} PROPERTIES WIN32_EXECUTABLE TRUE)
 endforeach()
 
@@ -102,28 +106,32 @@ option(OBS_LIVE_TESTS "Test against running local Docker services (8080/9000)" O
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
     add_executable(CSNLoginTests ../tests/LoginTests.cpp LocalAuthServer.cpp LocalAuthServer.h)
-    target_link_libraries(CSNLoginTests PRIVATE OBSClientCore Qt6::Test)
+    target_link_libraries(CSNLoginTests PRIVATE OBSClientUi Qt6::Test)
     add_test(NAME login.http_mvc COMMAND CSNLoginTests)
     set_tests_properties(login.http_mvc PROPERTIES TIMEOUT 20)
     add_executable(OBSClientTests ../tests/ClientTests.cpp)
-    target_link_libraries(OBSClientTests PRIVATE OBSClientCore Qt6::Test)
+    target_link_libraries(OBSClientTests PRIVATE OBSClientUi Qt6::Test)
     add_test(NAME client.protocol_mvc COMMAND OBSClientTests)
     set_tests_properties(client.protocol_mvc PROPERTIES TIMEOUT 20)
     add_executable(OBSCaptureTests ../tests/CaptureTests.cpp)
-    target_link_libraries(OBSCaptureTests PRIVATE OBSClientCore Qt6::Test winmm)
+    target_link_libraries(OBSCaptureTests PRIVATE OBSClientUi Qt6::Test winmm)
     add_test(NAME client.capture COMMAND OBSCaptureTests)
     # Native capture/COM and SwapChain tests require an interactive Windows platform session.
     set_tests_properties(client.capture PROPERTIES TIMEOUT 40 ENVIRONMENT "QT_QPA_PLATFORM=windows")
     add_executable(OBSAudioTests ../tests/AudioTests.cpp)
-    target_link_libraries(OBSAudioTests PRIVATE OBSClientCore Qt6::Test)
+    target_link_libraries(OBSAudioTests PRIVATE OBSMediaCore Qt6::Test)
     add_test(NAME client.audio COMMAND OBSAudioTests)
     set_tests_properties(client.audio PROPERTIES TIMEOUT 20)
     add_executable(OBSMediaTests ../tests/MediaTimelineTests.cpp)
-    target_link_libraries(OBSMediaTests PRIVATE OBSClientCore)
+    target_link_libraries(OBSMediaTests PRIVATE OBSMediaCore)
     add_test(NAME client.media_sync COMMAND OBSMediaTests)
     set_tests_properties(client.media_sync PROPERTIES TIMEOUT 20)
+    add_executable(OBSEncodingTests ../tests/EncodingTests.cpp)
+    target_link_libraries(OBSEncodingTests PRIVATE OBSFFmpegCore Qt6::Test)
+    add_test(NAME client.encode COMMAND OBSEncodingTests)
+    set_tests_properties(client.encode PROPERTIES TIMEOUT 40)
     add_executable(OBSFaceTests ../tests/FaceTests.cpp)
-    target_link_libraries(OBSFaceTests PRIVATE OBSClientCore Qt6::Test)
+    target_link_libraries(OBSFaceTests PRIVATE OBSClientUi Qt6::Test)
     add_test(NAME client.face COMMAND OBSFaceTests)
     set_tests_properties(client.face PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=windows")
     obs_deploy_face_runtime(OBSFaceTests)
@@ -148,7 +156,8 @@ if(BUILD_TESTING)
 endif()
 if(MSVC)
     target_compile_options(OBSNetwork PRIVATE /utf-8 /W4)
-    target_compile_options(OBSClientCore PRIVATE /utf-8 /W4)
+    target_compile_options(OBSMediaCore PRIVATE /utf-8 /W4)
+    target_compile_options(OBSClientUi PRIVATE /utf-8 /W4)
     target_compile_options(OBS_Publisher PRIVATE /utf-8 /W4)
     target_compile_options(OBS_Player PRIVATE /utf-8 /W4)
     if(BUILD_TESTING)
@@ -157,6 +166,7 @@ if(MSVC)
         target_compile_options(OBSCaptureTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSAudioTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSMediaTests PRIVATE /utf-8 /W4)
+        target_compile_options(OBSEncodingTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSFaceTests PRIVATE /utf-8 /W4)
     endif()
 endif()

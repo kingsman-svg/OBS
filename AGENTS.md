@@ -10,6 +10,8 @@
 - 用户最新约定：后续不再新增或更新 UML 类图；保留历史图，完整流程仍维护时序图。
 - 每完成或修改一个业务/网络流程，同步维护 `docs/uml/` 中对应 UML 时序图，包含本步覆盖的重要失败分支。
 - 保持简单分级：应用源码集中在 `OBS client/`，测试放 `tests/`，说明放 `docs/`，图示放 `docs/uml/`，工具放 `scripts/`；不为空模块预建目录。
+- 用户最新约定：FFmpeg 编码/封装单独放在 `OBS client/ffmpeg/` 一级目录；CMake 用 `OBSMediaCore` 表示采集处理、`OBSClientUi` 表示界面/控制器，避免混入一个 OBSClientCore 目标。
+- 讲解模块时先交代对象持有的线程和资源，再按 Controller → begin → start → run → 数据交接 → stop → 清理/finished → 重启串起端到端流程，并明确各接口的调用线程。
 - 所有项目图片（包括 SVG、PNG 和生成截图）使用中文文件名；修改名称时同步文档和生成脚本。
 - UML 使用 Mermaid 源码，并提供 SVG/PNG 图像；代码、图与说明应对应当前实现。
 - 逐类、逐流程增量实现；避免为未来需求预先建立大量抽象或界面。

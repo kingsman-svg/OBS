@@ -15,6 +15,8 @@ mode.add_argument('--window-preview', action='store_true', help='Only verify WGC
 mode.add_argument('--ui-only', action='store_true', help='Verify layout and preview lifecycle without capture devices.')
 mode.add_argument('--audio-mix', action='store_true', help='Verify actual WASAPI loopback to mixed PCM using silent playback; save no captured audio.')
 mode.add_argument('--media-sync', action='store_true', help='Verify joint WGC test-window and WASAPI loopback timeline, restart and logout; save no captured media.')
+mode.add_argument('--record', action='store_true', help='Record a generated WGC window and muted loopback to MP4; verify stop/restart/logout.')
+mode.add_argument('--record-face', action='store_true', help='Also run the local TensorRT detector while recording the generated window.')
 args = parser.parse_args()
 if os.name != 'nt':
     raise SystemExit('Capture checks require Windows.')
@@ -41,6 +43,10 @@ elif args.audio_mix:
     command.append('--audio-mix')
 elif args.media_sync:
     command.append('--media-sync')
+elif args.record:
+    command.append('--record')
+elif args.record_face:
+    command.append('--record-face')
 try:
     result = subprocess.run(command, env=environment, cwd=root, capture_output=True,
                             timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
