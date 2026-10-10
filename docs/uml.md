@@ -164,6 +164,10 @@ ClientRole 是区分两个入口的枚举，不含手写类。MainWindow、Login
 | LiveRoom | [源码](uml/LiveRoom.mmd) | [直播房间类图](uml/直播房间类图.png) | [矢量图](uml/直播房间类图.svg) |
 | SignalServer | [源码](uml/SignalServer.mmd) | [信令服务器类图](uml/信令服务器类图.png) | [矢量图](uml/信令服务器类图.svg) |
 
+## FFmpeg 编码与封存
+
+本地编码与封存流程：[录制时序图源码](uml/ffmpeg-record.mmd)、[PNG](uml/本地编码录制时序图.png)、[SVG](uml/本地编码录制时序图.svg)；[停止封存源码](uml/ffmpeg-stop.mmd)、[PNG](uml/录制停止封存时序图.png)、[SVG](uml/录制停止封存时序图.svg)。类图按约定保留历史版本，不新增。
+
 ## 独立服务端时序图
 
 | 对象/流程 | Mermaid | PNG | SVG |

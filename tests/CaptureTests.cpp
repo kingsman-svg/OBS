@@ -28,6 +28,7 @@
 #include <QSignalSpy>
 #include <QSpinBox>
 #include <QCheckBox>
+#include <QLineEdit>
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 #include <mmsystem.h>
@@ -274,6 +275,11 @@ bool previewUiLifecycle()
     auto *syncStatus = view.findChild<QLabel *>("mediaSyncStatusLabel");
     CHECK(syncStatus && syncStatus->hasHeightForWidth());
     CHECK(syncStatus->height() >= syncStatus->heightForWidth(syncStatus->width())); // 同步状态两行完整显示。
+    view.showRecordingStatus(QStringLiteral("已保存：C:/录制/") + QString(100, QChar(0x6d4b)) + QStringLiteral(".mp4\n视频 90 帧 · 音频 3.00 秒 · 编码 800 KB · 队列丢弃 0 帧 / 0 包"));
+    QTest::qWait(30);
+    auto *recordStatus = view.findChild<QLabel *>("recordingStatusLabel");
+    CHECK(recordStatus && recordStatus->height() >= recordStatus->heightForWidth(recordStatus->width()));
+    CHECK(!view.findChild<QCheckBox *>("recordingCheck")->isEnabled());
     view.showMixedAudio(0, QStringLiteral("48kHz · 立体声 · 10ms\n音频处理失败：") + QString(100, QChar(0x6d4b)));
     QTest::qWait(30);
     CHECK(mixStatus->height() >= mixStatus->heightForWidth(mixStatus->width())); // 错误详情可增高并滚动。
@@ -307,6 +313,9 @@ bool previewUiLifecycle()
         scroll->ensureWidgetVisible(view.findChild<QLabel *>("faceStatusLabel"));
         QTest::qWait(30);
         CHECK(view.grab().save(directory + QStringLiteral("/人脸检测错误换行布局.png")));
+        scroll->ensureWidgetVisible(recordStatus);
+        QTest::qWait(30);
+        CHECK(view.grab().save(directory + QStringLiteral("/本地录制紧凑布局.png")));
         view.resize(initialSize);
         preview->resize(QSize(720, 480).boundedTo(preview->screen()->availableGeometry().size() - QSize(40, 80)));
         QTest::qWait(30);
@@ -532,7 +541,7 @@ bool desktopHardware()
     qInfo("PASS WGC window / color / resize / restart / target close");
     return true;
 }
-bool loopbackMixHardware(bool withVideo = false)
+bool loopbackMixHardware(bool withVideo = false, bool record = false, bool detect = false)
 {
     qInfo("BEGIN WASAPI loopback to resampler / mixer / MVC / stop tail / logout");
     MainWindow view(ClientRole::Publisher);
@@ -564,6 +573,13 @@ bool loopbackMixHardware(bool withVideo = false)
         return true;
     }
     combo->setCurrentIndex(selected);
+    const auto recordingDirectory = QDir::current().filePath(QStringLiteral("out/采集编码验证_%1").arg(QDateTime::currentMSecsSinceEpoch()));
+    if (record) {
+        view.findChild<QCheckBox *>("recordingCheck")->setChecked(true);
+        view.findChild<QLineEdit *>("recordingDirectoryEdit")->setText(recordingDirectory);
+        view.findChild<QCheckBox *>("systemAudioMute")->setChecked(true); // 保存测试静音，避免录入其他应用声音。
+    }
+    if (detect) view.findChild<QCheckBox *>("faceDetectionCheck")->setChecked(true);
     QWidget target;
     QTimer animation;
     if (withVideo) {
@@ -622,6 +638,8 @@ bool loopbackMixHardware(bool withVideo = false)
         if (written == MMSYSERR_NOERROR) {
             view.findChild<QPushButton *>("startCaptureButton")->click();
             received = until([&] { return mixed >= 15 && synchronized >= 10 && (!withVideo || synchronizedVideo >= 3); });
+            if (record) QTest::qWait(1500);
+            if (detect) qInfo().noquote() << view.findChild<QLabel *>("faceStatusLabel")->text();
             view.findChild<QPushButton *>("stopCaptureButton")->click();
             stopped = until([&] { return !view.findChild<QPushButton *>("stopCaptureButton")->isEnabled(); });
             const int afterStop = mixed;
@@ -631,7 +649,7 @@ bool loopbackMixHardware(bool withVideo = false)
             lastPts = -1; // 新一轮共用原点重置，PTS从新时间线重新开始。
             lastVideoPts = -1; origin = 0;
             view.findChild<QPushButton *>("startCaptureButton")->click();
-            restarted = until([&] { return mixed > afterStop + 10; });
+            restarted = until([&] { return mixed > afterStop + 10 && (!withVideo || synchronizedVideo > videoAfterStop + 3); });
             login.logout();
             const int afterLogout = mixed;
             const int syncAfterLogout = synchronized;
@@ -647,6 +665,14 @@ bool loopbackMixHardware(bool withVideo = false)
     qInfo().noquote() << view.findChild<QLabel *>("audioMixStatusLabel")->text();
     CHECK(opened == MMSYSERR_NOERROR && prepared == MMSYSERR_NOERROR && written == MMSYSERR_NOERROR);
     CHECK(received && stopped && restarted && loggedOut && noLate && valid);
+    if (record) {
+        qInfo().noquote() << view.findChild<QLabel *>("recordingStatusLabel")->text();
+        const auto files = QDir(recordingDirectory).entryList({"*.mp4"}, QDir::Files);
+        CHECK(files.size() == 2 && view.findChild<QLabel *>("recordingStatusLabel")->text().contains(QStringLiteral("已保存")));
+        for (const auto &name : files) CHECK(QFileInfo(QDir(recordingDirectory).filePath(name)).size() > 1000);
+        qInfo().noquote() << "PASS Controller -> WGC/WASAPI -> timeline -> MP4; normal stop, restart, logout:" << recordingDirectory;
+    }
+    if (detect) CHECK(!view.findChild<QLabel *>("faceStatusLabel")->text().contains(QStringLiteral("失败")));
     qInfo("PASS WASAPI to mixed/synchronized packets: %d / %d packets; stop/restart/logout, no late delivery", mixed, synchronized);
     if (withVideo) qInfo("PASS joint WGC/WASAPI timeline: %d synchronized video frames, shared origin / restart / no late delivery", synchronizedVideo);
     return true;
@@ -764,6 +790,8 @@ int main(int argc, char **argv)
     if (app.arguments().contains("--window-preview")) return gpuOutputHardware() && desktopHardware() ? 0 : 1;
     if (app.arguments().contains("--audio-mix")) return loopbackMixHardware() ? 0 : 1;
     if (app.arguments().contains("--media-sync")) return loopbackMixHardware(true) ? 0 : 1;
+    if (app.arguments().contains("--record")) return loopbackMixHardware(true, true) ? 0 : 1;
+    if (app.arguments().contains("--record-face")) return loopbackMixHardware(true, true, true) ? 0 : 1;
     if (hardware) return gpuOutputHardware() && desktopHardware() && deviceHardware() ? 0 : 1;
     if (!audioFormats() || !failedWorkerRestart() || !captureMvc() || !previewUiLifecycle()) return 1;
     qInfo("PASS 4 capture groups: PCM formats / failed worker restart / MVC and logout / independent preview");

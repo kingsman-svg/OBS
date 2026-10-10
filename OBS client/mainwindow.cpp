@@ -12,6 +12,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QFileDialog>
+#include <QStandardPaths>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFormLayout>
@@ -320,6 +321,36 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
         if (!path.isEmpty()) m_faceEngine->setText(QDir::toNativeSeparators(path));
     });
     connect(m_refreshDevices, &QPushButton::clicked, this, &MainWindow::refreshDevicesRequested);
+    auto *record = new QGroupBox(tr("本地编码录制"), panel);
+    record->setObjectName(QStringLiteral("recordingGroup"));
+    auto *recordLayout = new QVBoxLayout(record);
+    recordLayout->setContentsMargins(16, 24, 16, 16); recordLayout->setSpacing(12);
+    panels->addWidget(record);
+    m_recording = new QCheckBox(tr("采集时保存 MP4（H.264 NVENC + AAC）"), record);
+    m_recording->setObjectName(QStringLiteral("recordingCheck"));
+    recordLayout->addWidget(m_recording);
+    recordLayout->addWidget(new QLabel(tr("保存目录（每轮自动生成新文件名）"), record));
+    auto *recordRow = new QHBoxLayout;
+    const auto movies = QStandardPaths::writableLocation(QStandardPaths::MoviesLocation);
+    m_recordDirectory = new QLineEdit(QDir(movies.isEmpty() ? QDir::homePath() : movies).filePath(QStringLiteral("OBS")), record);
+    m_recordDirectory->setObjectName(QStringLiteral("recordingDirectoryEdit"));
+    m_recordDirectory->setMinimumWidth(0);
+    m_recordDirectory->setToolTip(QDir::toNativeSeparators(m_recordDirectory->text()));
+    connect(m_recordDirectory, &QLineEdit::textChanged, m_recordDirectory, &QWidget::setToolTip);
+    m_chooseRecordDirectory = new QPushButton(tr("选择目录"), record);
+    m_chooseRecordDirectory->setObjectName(QStringLiteral("chooseRecordingDirectoryButton"));
+    recordRow->addWidget(m_recordDirectory, 1); recordRow->addWidget(m_chooseRecordDirectory);
+    recordLayout->addLayout(recordRow);
+    m_recordStatus = new QLabel(tr("录制未启用；勾选后与采集一起启停，停止后写完 MP4 索引。"), record);
+    m_recordStatus->setObjectName(QStringLiteral("recordingStatusLabel"));
+    m_recordStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    m_recordStatus->setWordWrap(true);
+    m_recordStatus->setMinimumHeight(m_recordStatus->fontMetrics().lineSpacing() * 2);
+    recordLayout->addWidget(m_recordStatus);
+    connect(m_chooseRecordDirectory, &QPushButton::clicked, this, [this] {
+        const auto path = QFileDialog::getExistingDirectory(this, tr("选择录制保存目录"), m_recordDirectory->text());
+        if (!path.isEmpty()) m_recordDirectory->setText(QDir::toNativeSeparators(path));
+    });
     connect(m_stopCapture, &QPushButton::clicked, this, &MainWindow::stopCaptureRequested);
     connect(m_startCapture, &QPushButton::clicked, this, [this] {
         QList<csn::CaptureSource> selected;
@@ -494,6 +525,9 @@ void MainWindow::applyCaptureState(bool canStart, bool active, bool enumerating,
     m_refreshDevices->setEnabled(!active && !enumerating);
     m_faceDetection->setEnabled(canStart);
     m_faceEngine->setEnabled(canStart);
+    m_recording->setEnabled(canStart);
+    m_recordDirectory->setEnabled(canStart);
+    m_chooseRecordDirectory->setEnabled(canStart);
     m_chooseEngine->setEnabled(canStart);
     for (int index = 0; index < 2; ++index) {
         m_audioGain[index]->setEnabled(canStart || active);
@@ -534,3 +568,6 @@ void MainWindow::showMixedAudio(float level, const QString &message)
     m_mixStatus->setText(message);
 }
 void MainWindow::showMediaSyncStatus(const QString &message) { if (m_syncStatus) m_syncStatus->setText(message); }
+bool MainWindow::recordingEnabled() const { return m_recording && m_recording->isChecked(); }
+QString MainWindow::recordingDirectory() const { return m_recordDirectory ? m_recordDirectory->text().trimmed() : QString(); }
+void MainWindow::showRecordingStatus(const QString &message) { if (m_recordStatus) m_recordStatus->setText(message); }

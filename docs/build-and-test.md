@@ -12,7 +12,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
 
 脚本自动通过 vswhere 查找 MSVC，默认 Qt 为 C:/software/Qt/6.11.2/msvc2022_64，支持 -QtRoot 和 -BuildDir。构建 Debug，并用 windeployqt 将两个程序所需的 Qt DLL、插件复制到忽略的构建目录。只影响子进程环境。
 
-音频处理依赖 FFmpeg 7.x x64 shared SDK，默认使用 CourseStudio 的 `C:/dev/ffmpeg-7.1-full_build-shared`。更换路径时在 Qt Creator CMake 配置设置 `OBS_FFMPEG_ROOT:PATH`；首次配置也可设置环境变量 `FFMPEG_7_HOME`。当前 Ninja 单配置构建由 CMake 复制 swresample-5.dll / avutil-59.dll 到可执行文件目录，不提交 SDK 或 DLL。详见 [第 006 步](006-audio-mix.md)。
+音频处理与编码封装依赖 FFmpeg 7.x x64 shared SDK，默认使用 CourseStudio 的 `C:/dev/ffmpeg-7.1-full_build-shared`。更换路径时在 Qt Creator CMake 配置设置 `OBS_FFMPEG_ROOT:PATH`；首次配置也可设置环境变量 `FFMPEG_7_HOME`。当前 Ninja 单配置构建由 CMake 复制 swresample-5.dll / avutil-59.dll / avcodec-61.dll / avformat-61.dll 到可执行文件目录，不提交 SDK 或 DLL。详见 [音频处理](006-audio-mix.md) 与 [编码录制](010-ffmpeg-encode.md)。库目标为 OBSMediaCore、OBSClientUi、OBSFFmpegCore；Qt Creator 重新配置即可，不需要删除源码或改类名。
 
 实时人脸检测增加 TensorRT 11 runtime / CUDA 13 SDK，使用 `TENSORRT_ROOT`、`CUDA_PATH` 或 `OBS_TENSORRT_ROOT`、`CMAKE_CUDA_COMPILER`；CMake 至少3.24。默认针对 RTX 5060 的 SM120 编译，构建部署匹配运行库与本机存在的示例 engine。OBS 不依赖 OpenCV/ORT/parser；`-FaceReferenceTests` 仅对照测试需要 OpenCV，详见 [第 008 步](008-gpu-face.md)。
 
@@ -42,6 +42,8 @@ python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 | client.protocol_mvc | TCP 分片粘包、并发编号、事件、心跳、非法帧、请求超时、重连、HTTP 调度和取消 |
 | client.capture | Windows 原生平台；PCM 格式、无效目标重复启停、设备枚举响应、D3D11 WARP 交换链、共享上下文状态恢复、设备切换、独立窗口生命周期、小窗口布局和退出登录；不打开有效采集源 |
 | client.audio | 六组人工音频测试；重采样/抗混叠、声道布局、时间戳与跳变、双路对齐、补零、音量/静音、削波、有界缓存与停止排空；不打开设备 |
+| client.media_sync | 共同原点、两路PTS、120ms总等待、静态复用、6000次合成闪光/脉冲、有界追赶、停止/退出与重启 |
+| client.encode | AAC/MP4软件解码验收：左右声道、缺口补零、尾长、单调DTS、中文路径、文件不覆盖、失败/abort/重启、迟到输入和有界队列；WARP验证编码GPU输出，不打开有效采集源 |
 | client.face | SCRFD anchor、NMS、逆缩放、错误张量、缺失引擎、停止等待首帧、重启与清空邮箱；不打开有效采集源 |
 | client.live_services | 可选；Windows Qt → Docker 调度/登录/信令；两个角色与关闭/断线/过期清理 |
 
@@ -62,3 +64,5 @@ python scripts/render_uml.py
 GPU 原生窗口测试需要正常 Windows 交互图形会话。受限沙箱或非交互会话可能没有 expose/paint 事件，不能用 offscreen 代替 SwapChain 验收。`--window-preview` 只捕获测试自建色块和预览窗口，验证四象限方向/颜色、等比留边、ResizeBuffers、设备切换、恢复、真实 WGC 到 GPU 预览与退出；详见 [第 005 步](005-gpu-preview.md)。
 
 `python scripts/run_capture_checks.py --audio-mix` 显式验证默认输出设备的 WASAPI 回环 → 重采样 → 混音信号、停止、重启与退出；短暂播放人工零值音频，不打开麦克风、不保存采集声音。没有默认端点时明确 SKIP，不计为硬件通过。`--ui-only` 可单独验证音量/静音控件、混音统计和长错误文本布局，支持 `QT_SCALE_FACTOR=2`；各专项参数互斥。
+
+`OBSEncodingTests.exe --gpu` 显式验证NVIDIA D3D11/NVENC，合成90帧/3秒光音信号、解码校验框点/横竖尺寸变化/时间戳。运行时PATH需包含Qt/bin；输出 `out/编码验证.mp4`。`python scripts/run_capture_checks.py --record-face` 验证自建WGC窗口、静音回环、TensorRT、同步、编码一起运行的正常停止/重启/退出，输出在out子目录；`--record` 不启用检测。详见 [第010步](010-ffmpeg-encode.md)。

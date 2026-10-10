@@ -6,7 +6,10 @@
 #include "VideoCapture.h"
 #include "GpuFaceDetector.h"
 #include "WasapiCapture.h"
+#include "ffmpeg/MediaPublisher.h"
 #include <QCoreApplication>
+#include <QDir>
+#include <QUuid>
 #include <windows.h>
 #include <winrt/base.h>
 #include <algorithm>
@@ -82,6 +85,8 @@ SessionController::~SessionController()
     if (m_enumerator) m_enumerator->wait();
     m_video->wait(); m_microphone->wait(); m_system->wait();
     m_faces->wait();
+    // 应用退出仍封存已经送到编码队列的数据；GUI事件循环结束后不再补交同步层尾部。
+    m_publisher->stop(); m_publisher->wait();
 }
 
 void SessionController::onLoginChanged()
@@ -116,6 +121,7 @@ void SessionController::setupCapture()
     m_microphone = new WasapiCapture(this);
     m_system = new WasapiCapture(this);
     setupFaceDetection();
+    setupRecording();
     connect(m_view, &MainWindow::captureRequested, this, &SessionController::startCapture);
     connect(m_view, &MainWindow::stopCaptureRequested, this, &SessionController::stopCapture);
     connect(m_view, &MainWindow::refreshDevicesRequested, this, &SessionController::refreshDevices);
@@ -167,14 +173,14 @@ void SessionController::bindCapture(QThread *worker, int index)
             m_faces->stop(); m_view->showCapturePreview({});
             if (!m_stoppingCapture) m_media.disableVideo();
         }
-        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = false; }
+        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = m_recordingPending; }
         refreshCaptureView();
     });
 }
 
 void SessionController::refreshDevices()
 {
-    if (!m_video || m_enumerator || !m_pendingCapture.isEmpty()) return;
+    if (!m_video || m_enumerator || !m_pendingCapture.isEmpty() || m_recordingPending) return;
     m_enumerator = QThread::create([this] {
         QList<CaptureSource> sources;
         QStringList errors;
@@ -209,7 +215,7 @@ void SessionController::refreshDevices()
 
 void SessionController::startCapture(const QList<CaptureSource> &selection)
 {
-    if (!m_video || !m_loggedIn || m_enumerator || m_stoppingCapture || !m_pendingCapture.isEmpty()) return;
+    if (!m_video || !m_loggedIn || m_enumerator || m_stoppingCapture || !m_pendingCapture.isEmpty() || m_recordingPending) return;
     if (selection.isEmpty()) { m_captureMessages[0] = tr("请至少选择一个采集源"); refreshCaptureView(); return; }
     m_captureErrors.clear();
     m_captureMessages = {tr("未启用"), tr("未启用"), tr("未启用")};
@@ -236,7 +242,24 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
     m_media.begin(audioNow(), videoSelected, microphone || system);
     refreshMediaView();
     refreshAudioView();
-    // 2. 启动各采集线程；采集层仍输出设备原始采样率和布局。
+    // 2. 同步原点已建立；先开启有界编码入口，再启动采集，首帧设备在run中读取。
+    m_recordingMessage = tr("录制未启用");
+    if (m_view->recordingEnabled()) {
+        const auto directory = m_view->recordingDirectory();
+        if (directory.isEmpty()) m_recordingMessage = tr("录制未启动：请选择保存目录");
+        else {
+            RecordingSettings settings;
+            settings.video = videoSelected; settings.audio = microphone || system;
+            settings.path = QDir(directory).filePath(QStringLiteral("录制_%1_%2.mp4")
+                .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz")), QUuid::createUuid().toString(QUuid::Id128).left(8)));
+            m_recordingPending = true;
+            if (m_publisher->begin(settings)) m_recordingMessage = tr("正在初始化编码器，等待媒体…");
+            else { m_recordingPending = false; m_recordingMessage = tr("录制线程尚未退出，请稍后重试"); }
+        }
+    }
+    if (m_recordingPending) refreshRecordingView();
+    else m_view->showRecordingStatus(m_recordingMessage); // 本轮不录制时不展示上轮计数。
+    // 3. 启动各采集线程；采集层仍输出设备原始采样率和布局。
     for (const auto &source : selection) {
         const int index = source.kind == CaptureSource::Kind::Microphone ? 1 : source.kind == CaptureSource::Kind::Loopback ? 2 : 0;
         QThread *worker = index == 0 ? static_cast<QThread *>(m_video) : index == 1 ? m_microphone : m_system;
@@ -252,25 +275,26 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
 void SessionController::stopCapture()
 {
     if (!m_video) return;
-    m_stoppingCapture = !m_pendingCapture.isEmpty();
+    m_stoppingCapture = !m_pendingCapture.isEmpty() || m_recordingPending;
     m_video->stop(); m_microphone->stop(); m_system->stop();
     m_faces->stop();
     if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
     // 普通停止等音频finished后排空；退出登录立即丢弃，禁止交付迟到媒体。
-    if (!m_loggedIn) { m_audioMixer.clear(); m_media.clear(); refreshAudioView(); refreshMediaView(); }
+    if (!m_loggedIn) { m_audioMixer.clear(); m_media.clear(); m_publisher->stop(); refreshAudioView(); refreshMediaView(); }
     else if (!m_pendingCapture.contains(m_microphone) && !m_pendingCapture.contains(m_system)) finishAudio();
     const QList<QThread *> workers{m_video, m_microphone, m_system};
     for (int index = 0; index < workers.size(); ++index)
         if (m_pendingCapture.contains(workers[index]) && !m_captureErrors.contains(index)) m_captureMessages[index] = tr("正在停止");
     m_view->showCapturePreview({});
     if (m_pendingCapture.isEmpty()) finishMedia();
+    if (m_recordingPending) { m_recordingMessage = tr("正在停止采集并封存 MP4…"); refreshRecordingView(); }
     refreshCaptureView();
 }
 
 void SessionController::refreshCaptureView()
 {
     if (!m_video) return;
-    const bool active = !m_pendingCapture.isEmpty();
+    const bool active = !m_pendingCapture.isEmpty() || m_recordingPending;
     m_view->applyCaptureState(m_loggedIn && !active && !m_enumerator, active, m_enumerator != nullptr,
         m_deviceMessage, m_captureMessages);
 }
@@ -312,6 +336,7 @@ void SessionController::deliverCapture()
     refreshMediaView();
     refreshAudioView();
     m_view->showAudioLevels(deliver ? m_microphone->level() : 0, deliver ? m_system->level() : 0);
+    if (m_recordingPending) refreshRecordingView();
 }
 
 void SessionController::consumeAudio()
@@ -354,7 +379,7 @@ void SessionController::setupFaceDetection()
     connect(m_faces, &QThread::finished, this, [this] {
         m_pendingCapture.remove(m_faces);
         if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
-        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = false; }
+        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = m_recordingPending; }
         refreshCaptureView();
     });
 }
@@ -395,6 +420,42 @@ void SessionController::finishMedia()
     if (m_loggedIn) deliverMedia(m_media.finish(), false);
     else m_media.clear();
     refreshMediaView();
+    // 3. 最后一批同步数据已快速入队，随后关入口，run排空编码器并写trailer。
+    if (m_recordingPending) m_publisher->stop();
+}
+
+void SessionController::setupRecording()
+{
+    // 1. GUI拥有线程对象；这两个槽只入队，不在GUI执行FFmpeg/GPU/文件操作。
+    m_publisher = new MediaPublisher(this);
+    connect(this, &SessionController::synchronizedVideoReady, m_publisher, &MediaPublisher::pushVideo);
+    connect(this, &SessionController::synchronizedAudioReady, m_publisher, &MediaPublisher::pushAudio);
+    // 2. worker结果排队回Controller；录制失败仍允许采集和独立画面继续运行。
+    connect(m_publisher, &MediaPublisher::opened, this, [this] {
+        if (!m_stoppingCapture) m_recordingMessage = tr("正在录制 MP4");
+        refreshRecordingView();
+    });
+    connect(m_publisher, &MediaPublisher::failed, this, [this](const QString &message) {
+        m_recordingMessage = message; refreshRecordingView();
+    });
+    connect(m_publisher, &MediaPublisher::completed, this, [this](const QString &path, const EncodingStats &) {
+        m_recordingMessage = path.isEmpty() ? tr("本轮没有可保存的媒体") : tr("已保存：%1").arg(QDir::toNativeSeparators(path));
+        refreshRecordingView();
+    });
+    // 3. 资源已在run结束前释放，GUI处理finished后才重新解锁开始按钮。
+    connect(m_publisher, &QThread::finished, this, [this] {
+        m_recordingPending = false;
+        if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
+        refreshRecordingView(); refreshCaptureView();
+    });
+}
+
+void SessionController::refreshRecordingView()
+{
+    const auto stats = m_publisher->stats();
+    m_view->showRecordingStatus(tr("%1\n视频 %2 帧 · 音频 %3 秒 · 编码 %4 KB · 队列丢弃 %5 帧 / %6 包")
+        .arg(m_recordingMessage).arg(stats.videoFrames).arg(stats.audioSamples / 48000.0, 0, 'f', 2)
+        .arg(stats.bytes / 1024).arg(stats.droppedVideo).arg(stats.droppedAudio));
 }
 
 void SessionController::refreshMediaView()

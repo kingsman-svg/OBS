@@ -1,0 +1,39 @@
+sequenceDiagram
+actor U as 用户
+participant C as Controller/GUI
+participant S as 采集/检测线程
+participant T as 混音/同步层
+participant P as MediaPublisher队列
+participant W as 编码工作线程
+participant E as MediaEncoder
+participant M as MP4/临时文件
+U->>C: 停止采集或退出登录
+C->>S: 请求停止，禁用新一轮
+alt 仍登录的正常停止
+S-->>C: finished，最后音频包仍由GUI取走
+C->>T: 混音finish；全部采集/检测退出后同步finish
+T-->>C: 最后有界媒体批次
+C->>P: 同步尾部快速push
+else 退出登录
+C->>T: clear，未交付尾部立即丢弃
+C->>C: 迟到媒体不再发同步信号
+end
+C->>P: stop，关入口并唤醒
+P->>P: 拒绝迟到push
+W->>P: 取完已接受的输入队列
+W->>E: finish，AAC实际尾长、编码器空帧flush
+E-->>M: 最后AVPacket，仍保留PTS/DTS
+W->>M: trailer、AVIO flush、文件flush
+alt 文件完成且有媒体
+W->>M: QTemporaryFile.rename，同目录原子改名且不覆盖
+W->>W: 释放编码/GPU/封装资源
+W-->>C: completed，显示已保存路径
+else 编码/写入失败或明确abort
+W->>M: RAII删除临时文件，不提交最终MP4
+W->>W: 释放全部资源
+W-->>C: failed或空路径completed
+end
+W-->>C: QThread.finished
+C->>C: 清recordingPending，采集也结束后解锁
+U->>C: 可在新参数下重新开始
+Note over C,W: GUI常规停止不wait；析构才wait并封存已入队数据

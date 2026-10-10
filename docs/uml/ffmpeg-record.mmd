@@ -1,0 +1,39 @@
+sequenceDiagram
+actor U as 用户
+participant V as MainWindow
+participant C as Controller/GUI
+participant T as MediaTimeline
+participant P as MediaPublisher队列
+participant W as 编码工作线程
+participant G as GpuVideoOutput
+participant E as MediaEncoder
+participant M as MP4/临时文件
+U->>V: 勾选保存MP4、选择目录、开始采集
+V-->>C: captureRequested
+C->>T: begin，共同QPC原点
+C->>P: begin参数，清队列后start
+P->>W: QThread调用run
+C->>C: 启动采集与可选检测线程
+C->>T: 输入同帧纹理/框点、48kHz混音
+T-->>C: 到期批次，视频1/30、音频1/48000 PTS
+C->>P: synchronized信号快速push，不执行编码
+P->>P: 最多16帧/50包；溢出丢旧数据并计数
+W->>P: 等首帧设备；有数据时取队列头并解锁
+alt 超时、设备或编码器初始化失败
+W->>W: RAII释放所有资源、删除临时文件
+W-->>C: failed然后finished，采集与预览继续
+else 初始化成功
+W->>E: open，同D3D11硬件帧池、NVENC与AAC
+W->>M: 新建临时文件、MP4流与header
+W-->>C: opened，GUI显示录制状态
+W->>E: pushVideo，同步PTS不重置
+E->>G: 原帧等比缩放/框点绘制到独立D3D11 AVFrame
+G->>G: deferred绘制、恢复共享context、等待GPU完成
+G-->>E: 无像素CPU回读的硬件帧
+E->>E: send_frame / receive_packet，缺失视频duration补1
+W->>E: pushAudio，48kHz立体声Float32
+E->>E: 解交错入FIFO、缺口补零、按AAC帧长编码
+E->>M: 包PTS/DTS从编码时间基换成流时间基后写入
+W->>P: 更新统计，继续消费或条件变量等待
+end
+Note over P,W: push/stop在GUI快速执行，run独占GPU/FFmpeg/文件资源

@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'ffmpeg-record': '本地编码录制时序图', 'ffmpeg-stop': '录制停止封存时序图',
     'media-sync': '音视频同步时序图',
     'gpu-face': 'GPU人脸检测时序图',
     'TrtLogger': '推理日志类图', 'EngineSession': '推理引擎会话类图',

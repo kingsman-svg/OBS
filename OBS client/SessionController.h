@@ -16,6 +16,7 @@ class SignalClient;
 class VideoCapture;
 class WasapiCapture;
 class GpuFaceDetector;
+class MediaPublisher;
 struct VideoFrame;
 struct AudioPacket;
 
@@ -27,7 +28,7 @@ public:
                       SignalClient *signal, QObject *parent = nullptr); // 绑定界面/信令回调，推流端再建立采集与检测。
     ~SessionController() override; // 正常启停异步；销毁时等待所有工作线程归还资源。
 signals:
-    // 当前在 GUI 线程交付；后续编码消费者应快速转交有界队列。
+    // 当前在 GUI 线程交付；编码消费者只快速转交有界队列。
     void videoFrameReady(const csn::VideoFrame &frame);
     void audioPacketReady(csn::CaptureSource::Kind kind, const csn::AudioPacket &packet);
     void mixedAudioReady(const csn::AudioPacket &packet); // 混音诊断出口；编码使用下方同步信号。
@@ -57,6 +58,8 @@ private:
     void deliverMedia(const MediaBatch &batch, bool preview); // 快速交付同步数据；停止排空不重新打开画面。
     void finishMedia();                       // 所有线程退出后排空同步队列，退出登录则直接清空。
     void refreshMediaView();                  // 同步等待、输出帧/包与丢弃统计。
+    void setupRecording();                    // 创建编码工作线程，绑定快速入队和结果回调。
+    void refreshRecordingView();              // GUI读取统计快照，录制错误不影响采集/预览。
     MainWindow *m_view;        // 非拥有 View，控制器仅调用其展示接口。
     LoginModel *m_login;       // 非拥有登录状态与凭据，不能打印其中令牌。
     SessionModel *m_model;     // 非拥有工作台业务状态，网络与媒体仍由模块处理。
@@ -85,6 +88,9 @@ private:
     bool m_faceFailed = false;                // 本轮失败后继续原预览，不逐帧重试引擎。
     quint64 m_lastFaceSequence = 0;           // 已显示检测帧的序号，防止重复提交。
     QString m_faceMessage;                    // 独立检测状态，停止保留本轮错误。
-    MediaTimeline m_media;                    // GUI串行同步调度，后续信号消费者必须转交有界编码队列。
+    MediaTimeline m_media;                    // GUI串行同步调度，信号消费者只转交有界编码队列。
+    MediaPublisher *m_publisher = nullptr;    // 控制器拥有的独立编码/封装QThread，播放端不创建。
+    bool m_recordingPending = false;          // begin到GUI处理finished之间锁定下一轮录制。
+    QString m_recordingMessage;               // 本轮等待、录制、封存、失败或保存路径。
 };
 }
