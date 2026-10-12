@@ -18,5 +18,5 @@ RUN sed -i 's/\r$//' /usr/local/bin/obs-start && chmod 755 /usr/local/bin/obs-st
     && mkdir -p /run/sshd /etc/ssh/keys /workspace
 WORKDIR /workspace
 USER root
-EXPOSE 22 8080 8081 8082 9000 1935 1985 8088
+EXPOSE 22 8080 8081 8082 9000
 ENTRYPOINT ["/usr/local/bin/obs-start"]

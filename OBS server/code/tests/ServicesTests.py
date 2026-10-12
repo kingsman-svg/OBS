@@ -218,8 +218,13 @@ class ServiceTests(unittest.TestCase):
 
     def test_04_live_owner_viewer_and_disconnect(self):
         owner, viewer = self.authenticated(), self.authenticated()
-        room = owner.request('room.create', title='测试直播间')['data']['roomId']
-        self.assertTrue(viewer.request('room.join', roomId=room)['ok'])
+        created = owner.request('room.create', title='测试直播间')['data']
+        room = created['roomId']
+        self.assertFalse(created['streaming'])
+        self.assertTrue(created['pushUrl'].startswith('rtmp://'))
+        joined = viewer.request('room.join', roomId=room)
+        self.assertTrue(joined['ok'])
+        self.assertNotIn('pushUrl', joined['data'])
         self.assertEqual(viewer.request('live.start')['error']['code'], 'FORBIDDEN')
         started = owner.request('live.start')
         self.assertTrue(started['ok'] and started['data']['pushUrl'].startswith('rtmp://'))

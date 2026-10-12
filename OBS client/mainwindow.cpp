@@ -160,6 +160,17 @@ QWidget *MainWindow::buildWorkspace()
         create->addWidget(m_create);
         roomLayout->addLayout(create);
         connect(m_create, &QPushButton::clicked, this, [this] { emit createRoomRequested(m_roomTitle->text().trimmed()); });
+        auto *liveActions = new QHBoxLayout;
+        m_startLive = new QPushButton(tr("开始直播"), room); m_startLive->setObjectName(QStringLiteral("startLiveButton"));
+        m_stopLive = new QPushButton(tr("停止直播"), room); m_stopLive->setObjectName(QStringLiteral("stopLiveButton"));
+        m_startLive->setEnabled(false); m_stopLive->setEnabled(false);
+        liveActions->addWidget(m_startLive); liveActions->addWidget(m_stopLive); liveActions->addStretch(); roomLayout->addLayout(liveActions);
+        m_liveOutputStatus = new QLabel(tr("创建房间、选择采集源后开始直播；可同时录制MP4。"), room);
+        m_liveOutputStatus->setObjectName(QStringLiteral("liveOutputStatusLabel"));
+        m_liveOutputStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum); m_liveOutputStatus->setWordWrap(true);
+        roomLayout->addWidget(m_liveOutputStatus);
+        connect(m_startLive, &QPushButton::clicked, this, &MainWindow::startLiveRequested);
+        connect(m_stopLive, &QPushButton::clicked, this, &MainWindow::stopLiveRequested);
     }
     auto *membership = new QHBoxLayout;
     m_roomInfo = new QLabel(room);
@@ -354,10 +365,7 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     });
     connect(m_stopCapture, &QPushButton::clicked, this, &MainWindow::stopCaptureRequested);
     connect(m_startCapture, &QPushButton::clicked, this, [this] {
-        QList<csn::CaptureSource> selected;
-        for (auto *combo : {m_videoSource, m_micSource, m_systemSource})
-            if (combo->currentData().isValid()) selected.append(combo->currentData().value<csn::CaptureSource>());
-        emit captureRequested(selected);
+        emit captureRequested(selectedCaptureSources());
     });
     setCaptureSources({});
     applyCaptureState(false, false, false, tr("正在准备采集模块"), {});
@@ -395,6 +403,18 @@ QWidget *MainWindow::buildPlayerPanel(QWidget *parent)
     actions->addWidget(m_join);
     actions->addStretch();
     liveLayout->addLayout(actions);
+    auto *livePlaybackActions = new QHBoxLayout;
+    m_playLive = new QPushButton(tr("播放直播 / 重试"), live); m_playLive->setObjectName(QStringLiteral("playLiveButton"));
+    m_stopLivePlayback = new QPushButton(tr("停止播放"), live); m_stopLivePlayback->setObjectName(QStringLiteral("stopLivePlaybackButton"));
+    m_playLive->setEnabled(false); m_stopLivePlayback->setEnabled(false);
+    livePlaybackActions->addWidget(m_playLive); livePlaybackActions->addWidget(m_stopLivePlayback); livePlaybackActions->addStretch();
+    liveLayout->addLayout(livePlaybackActions);
+    m_livePlaybackStatus = new QLabel(tr("加入已开播房间后自动播放，未开播时等待主播。"), live);
+    m_livePlaybackStatus->setObjectName(QStringLiteral("livePlaybackStatusLabel"));
+    m_livePlaybackStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum); m_livePlaybackStatus->setWordWrap(true);
+    liveLayout->addWidget(m_livePlaybackStatus);
+    connect(m_playLive, &QPushButton::clicked, this, &MainWindow::playLiveRequested);
+    connect(m_stopLivePlayback, &QPushButton::clicked, this, &MainWindow::stopPlaybackRequested);
     modes->addWidget(live);
     auto *vod = new QWidget(modes);
     auto *form = new QVBoxLayout(vod);
@@ -426,12 +446,12 @@ QWidget *MainWindow::buildPlayerPanel(QWidget *parent)
     urlLayout->addWidget(m_mediaUrl); inputs->addWidget(urlPage); form->addWidget(inputs);
     connect(m_vodSource, &QComboBox::currentIndexChanged, inputs, &QStackedWidget::setCurrentIndex);
     auto *soundRow = new QHBoxLayout;
-    m_playAudio = new QCheckBox(tr("播放声音"), vod); m_playAudio->setChecked(true);
+    m_playAudio = new QCheckBox(tr("播放声音"), group); m_playAudio->setChecked(true);
     m_playAudio->setObjectName(QStringLiteral("playAudioCheck"));
-    m_playVolume = new QSpinBox(vod); m_playVolume->setRange(0, 100); m_playVolume->setValue(50); m_playVolume->setSuffix(QStringLiteral("%"));
+    m_playVolume = new QSpinBox(group); m_playVolume->setRange(0, 100); m_playVolume->setValue(50); m_playVolume->setSuffix(QStringLiteral("%"));
     m_playVolume->setObjectName(QStringLiteral("playbackVolumeSpin"));
     soundRow->addWidget(m_playAudio); soundRow->addStretch();
-    soundRow->addWidget(new QLabel(tr("音量"), vod)); soundRow->addWidget(m_playVolume); form->addLayout(soundRow);
+    soundRow->addWidget(new QLabel(tr("音量"), group)); soundRow->addWidget(m_playVolume);
     auto *playRow = new QHBoxLayout;
     m_playMedia = new QPushButton(tr("播放"), vod); m_playMedia->setObjectName(QStringLiteral("playMediaButton"));
     m_stopMedia = new QPushButton(tr("停止"), vod); m_stopMedia->setObjectName(QStringLiteral("stopMediaButton"));
@@ -457,10 +477,11 @@ QWidget *MainWindow::buildPlayerPanel(QWidget *parent)
     connect(m_playVolume, &QSpinBox::valueChanged, this, [this](int value) { emit playbackVolumeChanged(value / 100.0f); });
     modes->addWidget(vod);
     layout->addWidget(modes);
+    layout->addLayout(soundRow); // 两种模式共用输出声音/音量，避免直播控件隐藏在点播页面。
     connect(m_mode, &QComboBox::currentIndexChanged, modes, &QStackedWidget::setCurrentIndex);
     connect(m_mode, &QComboBox::currentIndexChanged, this, [this](int index) {
         if (index == 1 && m_inRoom) emit leaveRoomRequested();
-        if (index == 0) emit stopPlaybackRequested();
+        emit stopPlaybackRequested();
         m_playMedia->setEnabled(index == 1 && m_loggedIn && !m_playbackActive && !m_busy && !m_inRoom);
         m_join->setEnabled(index == 0 && m_ready && !m_busy && !m_inRoom && m_rooms->currentItem());
     });
@@ -480,6 +501,7 @@ void MainWindow::applySessionState(bool ready, bool busy, bool connecting, const
     m_ready = ready;
     m_busy = busy;
     m_inRoom = !room.isEmpty();
+    m_roomStreaming = room.value(QStringLiteral("streaming")).toBool();
     m_signalStatus->setText(message);
     m_reconnect->setEnabled(m_loggedIn && !ready && !connecting);
     m_leave->setEnabled(ready && !busy && m_inRoom);
@@ -507,6 +529,7 @@ void MainWindow::applySessionState(bool ready, bool busy, bool connecting, const
         m_join->setEnabled(ready && !busy && !m_inRoom && m_mode->currentIndex() == 0 && m_rooms->currentItem());
         m_mode->setEnabled(!busy);
         m_playMedia->setEnabled(m_loggedIn && vodMode() && !m_playbackActive && !busy && !m_inRoom);
+        m_playLive->setEnabled(m_loggedIn && !vodMode() && m_inRoom && m_roomStreaming && !m_playbackActive && !busy);
     }
 }
 
@@ -618,6 +641,8 @@ void MainWindow::applyPlaybackState(bool active, qint64 positionUs, qint64 durat
 {
     if (!m_playMedia) return;
     m_playbackActive = active;
+    m_playLive->setEnabled(m_loggedIn && !vodMode() && m_inRoom && m_roomStreaming && !active && !m_busy);
+    m_stopLivePlayback->setEnabled(active && !vodMode());
     m_playMedia->setEnabled(m_loggedIn && vodMode() && !active && !m_busy && !m_inRoom);
     m_stopMedia->setEnabled(active); m_vodSource->setEnabled(!active); m_localMedia->setEnabled(!active);
     m_mediaUrl->setEnabled(!active); m_browseMedia->setEnabled(!active); m_playAudio->setEnabled(!active);
@@ -630,4 +655,18 @@ void MainWindow::applyPlaybackState(bool active, qint64 positionUs, qint64 durat
     m_playProgress->setValue(durationUs > 0 ? int(std::clamp<double>(double(position) / durationUs * 1000, 0, 1000)) : 0);
     m_playProgress->setFormat(durationUs > 0 ? time(position) + QStringLiteral(" / ") + time(durationUs) : time(position));
     m_playbackStatus->setText(message);
+    m_livePlaybackStatus->setText(message);
+}
+QList<csn::CaptureSource> MainWindow::selectedCaptureSources() const
+{
+    QList<csn::CaptureSource> selected;
+    if (m_videoSource) for (auto *combo : {m_videoSource, m_micSource, m_systemSource})
+        if (combo->currentData().isValid()) selected.append(combo->currentData().value<csn::CaptureSource>());
+    return selected;
+}
+bool MainWindow::playbackAudioEnabled() const { return m_playAudio && m_playAudio->isChecked(); }
+void MainWindow::applyLiveOutputState(bool canStart, bool active, const QString &message)
+{
+    if (!m_startLive) return;
+    m_startLive->setEnabled(canStart); m_stopLive->setEnabled(active); m_liveOutputStatus->setText(message);
 }

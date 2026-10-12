@@ -22,25 +22,36 @@ struct EventDelete { void operator()(void *handle) const { if (handle) CloseHand
 }
 WasapiPlayback::WasapiPlayback() = default;
 WasapiPlayback::~WasapiPlayback() { stop(); wait(); }
-bool WasapiPlayback::begin(qint64 startSample)
+bool WasapiPlayback::begin(qint64 startSample, bool live)
 {
     // 1. MediaPlayer::run调用；上一轮必须已wait结束，工作线程不会看到旧PCM/时钟。
     QMutexLocker lock(&m_mutex);
     if (isRunning()) return false;
     m_packets.clear(); m_queuedFrames = m_offset = 0; m_clock = {};
     m_startSample = std::max<qint64>(0, startSample);
-    m_accepting = true; m_finishing = false; m_force = false; start(); return true;
+    m_accepting = true; m_finishing = false; m_force = false; m_live = live; start(); return true;
 }
 bool WasapiPlayback::push(const PlaybackAudio &packet)
 {
-    const qint64 frames = packet.pcm.size() / 8;
+    qint64 frames = packet.pcm.size() / 8;
     if (packet.pts < 0 || packet.pcm.size() % 8 || frames <= 0 || frames > 48000)
         throw std::invalid_argument("播放PCM必须是有PTS的48kHz立体声Float32，单包不超过1秒");
     QMutexLocker lock(&m_mutex);
     // 2. 点播保留未到期数据，用背压限制内存；用户停止会关闭入口并唤醒等待者。
-    while (m_accepting && m_queuedFrames + frames > 48000) m_changed.wait(&m_mutex);
+    while (!m_live && m_accepting && m_queuedFrames + frames > 48000) m_changed.wait(&m_mutex);
     if (!m_accepting) return false;
-    m_packets.push_back(packet); m_queuedFrames += frames; m_changed.wakeAll(); return true;
+    PlaybackAudio accepted = packet;
+    if (m_live) {
+        if (frames > 9600) {
+            const qint64 skip = frames - 9600;
+            accepted.pcm.remove(0, skip * 8); accepted.pts += skip; frames = 9600;
+        }
+        // 2a. 直播只留200ms；删除已解码PCM不影响视频参考帧，端点线程按PTS跳过过期区间。
+        while (!m_packets.empty() && m_queuedFrames + frames > 9600) {
+            m_queuedFrames -= m_packets.front().pcm.size() / 8 - m_offset; m_packets.pop_front(); m_offset = 0;
+        }
+    }
+    m_packets.push_back(std::move(accepted)); m_queuedFrames += frames; m_changed.wakeAll(); return true;
 }
 void WasapiPlayback::forceStart() { QMutexLocker lock(&m_mutex); m_force = true; m_changed.wakeAll(); }
 void WasapiPlayback::finish() { QMutexLocker lock(&m_mutex); m_accepting = false; m_finishing = true; m_changed.wakeAll(); }
@@ -86,7 +97,7 @@ void WasapiPlayback::run()
                 QMutexLocker lock(&m_mutex);
                 while (m_queuedFrames < 4800 && !m_finishing && !m_force && !isInterruptionRequested()) m_changed.wait(&m_mutex, 10);
             }
-            qint64 submitted = 0;
+            qint64 submitted = 0, mediaOffset = 0; // 直播追赶时媒体位置跳转，设备时钟仍连续。
             bool started = false;
             while (!isInterruptionRequested()) {
                 UINT32 padding = 0; winrt::check_hresult(client->GetCurrentPadding(&padding));
@@ -116,6 +127,10 @@ void WasapiPlayback::run()
                             }
                             if (m_offset == total) { m_packets.pop_front(); m_offset = 0; continue; }
                             if (packet.pts + m_offset > submitted) {
+                                if (m_live && packet.pts + m_offset - submitted > 9600) {
+                                    const qint64 skip = packet.pts + m_offset - submitted;
+                                    submitted += skip; mediaOffset += skip; continue;
+                                }
                                 const auto zeros = UINT32(std::min<qint64>(available - written, packet.pts + m_offset - submitted));
                                 std::memset(bytes + written * 8, 0, size_t(zeros) * 8); written += zeros; submitted += zeros; continue;
                             }
@@ -140,7 +155,8 @@ void WasapiPlayback::run()
                 // 7. GetPosition/frequency是实际设备进度，不能用写入帧数冒充已播放帧数。
                 if (started) {
                     UINT64 position = 0; winrt::check_hresult(clock->GetPosition(&position, nullptr));
-                    const qint64 time = qint64(position / frequency * 1000000 + position % frequency * 1000000 / frequency);
+                    const qint64 time = qint64(position / frequency * 1000000 + position % frequency * 1000000 / frequency)
+                        + mediaOffset * 1000000 / 48000;
                     QMutexLocker lock(&m_mutex);
                     m_clock.timeUs = std::max(m_clock.timeUs, std::min(time, submitted * 1000000 / 48000));
                 }

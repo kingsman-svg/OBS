@@ -20,6 +20,7 @@
 - 每步完成后执行适当的构建和行为验证，记录实际结果；未验证能力明确标注。
 - 不打印密码、认证数据包或令牌。
 - Linux 服务端源码和 Docker 配置集中在 `OBS server/`，容器名 `OBS`，工作目录 `/workspace`；保持简单分级。客户端继续使用 `OBS client/`。
+- SRS作为独立副项目放在一级`SRS/`，容器`OBS-SRS`；部署、源码版本与二开路线单独维护。OBS通过RTMP/HTTP/WebRTC协议接入，通用FFmpeg代码不依赖SRS内部类型。
 - 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。
 - 服务端协议放 `code/protocol/`，登录/调度/信令放 `code/services/`；共用同一网络库与 CMake 工程，配置不得保存签名密钥或真实密码。
 - 容器 `/repo` 挂载完整 CourseStudioNext 仓库，用于 Git 和全工程浏览；`/workspace` 保留服务端目录别名和原构建路径。两者为同一份本地文件。

@@ -67,6 +67,11 @@ private:
     void stopPlayback();                      // GUI请求退出并立即暂停交付，线程异步回收。
     void deliverPlayback();                   // 每10ms按主时钟取到期帧，避免逐帧Qt事件积压。
     void refreshPlaybackView();               // 独立播放状态/时长/统计，不依赖信令连接成功。
+    void setupLiveOutput();                  // 独立RTMP输出线程，与本地录制共用同步帧入口。
+    void startLive();                        // GUI验证房间/源，先开启媒体入口再启动采集。
+    void refreshLiveView();                  // GUI显示输出状态与统计，不显示包含流标识的地址。
+    void updateLiveNotice();                 // 媒体首次写出/停止后发送live.start/stop，单请求串行。
+    void startLivePlayback();                // 当前房间开播后自动begin，失败可手动重试。
     MainWindow *m_view;        // 非拥有 View，控制器仅调用其展示接口。
     LoginModel *m_login;       // 非拥有登录状态与凭据，不能打印其中令牌。
     SessionModel *m_model;     // 非拥有工作台业务状态，网络与媒体仍由模块处理。
@@ -106,5 +111,13 @@ private:
     bool m_playbackFailed = false;            // 锁存解码/声音/显示错误，finished不覆盖。
     qint64 m_playbackDurationUs = 0;          // 已打开媒体的时长，未知时只显示当前时间。
     QString m_playbackMessage;                // 开始、播放、EOF、停止或错误文本。
+    MediaPublisher *m_livePublisher = nullptr; // 独立RTMP编码/输出线程；录制失败不影响直播。
+    QString m_liveUrl;                        // 创建房间响应给主播的地址，仅本轮房间内使用。
+    QString m_liveMessage;                    // 等待、推流、停止、失败文本。
+    bool m_livePending = false;               // begin到GUI处理finished期间不重启采集/直播。
+    bool m_liveMediaSent = false;             // 已写出媒体字节；信令业务状态另由Model保存。
+    bool m_playbackLive = false;              // 当前Player线程是直播还是点播。
+    bool m_livePlaybackWanted = false;        // 房间开播请求播放；手动停止/失败撤销自动播放意图。
+    bool m_leaveRequested = false;            // 开播请求在途时关闭房间，等响应后串行发leave。
 };
 }

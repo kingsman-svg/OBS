@@ -8,7 +8,7 @@ H->>S: live.start
 S->>S: 更新房间开播状态
 S-->>V: live.changed事件
 S-->>H: 推流地址与成功响应
-Note over H,V: 媒体由后续部署的媒体服务器转发
+Note over H,V: 主播先写出RTMP媒体再通知开播；SRS独立转发，观众随后拉流
 H->>S: live.stop
 S->>S: 更新房间停播状态
 S-->>V: live.changed事件

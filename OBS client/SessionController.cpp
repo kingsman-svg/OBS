@@ -59,12 +59,19 @@ SessionController::SessionController(MainWindow *view, LoginModel *login, Sessio
         execute(QStringLiteral("room.join"), {{QStringLiteral("roomId"), roomId}});
     });
     connect(view, &MainWindow::leaveRoomRequested, this, [this] {
+        m_leaveRequested = !m_model->room().isEmpty();
+        if (m_livePending) stopCapture();
+        if (m_playbackLive) stopPlayback();
         if (!m_model->room().isEmpty()) execute(QStringLiteral("room.leave"));
     });
     connect(signal, &SignalClient::stateChanged, this, [this](bool ready, bool connecting, const QString &message) {
         if (!ready) {
             m_pending.clear();
             m_listing = {};
+            m_liveUrl.clear();
+            m_leaveRequested = false;
+            if (m_livePending) stopCapture();
+            if (m_playbackLive) stopPlayback();
         }
         m_model->setConnection(ready, connecting, message);
         if (ready && m_view->role() == ClientRole::Player) refreshRooms();
@@ -91,6 +98,7 @@ SessionController::~SessionController()
     m_faces->wait();
     // 应用退出仍封存已经送到编码队列的数据；GUI事件循环结束后不再补交同步层尾部。
     m_publisher->stop(); m_publisher->wait();
+    m_livePublisher->stop(); m_livePublisher->wait();
 }
 
 void SessionController::onLoginChanged()
@@ -117,6 +125,7 @@ void SessionController::setupPlayback()
     m_player = new MediaPlayer(this);
     connect(m_view, &MainWindow::playbackRequested, this, &SessionController::startPlayback);
     connect(m_view, &MainWindow::stopPlaybackRequested, this, &SessionController::stopPlayback);
+    connect(m_view, &MainWindow::playLiveRequested, this, [this] { m_livePlaybackWanted = true; startLivePlayback(); });
     connect(m_view, &MainWindow::playbackVolumeChanged, m_player, &MediaPlayer::setVolume);
     connect(qApp, &QCoreApplication::aboutToQuit, this, &SessionController::stopPlayback);
     connect(m_view, &MainWindow::playbackRenderFailed, this, [this](const QString &message) {
@@ -130,6 +139,7 @@ void SessionController::setupPlayback()
         refreshPlaybackView();
     });
     connect(m_player, &MediaPlayer::failed, this, [this](const QString &message) {
+        m_livePlaybackWanted = false;
         m_playbackFailed = true; m_playbackStopping = true; m_playbackMessage = message;
         m_playbackDelivery.stop(); m_view->showPlaybackPreview({}); refreshPlaybackView();
     });
@@ -141,7 +151,9 @@ void SessionController::setupPlayback()
     // 3. Decoder/输出端点均已归还，finished回到GUI后才解锁，防止上轮事件影响新一轮。
     connect(m_player, &QThread::finished, this, [this] {
         m_playbackPending = false; m_playbackStopping = false;
+        m_playbackLive = false;
         m_playbackDelivery.stop(); refreshPlaybackView();
+        if (m_livePlaybackWanted) startLivePlayback(); // 停止期间收到新开播事件，等资源归还后重开。
     });
     m_playbackDelivery.setInterval(10);
     connect(&m_playbackDelivery, &QTimer::timeout, this, &SessionController::deliverPlayback);
@@ -154,6 +166,7 @@ void SessionController::startPlayback(const QString &source, bool audioOutput)
     if (!m_player || !m_loggedIn || !m_view->vodMode() || m_playbackPending || m_model->busy() || !m_model->room().isEmpty()) return;
     if (source.isEmpty()) { m_playbackMessage = tr("请选择媒体文件或输入在线地址"); refreshPlaybackView(); return; }
     m_view->showPlaybackPreview({}); m_playbackFailed = m_playbackStopping = false; m_playbackDurationUs = 0;
+    m_playbackLive = false; m_livePlaybackWanted = false;
     m_playbackMessage = tr("正在打开媒体…"); m_playbackPending = true;
     // 2. begin只清状态并start，run负责打开/探测，GUI此时仍可停止。
     if (m_player->begin(source, audioOutput)) m_playbackDelivery.start();
@@ -163,6 +176,7 @@ void SessionController::startPlayback(const QString &source, bool audioOutput)
 void SessionController::stopPlayback()
 {
     if (!m_player) return;
+    m_livePlaybackWanted = false;
     m_playbackDelivery.stop(); m_player->stop(); m_view->showPlaybackPreview({});
     if (m_playbackPending) {
         m_playbackStopping = true;
@@ -172,7 +186,7 @@ void SessionController::stopPlayback()
 }
 void SessionController::deliverPlayback()
 {
-    if (!m_loggedIn || !m_view->vodMode() || !m_playbackPending || m_playbackStopping) return;
+    if (!m_loggedIn || (!m_view->vodMode() && !m_playbackLive) || !m_playbackPending || m_playbackStopping) return;
     const auto frame = m_player->takeVideo();
     if (frame.source.texture) { emit playbackFrameReady(frame.source); m_view->showPlaybackPreview(frame.source); }
     refreshPlaybackView();
@@ -204,6 +218,7 @@ void SessionController::setupCapture()
     m_system = new WasapiCapture(this);
     setupFaceDetection();
     setupRecording();
+    setupLiveOutput();
     connect(m_view, &MainWindow::captureRequested, this, &SessionController::startCapture);
     connect(m_view, &MainWindow::stopCaptureRequested, this, &SessionController::stopCapture);
     connect(m_view, &MainWindow::refreshDevicesRequested, this, &SessionController::refreshDevices);
@@ -255,14 +270,14 @@ void SessionController::bindCapture(QThread *worker, int index)
             m_faces->stop(); m_view->showCapturePreview({});
             if (!m_stoppingCapture) m_media.disableVideo();
         }
-        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = m_recordingPending; }
+        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = m_recordingPending || m_livePending; }
         refreshCaptureView();
     });
 }
 
 void SessionController::refreshDevices()
 {
-    if (!m_video || m_enumerator || !m_pendingCapture.isEmpty() || m_recordingPending) return;
+    if (!m_video || m_enumerator || !m_pendingCapture.isEmpty() || m_recordingPending || m_livePending) return;
     m_enumerator = QThread::create([this] {
         QList<CaptureSource> sources;
         QStringList errors;
@@ -322,6 +337,12 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
     }
     m_audioMixer.begin(microphone, system); m_mixedPackets = 0; m_audioError.clear();
     m_media.begin(audioNow(), videoSelected, microphone || system);
+    if (m_livePending) {
+        // 2a. 与同步原点一起建立RTMP入口；本轮PTS从零开始，不从中途录制时间线起推。
+        RecordingSettings settings; settings.path = m_liveUrl; settings.live = true;
+        settings.video = videoSelected; settings.audio = microphone || system;
+        if (!m_livePublisher->begin(settings)) { m_livePending = false; m_liveMessage = tr("推流线程尚未退出"); }
+    }
     refreshMediaView();
     refreshAudioView();
     // 2. 同步原点已建立；先开启有界编码入口，再启动采集，首帧设备在run中读取。
@@ -357,7 +378,8 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
 void SessionController::stopCapture()
 {
     if (!m_video) return;
-    m_stoppingCapture = !m_pendingCapture.isEmpty() || m_recordingPending;
+    m_stoppingCapture = !m_pendingCapture.isEmpty() || m_recordingPending || m_livePending;
+    if (m_livePending) { m_liveMediaSent = false; m_livePublisher->stop(); updateLiveNotice(); }
     m_video->stop(); m_microphone->stop(); m_system->stop();
     m_faces->stop();
     if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
@@ -376,9 +398,10 @@ void SessionController::stopCapture()
 void SessionController::refreshCaptureView()
 {
     if (!m_video) return;
-    const bool active = !m_pendingCapture.isEmpty() || m_recordingPending;
+    const bool active = !m_pendingCapture.isEmpty() || m_recordingPending || m_livePending;
     m_view->applyCaptureState(m_loggedIn && !active && !m_enumerator, active, m_enumerator != nullptr,
         m_deviceMessage, m_captureMessages);
+    refreshLiveView();
 }
 
 void SessionController::deliverCapture()
@@ -419,6 +442,7 @@ void SessionController::deliverCapture()
     refreshAudioView();
     m_view->showAudioLevels(deliver ? m_microphone->level() : 0, deliver ? m_system->level() : 0);
     if (m_recordingPending) refreshRecordingView();
+    if (m_livePending) refreshLiveView();
 }
 
 void SessionController::consumeAudio()
@@ -461,7 +485,7 @@ void SessionController::setupFaceDetection()
     connect(m_faces, &QThread::finished, this, [this] {
         m_pendingCapture.remove(m_faces);
         if (!m_faceFailed) { m_faceMessage = tr("人脸检测已停止"); m_view->showFaceStatus(m_faceMessage); }
-        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = m_recordingPending; }
+        if (m_pendingCapture.isEmpty()) { finishMedia(); m_stoppingCapture = m_recordingPending || m_livePending; }
         refreshCaptureView();
     });
 }
@@ -504,6 +528,7 @@ void SessionController::finishMedia()
     refreshMediaView();
     // 3. 最后一批同步数据已快速入队，随后关入口，run排空编码器并写trailer。
     if (m_recordingPending) m_publisher->stop();
+    if (m_livePending) { m_liveMediaSent = false; m_livePublisher->stop(); updateLiveNotice(); }
 }
 
 void SessionController::setupRecording()
@@ -527,7 +552,7 @@ void SessionController::setupRecording()
     // 3. 资源已在run结束前释放，GUI处理finished后才重新解锁开始按钮。
     connect(m_publisher, &QThread::finished, this, [this] {
         m_recordingPending = false;
-        if (m_pendingCapture.isEmpty()) m_stoppingCapture = false;
+        if (m_pendingCapture.isEmpty() && !m_livePending) m_stoppingCapture = false;
         refreshRecordingView(); refreshCaptureView();
     });
 }
@@ -594,6 +619,11 @@ void SessionController::onResponse(const QString &id, const QString &type, bool 
     m_pending.clear();
     if (!ok) {
         m_model->setBusy(false, error);
+        if (type == QStringLiteral("live.start")) {
+            m_liveMessage = tr("开播通知失败：%1").arg(error); stopCapture();
+        }
+        if (type == QStringLiteral("room.leave")) m_leaveRequested = false;
+        if (m_leaveRequested && !m_model->room().isEmpty()) execute(QStringLiteral("room.leave"));
         return;
     }
     if (type == QStringLiteral("room.list")) {
@@ -624,6 +654,8 @@ void SessionController::onResponse(const QString &id, const QString &type, bool 
         m_model->setRooms(m_listing);
         m_model->setBusy(false, tr("已刷新 %1 个房间。未开播的房间可以先加入等待。").arg(m_listing.size()));
     } else if (type == QStringLiteral("room.leave")) {
+        m_liveUrl.clear(); m_leaveRequested = false;
+        if (m_playbackLive) stopPlayback();
         m_model->setRoom({}, tr("已退出房间。"));
         m_model->setBusy(false, tr("已退出房间。"));
         if (m_view->role() == ClientRole::Player) refreshRooms();
@@ -638,9 +670,15 @@ void SessionController::onResponse(const QString &id, const QString &type, bool 
             m_model->setBusy(false, tr("房间已关闭，请刷新后重新选择。"));
             return;
         }
-        m_model->setRoom(data, tr("房间已就绪；媒体链路待接入。"));
-        m_model->setBusy(false, tr("房间已就绪；媒体链路待接入。"));
+        if (type == QStringLiteral("room.create")) m_liveUrl = data.value(QStringLiteral("pushUrl")).toString();
+        m_model->setRoom(data, data.value(QStringLiteral("streaming")).toBool() ? tr("房间已开播。") : tr("房间已就绪，等待开播。"));
+        m_model->setBusy(false, m_model->message());
+        if (type == QStringLiteral("room.join")) {
+            m_livePlaybackWanted = data.value(QStringLiteral("streaming")).toBool(); startLivePlayback();
+        }
     }
+    if (m_leaveRequested && !m_model->room().isEmpty()) execute(QStringLiteral("room.leave"));
+    else updateLiveNotice();
 }
 
 void SessionController::onEvent(const QString &event, const QJsonObject &data)
@@ -648,13 +686,20 @@ void SessionController::onEvent(const QString &event, const QJsonObject &data)
     if (event == QStringLiteral("room.closed")) m_closedRoom = data.value(QStringLiteral("roomId")).toString();
     if (data.value(QStringLiteral("roomId")) != m_model->room().value(QStringLiteral("roomId"))) return;
     if (event == QStringLiteral("room.closed")) {
+        if (m_playbackLive) stopPlayback();
+        if (m_livePending) stopCapture();
+        m_liveUrl.clear(); m_leaveRequested = false;
         auto rooms = m_model->rooms();
         for (qsizetype index = rooms.size(); index > 0; --index)
             if (rooms.at(index - 1).toObject().value(QStringLiteral("roomId")) == data.value(QStringLiteral("roomId"))) rooms.removeAt(index - 1);
         m_model->setRooms(rooms);
         m_model->setRoom({}, tr("主播已关闭房间。可刷新列表重新选择。"));
     } else if ((event == QStringLiteral("live.changed") || event == QStringLiteral("room.updated")) && validRoom(data)) {
-        m_model->setRoom(data, data.value(QStringLiteral("streaming")).toBool() ? tr("直播中；媒体链路待接入。") : tr("房间已就绪，尚未开播；媒体链路待接入。"));
+        m_model->setRoom(data, data.value(QStringLiteral("streaming")).toBool() ? tr("主播已开播。") : tr("房间已就绪，等待开播。"));
+        if (event == QStringLiteral("live.changed") && m_player) {
+            if (data.value(QStringLiteral("streaming")).toBool()) { m_livePlaybackWanted = true; startLivePlayback(); }
+            else if (m_playbackLive) stopPlayback();
+        }
     }
 }
 
@@ -662,5 +707,79 @@ void SessionController::refreshView()
 {
     m_view->applySessionState(m_model->ready(), m_model->busy(), m_model->connecting(),
                              m_model->message(), m_model->room(), m_model->rooms());
+    refreshLiveView();
+}
+
+void SessionController::setupLiveOutput()
+{
+    // 1. Controller拥有第二个输出线程；录制/直播独立封装，复用同一批同步GPU帧和PCM。
+    m_livePublisher = new MediaPublisher(this);
+    connect(this, &SessionController::synchronizedVideoReady, m_livePublisher, &MediaPublisher::pushVideo);
+    connect(this, &SessionController::synchronizedAudioReady, m_livePublisher, &MediaPublisher::pushAudio);
+    connect(m_view, &MainWindow::startLiveRequested, this, &SessionController::startLive);
+    connect(m_view, &MainWindow::stopLiveRequested, this, &SessionController::stopCapture);
+    // 2. opened只说明头/编码器就绪；媒体写出后才发布房间开播通知。
+    connect(m_livePublisher, &MediaPublisher::opened, this, [this] {
+        if (m_livePending && !m_stoppingCapture) m_liveMessage = tr("RTMP已连接，等待首个编码包…");
+        refreshLiveView();
+    });
+    connect(m_livePublisher, &MediaPublisher::transmitting, this, [this] {
+        if (!m_loggedIn || !m_livePending || m_stoppingCapture || m_model->room().isEmpty()) return;
+        m_liveMediaSent = true; m_liveMessage = tr("正在推流到SRS"); updateLiveNotice(); refreshLiveView();
+    });
+    connect(m_livePublisher, &MediaPublisher::failed, this, [this](const QString &message) {
+        m_liveMediaSent = false; m_liveMessage = message; updateLiveNotice(); refreshLiveView();
+    });
+    connect(m_livePublisher, &MediaPublisher::completed, this, [this](const QString &, const EncodingStats &) {
+        m_liveMediaSent = false; m_liveMessage = tr("直播媒体已停止"); updateLiveNotice(); refreshLiveView();
+    });
+    // 3. finished到GUI后解除重启锁；失败后采集预览可继续，重开直播先停止旧采集。
+    connect(m_livePublisher, &QThread::finished, this, [this] {
+        m_livePending = false; m_liveMediaSent = false;
+        if (m_pendingCapture.isEmpty()) m_stoppingCapture = m_recordingPending;
+        updateLiveNotice(); refreshCaptureView();
+    });
+    m_liveMessage = tr("创建房间、选择采集源后开始直播"); refreshLiveView();
+}
+void SessionController::startLive()
+{
+    // 1. 直播随一轮采集启动，使输出PTS从共同原点开始；不在采集中途重置MediaTimeline。
+    if (!m_livePublisher || !m_loggedIn || !m_signal->isReady() || m_model->room().isEmpty()
+        || m_model->busy() || m_liveUrl.isEmpty() || m_livePending || m_recordingPending
+        || !m_pendingCapture.isEmpty() || m_enumerator || m_stoppingCapture) return;
+    const auto sources = m_view->selectedCaptureSources();
+    if (sources.isEmpty()) { m_liveMessage = tr("请至少选择一个采集源"); refreshLiveView(); return; }
+    m_livePending = true; m_liveMediaSent = false; m_liveMessage = tr("正在启动采集和RTMP输出…");
+    startCapture(sources); refreshLiveView();
+}
+void SessionController::updateLiveNotice()
+{
+    // 2. 信令单请求串行；停止发生在live.start在途期间时，响应后补发live.stop。
+    if (!m_livePublisher || !m_loggedIn || !m_signal->isReady() || !m_pending.isEmpty()
+        || m_model->room().isEmpty() || m_leaveRequested) return;
+    const bool publishing = m_livePending && m_liveMediaSent && !m_stoppingCapture;
+    if (publishing != m_model->room().value(QStringLiteral("streaming")).toBool())
+        execute(publishing ? QStringLiteral("live.start") : QStringLiteral("live.stop"));
+}
+void SessionController::refreshLiveView()
+{
+    if (!m_livePublisher) return;
+    const auto stats = m_livePublisher->stats();
+    const bool canStart = m_loggedIn && m_model->ready() && !m_model->busy() && !m_model->room().isEmpty()
+        && !m_liveUrl.isEmpty() && !m_livePending && !m_recordingPending && m_pendingCapture.isEmpty() && !m_enumerator && !m_stoppingCapture;
+    m_view->applyLiveOutputState(canStart, m_livePending, tr("%1\n视频 %2 帧 · 音频 %3 秒 · 编码 %4 KB")
+        .arg(m_liveMessage).arg(stats.videoFrames).arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.bytes / 1024));
+}
+void SessionController::startLivePlayback()
+{
+    // 3. 加入等待中的房间只保留业务会话；live.changed到达后才启动读包/声音线程。
+    if (!m_player || !m_loggedIn || m_view->vodMode() || !m_livePlaybackWanted || m_playbackPending
+        || m_model->room().isEmpty() || !m_model->room().value(QStringLiteral("streaming")).toBool()) return;
+    const auto source = m_model->room().value(QStringLiteral("pullUrl")).toString();
+    m_view->showPlaybackPreview({}); m_playbackFailed = m_playbackStopping = false; m_playbackDurationUs = 0;
+    m_playbackLive = true; m_playbackPending = true; m_playbackMessage = tr("正在连接直播媒体…");
+    if (m_player->begin(source, m_view->playbackAudioEnabled(), true)) m_playbackDelivery.start();
+    else { m_playbackPending = false; m_playbackLive = false; m_playbackMessage = tr("播放线程尚未退出，请稍后重试"); }
+    refreshPlaybackView();
 }
 }

@@ -4,7 +4,7 @@ participant S as SignalServer
 participant V as 观众
 H->>S: room.create 标题
 S->>S: 绑定创建连接与房间
-S-->>H: roomId与媒体地址
+S-->>H: roomId、pushUrl与未开播状态
 V->>S: room.list 与 room.join
 alt 房间不存在或已在房间
 S-->>V: 业务错误

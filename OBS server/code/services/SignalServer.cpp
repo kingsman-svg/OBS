@@ -157,7 +157,9 @@ Json SignalServer::handle(const net::TcpConnection::Ptr &connection, const Json 
         room.owner = connection.get();
         room.members.insert(connection.get());
         session.roomId = room.id;
-        const auto data = roomData(room);
+        auto data = roomData(room);
+        // 创建者先拿推流地址；实际媒体写出后客户端再live.start，等待中的观众不会误拉空流。
+        data["pushUrl"] = m_rtmpBase + "/" + room.streamKey;
         m_rooms.emplace(room.id, std::move(room));
         return ok(data);
     }

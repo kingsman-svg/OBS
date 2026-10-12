@@ -20,7 +20,7 @@ class MediaPlayer final : public QThread {
 public:
     explicit MediaPlayer(QObject *parent = nullptr); // 构造只绑定音频线程错误，不打开媒体。
     ~MediaPlayer() override;               // stop/wait，保证解码和音频线程先结束。
-    bool begin(const QString &source, bool audioOutput = true); // GUI清本轮队列/状态，再start。
+    bool begin(const QString &source, bool audioOutput = true, bool live = false); // GUI清本轮队列/状态，再start。
     void stop();                            // GUI关闭交付入口、唤醒背压并停止声音，常规停止不wait。
     void setVolume(float volume);           // GUI快速转交输出线程的原子音量。
     PlaybackVideo takeVideo();              // GUI按主时钟取一张到期帧，空纹理表示继续等，不清画面。
@@ -50,5 +50,7 @@ private:
     bool m_audioActive = false;              // 媒体存在音轨且本轮实际启用WASAPI。
     bool m_accepting = false;                // stop后不再交付任何迟到画面。
     bool m_decodeEof = false;                // 全部解码尾部已交付，主时钟最多走到实际媒体结束点。
+    bool m_live = false;                     // 直播有界丢旧画面，点播继续背压；运行中不改模式。
+    qint64 m_liveClockBaseUs = -1;           // 关闭声音时首帧建立直播时钟，GUI不追随无限积压。
 };
 }

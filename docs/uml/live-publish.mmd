@@ -1,0 +1,29 @@
+sequenceDiagram
+actor U as 主播
+participant C as SessionController GUI
+participant S as SignalServer
+participant T as 采集与MediaTimeline
+participant P as RTMP输出线程
+participant R as SRS独立容器
+U->>C: 创建房间
+C->>S: room.create
+S-->>C: 房间未开播、创建者pushUrl
+U->>C: 选择源并开始直播
+C->>T: 混音与同步begin，共同QPC原点
+C->>P: begin保存参数，QThread start
+C->>T: 启动采集与检测线程
+T-->>C: GUI取最新帧/音频并同步PTS
+C->>P: pushVideo/pushAudio快速有界入队
+P->>P: run等首帧设备，初始化NVENC/AAC与FLV
+P->>R: RTMP连接并写头
+alt 连接/编码失败
+P-->>C: failed，资源回收后finished
+C->>U: 显示错误，采集预览可继续
+else 媒体写出
+P->>R: 编码媒体包，刷新网络IO
+P-->>C: transmitting一次
+C->>S: live.start
+S-->>C: 开播响应与live.changed
+C->>U: 显示推流状态与统计
+end
+Note over C,P: 本地录制用另一输出线程，共用同步输入；GUI不编码或等待网络

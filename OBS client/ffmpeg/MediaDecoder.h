@@ -18,6 +18,7 @@ struct MediaInfo {
     int width = 0, height = 0;     // 首期视频解码尺寸，运行中按帧检查变化。
     bool video = false;           // 找到非封面视频流。
     bool audio = false;           // 找到音频流，可独立于视频播放。
+    bool live = false;            // 直播无固定尾部；短探测/读取超时，不使用文件音轨结束裁剪。
 };
 // 普通类，无线程；由MediaPlayer::run独占解封装、软解码、重采样和BGRA上传资源。
 class MediaDecoder final {
@@ -26,7 +27,7 @@ public:
     using AudioSink = std::function<void(const PlaybackAudio &)>; // 同线程交付48kHz立体声PCM。
     MediaDecoder();                              // 构造不打开文件或设备。
     ~MediaDecoder();                             // RAII释放格式/解码/SWR/SWS/GPU资源。
-    MediaInfo open(const QString &source, std::function<bool()> cancelled, VideoSink video, AudioSink audio); // 本地文件或HTTP(S)。
+    MediaInfo open(const QString &source, std::function<bool()> cancelled, VideoSink video, AudioSink audio, bool live = false); // 点播或RTMP直播。
     bool readNext();                             // 读取一个包并send/receive；false表示正常EOF。
     void finish();                               // EOF时排空两个解码器，再排空SWR尾部，幂等。
 private:

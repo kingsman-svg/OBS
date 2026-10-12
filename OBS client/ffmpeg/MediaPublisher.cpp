@@ -9,6 +9,7 @@ extern "C" {
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QTemporaryFile>
+#include <QUrl>
 #include <winrt/base.h>
 #include <optional>
 #include <stdexcept>
@@ -40,8 +41,19 @@ struct Muxer {
     AVFormatContext *format = nullptr; // 独占输出上下文，streams由FFmpeg释放。
     AVIOContext *io = nullptr;         // 独占自定义IO，format只借用，不能avio_closep。
     ~Muxer() {
+        if (format && !io && format->pb) avio_closep(&format->pb); // 网络IO由FFmpeg拥有。
         avformat_free_context(format);
         if (io) { av_freep(&io->buffer); avio_context_free(&io); }
+    }
+};
+struct NetworkIo {
+    std::atomic<bool> *cancel = nullptr; // 借用Publisher的取消标记，只在run期间存在。
+    qint64 deadlineMs = 0;              // 每次连接/写出最多5秒，用单调时钟。
+    QElapsedTimer timer;
+    void renew() { deadlineMs = timer.elapsed() + 5000; }
+    static int interrupt(void *opaque) {
+        const auto &io = *static_cast<NetworkIo *>(opaque);
+        return io.cancel->load() || io.timer.elapsed() >= io.deadlineMs;
     }
 };
 }
@@ -58,7 +70,7 @@ bool MediaPublisher::begin(const RecordingSettings &settings)
     QMutexLocker lock(&m_mutex);
     if (isRunning()) return false;
     m_settings = settings; m_video.clear(); m_audio.clear(); m_stats = {};
-    m_accepting = true; m_finishing = false; m_aborted = false;
+    m_accepting = true; m_finishing = false; m_aborted = false; m_cancelIo.store(false);
     start(); return true; // 2. QThread建立工作线程，随后在该线程调用run。
 }
 void MediaPublisher::pushVideo(const TimedVideoFrame &frame)
@@ -78,12 +90,14 @@ void MediaPublisher::pushAudio(const TimedAudioPacket &packet)
 void MediaPublisher::stop()
 {
     QMutexLocker lock(&m_mutex);
-    m_accepting = false; m_finishing = true; m_ready.wakeOne();
+    m_accepting = false; m_finishing = true;
+    if (m_settings.live) m_cancelIo.store(true); // 网络停止优先退出，MP4仍正常排空。
+    m_ready.wakeOne();
 }
 void MediaPublisher::abort()
 {
     QMutexLocker lock(&m_mutex);
-    m_accepting = false; m_aborted = true; m_video.clear(); m_audio.clear(); m_ready.wakeOne();
+    m_accepting = false; m_aborted = true; m_cancelIo.store(true); m_video.clear(); m_audio.clear(); m_ready.wakeOne();
 }
 EncodingStats MediaPublisher::stats() const { QMutexLocker lock(&m_mutex); return m_stats; }
 void MediaPublisher::publishStats(const EncodingStats &value)
@@ -115,22 +129,42 @@ void MediaPublisher::run()
         if (proceed) {
             // 4. 同目录临时文件先完成trailer再改名；已有目标绝不覆盖，失败不留下半成品MP4。
             const QFileInfo destination(settings.path);
-            if (settings.path.isEmpty() || destination.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0)
+            if (!settings.live && (settings.path.isEmpty() || destination.suffix().compare(QStringLiteral("mp4"), Qt::CaseInsensitive) != 0))
                 throw std::invalid_argument("本步录制输出必须是本地.mp4路径");
-            if (destination.exists()) throw std::runtime_error("录制目标已存在，请使用新的文件名");
-            if (!QDir().mkpath(destination.absolutePath())) throw std::runtime_error("无法创建录制目录");
+            if (!settings.live && destination.exists()) throw std::runtime_error("录制目标已存在，请使用新的文件名");
+            if (!settings.live && !QDir().mkpath(destination.absolutePath())) throw std::runtime_error("无法创建录制目录");
             QTemporaryFile file(QDir(destination.absolutePath()).filePath(QStringLiteral(".obs-record-XXXXXX.part")));
-            if (!file.open()) throw std::runtime_error(file.errorString().toStdString());
+            NetworkIo network; network.cancel = &m_cancelIo; network.timer.start(); network.renew();
             Muxer mux;
-            check(avformat_alloc_output_context2(&mux.format, nullptr, "mp4", nullptr), "MP4 context");
-            auto *buffer = static_cast<uint8_t *>(av_malloc(65536));
-            if (!buffer) throw std::bad_alloc();
-            mux.io = avio_alloc_context(buffer, 65536, 1, &file, nullptr, writeFile, seekFile);
-            if (!mux.io) { av_free(buffer); throw std::bad_alloc(); }
-            mux.format->pb = mux.io; mux.format->flags |= AVFMT_FLAG_CUSTOM_IO;
+            check(avformat_alloc_output_context2(&mux.format, nullptr, settings.live ? "flv" : "mp4", nullptr), "output context");
+            if (settings.live) {
+                // 4a. 协议模块只认RTMP，不引用SRS类型；IO归本线程，GUI用interrupt取消。
+                const QUrl url(settings.path);
+                if (!url.isValid() || url.scheme() != QStringLiteral("rtmp") || url.host().isEmpty()
+                    || !url.userInfo().isEmpty() || url.path().count('/') < 2)
+                    throw std::invalid_argument("直播需要有效的rtmp://主机/应用/流地址");
+                static const int initialized = avformat_network_init(); check(initialized, "network initialize");
+                mux.format->interrupt_callback = {NetworkIo::interrupt, &network};
+                mux.format->flags |= AVFMT_FLAG_FLUSH_PACKETS;
+                AVDictionary *options = nullptr;
+                av_dict_set(&options, "rw_timeout", "5000000", 0);
+                av_dict_set(&options, "protocol_whitelist", "rtmp,tcp", 0);
+                const auto address = url.toEncoded();
+                const int result = avio_open2(&mux.format->pb, address.constData(), AVIO_FLAG_WRITE,
+                    &mux.format->interrupt_callback, &options);
+                av_dict_free(&options); check(result, "connect RTMP");
+            } else {
+                if (!file.open()) throw std::runtime_error(file.errorString().toStdString());
+                auto *buffer = static_cast<uint8_t *>(av_malloc(65536));
+                if (!buffer) throw std::bad_alloc();
+                mux.io = avio_alloc_context(buffer, 65536, 1, &file, nullptr, writeFile, seekFile);
+                if (!mux.io) { av_free(buffer); throw std::bad_alloc(); }
+                mux.format->pb = mux.io; mux.format->flags |= AVFMT_FLAG_CUSTOM_IO;
+            }
             // 限制封装交织缓存；保留各路原始PTS和AAC编码延迟，由MP4编辑列表描述。
             mux.format->max_interleave_delta = 100000;
             AVStream *video = nullptr, *audio = nullptr;
+            int64_t headerBytes = 0; bool transmitted = false;
             MediaEncoder encoder;
             encoder.open(settings, device.Get(), (mux.format->oformat->flags & AVFMT_GLOBALHEADER) != 0,
                 [&](AVPacket *packet, const AVCodecContext *codec) {
@@ -138,7 +172,14 @@ void MediaPublisher::run()
                     if (!stream) throw std::logic_error("编码包缺少对应MP4流");
                     av_packet_rescale_ts(packet, codec->time_base, stream->time_base);
                     packet->stream_index = stream->index;
-                    check(av_interleaved_write_frame(mux.format, packet), "write MP4 packet");
+                    network.renew();
+                    check(av_interleaved_write_frame(mux.format, packet), "write media packet");
+                    if (settings.live) {
+                        avio_flush(mux.format->pb); check(mux.format->pb->error, "flush RTMP");
+                        if (!transmitted && mux.format->pb->bytes_written > headerBytes) {
+                            transmitted = true; emit transmitting();
+                        }
+                    }
                 });
             auto addStream = [&](const AVCodecContext *codec) -> AVStream * {
                 if (!codec) return nullptr;
@@ -147,7 +188,13 @@ void MediaPublisher::run()
                 stream->time_base = codec->time_base; return stream;
             };
             video = addStream(encoder.videoContext()); audio = addStream(encoder.audioContext());
-            check(avformat_write_header(mux.format, nullptr), "write MP4 header");
+            network.renew();
+            AVDictionary *muxOptions = nullptr;
+            if (settings.live) av_dict_set(&muxOptions, "flvflags", "no_duration_filesize", 0);
+            const int headerResult = avformat_write_header(mux.format, &muxOptions);
+            av_dict_free(&muxOptions); check(headerResult, "write media header");
+            if (settings.live) { avio_flush(mux.format->pb); check(mux.format->pb->error, "flush RTMP header"); }
+            headerBytes = mux.format->pb->bytes_written;
             emit opened();
             // 5. 只取队列头的引用后解锁；编码/GPU等待/文件IO都不占用GUI入口的互斥锁。
             for (;;) {
@@ -156,7 +203,7 @@ void MediaPublisher::run()
                 {
                     QMutexLocker lock(&m_mutex);
                     while (m_video.empty() && m_audio.empty() && !m_finishing && !m_aborted) m_ready.wait(&m_mutex);
-                    if (m_aborted || (m_finishing && m_video.empty() && m_audio.empty())) break;
+                    if (m_aborted || (settings.live && m_cancelIo.load()) || (m_finishing && m_video.empty() && m_audio.empty())) break;
                     const bool takeVideo = !m_video.empty() && (m_audio.empty()
                         || av_compare_ts(m_video.front().pts, {1, 30}, m_audio.front().pts, {1, 48000}) <= 0);
                     if (takeVideo) { frame = std::move(m_video.front()); m_video.pop_front(); }
@@ -167,7 +214,7 @@ void MediaPublisher::run()
             }
             bool abandoned;
             { QMutexLocker lock(&m_mutex); abandoned = m_aborted; }
-            if (!abandoned) {
+            if (!abandoned && !settings.live) {
                 // 6. stop关闭入口之后排空AAC尾部/NVENC包，再写索引和容器尾；保留实际时间长度。
                 encoder.finish(); publishStats(encoder.stats());
                 check(av_write_trailer(mux.format), "write MP4 trailer");
@@ -188,7 +235,7 @@ void MediaPublisher::run()
       catch (const std::exception &failure) { error = QString::fromUtf8(failure.what()); }
     // 8. 局部RAII先释放编码/显存/封装/临时文件，再发结果与QThread::finished；此后才能begin。
     { QMutexLocker lock(&m_mutex); m_accepting = false; m_video.clear(); m_audio.clear(); }
-    if (!error.isEmpty()) emit failed(tr("录制失败：%1").arg(error));
+    if (!error.isEmpty() && !(m_settings.live && m_cancelIo.load())) emit failed(tr("媒体输出失败：%1").arg(error));
     else emit completed(savedPath, stats());
 }
 }

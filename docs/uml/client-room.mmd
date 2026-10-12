@@ -23,7 +23,7 @@ P->>P: 按页汇总，最多 128 个房间
 P->>S: room.join(roomId)
 S-->>C: room.updated 成员变化
 S-->>P: 加入结果
-P->>P: 显示当前房间，等待媒体链路
+P->>P: 未开播等待，已开播则开始RTMP播放
 P->>S: room.leave
 S-->>C: room.updated 观众数减少
 S-->>P: 成功响应
@@ -33,4 +33,4 @@ C->>S: room.leave
 S-->>P: room.closed
 P->>P: 清空房间并移除列表项
 S-->>C: 成功响应
-Note over H,P: 本步只有房间控制，不会向未部署的媒体服务器发送推拉流
+Note over H,P: 房间控制与媒体生命周期分开；SRS独立容器转发媒体

@@ -7,6 +7,8 @@ participant S as SignalServer
 participant P as MediaPlayer线程
 U->>V: 直播切换为点播
 V->>V: 显示本地文件与在线地址输入
+V-->>C: stopPlaybackRequested，停止直播媒体
+C->>P: stop，关闭声音和读取
 alt 已在直播房间
 V-->>C: leaveRoomRequested
 C->>N: request room.leave
@@ -27,4 +29,4 @@ U->>V: 切回直播
 V-->>C: stopPlaybackRequested
 C->>P: stop，暂停画面交付、关闭声音
 P-->>C: 回收资源后finished
-Note over U,V: 本地/HTTP(S)点播共用流程；直播媒体拉流后续接入
+Note over U,V: 直播用房间RTMP地址；点播用本地/HTTP(S)，仍共用MediaPlayer

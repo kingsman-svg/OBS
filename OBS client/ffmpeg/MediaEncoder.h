@@ -8,7 +8,8 @@ struct AVPacket;
 
 namespace csn {
 struct RecordingSettings {
-    QString path;             // 本步仅本地 .mp4；不把信令开播误当作媒体推流。
+    QString path;             // 本地.mp4路径或RTMP地址；协议由live明确选择。
+    bool live = false;        // true用FLV/RTMP，false保留临时MP4安全封存。
     bool video = true;        // 来自本轮视频源选择。
     bool audio = true;        // 来自本轮麦克风/回环选择。
     int width = 1280;         // 编码尺寸固定，源尺寸变化只影响GPU缩放。
@@ -21,7 +22,7 @@ struct EncodingStats {
     quint64 audioSamples = 0;  // 已接收的混音采样帧数，每帧包含左右声道，不把两声道重复计数。
     quint64 silentSamples = 0; // 时间缺口内补入的静音采样帧数。
     quint64 packets = 0;       // 编码器输出并由封装层接受的包数。
-    quint64 bytes = 0;         // 编码包字节，不含MP4容器开销。
+    quint64 bytes = 0;         // 编码包字节，不含MP4/FLV容器或网络开销。
     quint64 droppedVideo = 0;  // 线程输入队列溢出丢掉的视频帧。
     quint64 droppedAudio = 0;  // 线程输入队列溢出丢掉的音频包。
 };

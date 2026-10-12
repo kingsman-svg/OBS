@@ -51,6 +51,7 @@ struct MediaDecoder::Resources {
     qint64 nextVideoUs = 0, defaultFrameUs = 40000; // 缺失视频PTS/时长时的连续推算。
     quint64 sequence = 0;                      // 每轮视频纹理从1开始递增，GUI可去重。
     bool finished = false;                     // EOF排空只执行一次。
+    bool live = false;                         // 直播缩短读包超时，来源由Controller明确指定。
     ~Resources() {
         avcodec_free_context(&video); avcodec_free_context(&audio); avformat_close_input(&format);
         sws_freeContext(sws); swr_free(&swr); av_channel_layout_uninit(&inputLayout);
@@ -158,29 +159,37 @@ struct MediaDecoder::Resources {
 };
 MediaDecoder::MediaDecoder() = default;
 MediaDecoder::~MediaDecoder() = default;
-MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancelled, VideoSink videoSink, AudioSink audioSink)
+MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancelled, VideoSink videoSink, AudioSink audioSink, bool live)
 {
     // 1. 本地文件与HTTP(S)共用输入；停止/10秒操作超时通过AVIO interrupt回调打断。
     if (m_resources || !cancelled || !videoSink || !audioSink) throw std::logic_error("解码器状态/回调无效");
     const QUrl url(source);
-    const bool remote = url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https");
+    const bool http = url.scheme() == QStringLiteral("http") || url.scheme() == QStringLiteral("https");
+    const bool remote = http || (live && url.scheme() == QStringLiteral("rtmp"));
+    if (live && url.scheme() != QStringLiteral("rtmp")) throw std::invalid_argument("当前直播入口需要RTMP地址");
     if (remote) {
         if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty()) throw std::invalid_argument("在线点播需要有效的HTTP(S)媒体地址");
         static const int network = avformat_network_init(); check(network, "initialize media network");
     } else if (!QFileInfo(source).isFile()) throw std::invalid_argument("请选择存在的本地媒体文件");
-    auto r = std::make_unique<Resources>(); r->cancelled = std::move(cancelled);
+    auto r = std::make_unique<Resources>(); r->cancelled = std::move(cancelled); r->live = live;
     r->videoSink = std::move(videoSink); r->audioSink = std::move(audioSink); r->deadlineUs = nowUs() + 10000000;
     r->format = avformat_alloc_context(); if (!r->format) throw std::bad_alloc();
     r->format->interrupt_callback = {Resources::interrupt, r.get()};
     AVDictionary *options = nullptr;
-    av_dict_set(&options, "protocol_whitelist", remote ? "http,https,tcp,tls" : "file", 0);
-    av_dict_set(&options, "rw_timeout", "10000000", 0);
-    if (remote) av_dict_set(&options, "tls_verify", "1", 0); // HTTPS及HTTP重定向到HTTPS均验证服务器证书。
+    av_dict_set(&options, "protocol_whitelist", live ? "rtmp,tcp" : remote ? "http,https,tcp,tls" : "file", 0);
+    av_dict_set(&options, "rw_timeout", live ? "4000000" : "10000000", 0);
+    if (http) av_dict_set(&options, "tls_verify", "1", 0); // HTTPS及HTTP重定向到HTTPS均验证服务器证书。
+    if (live) {
+        // 1a. 直播减少探测和RTMP客户端缓冲；仍探测编码参数，不能盲目跳过解码初始化。
+        r->format->probesize = 262144; r->format->max_analyze_duration = 300000;
+        av_dict_set(&options, "rtmp_live", "live", 0); av_dict_set(&options, "rtmp_buffer", "100", 0);
+    }
     const auto input = remote ? url.toEncoded() : QFileInfo(source).absoluteFilePath().toUtf8();
     const int opened = avformat_open_input(&r->format, input.constData(), nullptr, &options); av_dict_free(&options);
     check(opened, "open media"); check(avformat_find_stream_info(r->format, nullptr), "read media information");
     r->originUs = r->format->start_time == AV_NOPTS_VALUE ? 0 : r->format->start_time;
-    MediaInfo info; info.durationUs = r->format->duration == AV_NOPTS_VALUE ? 0 : std::max<int64_t>(0, r->format->duration);
+    MediaInfo info; info.live = live;
+    info.durationUs = live || r->format->duration == AV_NOPTS_VALUE ? 0 : std::max<int64_t>(0, r->format->duration);
     // 2. 创建普通软解码器；AVCodecContext::pkt_timebase必须与输入流对应。
     auto openCodec = [&](int index) {
         const auto *stream = r->format->streams[index]; const auto *codec = avcodec_find_decoder(stream->codecpar->codec_id);
@@ -211,7 +220,7 @@ MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancel
         r->audio = openCodec(r->audioIndex); info.audio = true; const auto *stream = r->format->streams[r->audioIndex];
         const auto start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
         info.audioStartSamples = std::max<int64_t>(0, av_rescale_q(start, stream->time_base, {1, 48000}) - av_rescale_q(r->originUs, {1, 1000000}, {1, 48000}));
-        if (stream->duration != AV_NOPTS_VALUE && stream->duration > 0) {
+        if (!live && stream->duration != AV_NOPTS_VALUE && stream->duration > 0) {
             r->audioEnd = av_rescale_q(start + stream->duration, stream->time_base, {1, 48000}) - av_rescale_q(r->originUs, {1, 1000000}, {1, 48000});
             info.audioEndSamples = r->audioEnd;
         }
@@ -223,7 +232,7 @@ bool MediaDecoder::readNext()
 {
     // 6. 每次读一个AVPacket，按stream_index交给对应解码器；其他流忽略，正常EOF由调用方finish。
     if (!m_resources || m_resources->finished) return false;
-    auto &r = *m_resources; r.deadlineUs = nowUs() + 10000000;
+    auto &r = *m_resources; r.deadlineUs = nowUs() + (r.live ? 4000000 : 10000000);
     std::unique_ptr<AVPacket, PacketDelete> packet(av_packet_alloc()); if (!packet) throw std::bad_alloc();
     const int result = av_read_frame(r.format, packet.get()); if (result == AVERROR_EOF) return false;
     check(result, "read media packet");

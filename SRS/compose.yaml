@@ -1,0 +1,21 @@
+name: obs-srs
+services:
+  srs:
+    container_name: OBS-SRS
+    # 固定当前验证的6.0.193镜像摘要，避免同一标签更新后行为改变。
+    image: ossrs/srs:6@sha256:f1067a846d6fd6ee321a407a828ae5ce41713a9acc8e207c053045b775ce73f3
+    init: true
+    restart: unless-stopped
+    command: ["./objs/srs", "-c", "conf/obs.conf"]
+    environment:
+      CANDIDATE: ${SRS_CANDIDATE:-127.0.0.1}
+    volumes:
+      - type: bind
+        source: ./srs.conf
+        target: /usr/local/srs/conf/obs.conf
+        read_only: true
+    ports:
+      - "127.0.0.1:1935:1935"       # OBS客户端RTMP推流/拉流
+      - "127.0.0.1:1985:1985"       # SRS管理API / WHEP协商
+      - "127.0.0.1:8088:8088"       # HTTP-FLV / SRS自带测试页面
+      - "127.0.0.1:8000:8000/udp"   # WebRTC媒体；客户端RTC接入后另行验收

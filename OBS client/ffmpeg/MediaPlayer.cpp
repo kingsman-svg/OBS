@@ -23,7 +23,7 @@ MediaPlayer::MediaPlayer(QObject *parent) : QThread(parent)
     }, Qt::DirectConnection);
 }
 MediaPlayer::~MediaPlayer() { stop(); wait(); }
-bool MediaPlayer::begin(const QString &source, bool audioOutput)
+bool MediaPlayer::begin(const QString &source, bool audioOutput, bool live)
 {
     // 2. GUI只保存输入、清状态并start；Controller等finished回到GUI后才允许重启。
     QMutexLocker lock(&m_mutex);
@@ -31,6 +31,7 @@ bool MediaPlayer::begin(const QString &source, bool audioOutput)
     m_source = source.trimmed(); m_audioRequested = audioOutput; m_audioActive = false;
     m_audioError.clear(); m_stats = {}; m_video.clear(); m_wallOriginUs = m_mediaEndUs = 0;
     m_audioEndSamples = -1;
+    m_live = live; m_liveClockBaseUs = -1;
     m_accepting = true; m_decodeEof = false; start(); return true;
 }
 void MediaPlayer::stop()
@@ -48,11 +49,12 @@ void MediaPlayer::checkAudioError() const
 }
 qint64 MediaPlayer::clockUs() const
 {
-    qint64 origin, end; bool audio, eof;
+    qint64 origin, end, base; bool audio, eof;
     { QMutexLocker lock(&m_mutex); if (!m_accepting) return m_stats.positionUs;
-      origin = m_wallOriginUs; audio = m_audioActive; end = m_mediaEndUs; eof = m_decodeEof; }
+      origin = m_wallOriginUs; audio = m_audioActive; end = m_mediaEndUs; eof = m_decodeEof;
+      base = m_live ? std::max<qint64>(0, m_liveClockBaseUs) : 0; }
     if (!origin) return 0;
-    qint64 result = std::max<qint64>(0, nowUs() - origin);
+    qint64 result = base + std::max<qint64>(0, nowUs() - origin);
     if (audio) {
         const auto clock = m_audio.clock();
         if (!clock.started && !clock.ended) return 0; // 预缓冲期间不提前播放画面。
@@ -85,7 +87,11 @@ void MediaPlayer::pushVideo(const PlaybackVideo &frame)
 {
     QMutexLocker lock(&m_mutex);
     // 4. 解码背压只挡工作线程；音轨位于后面时先建立静音时钟，GUI才能消费早期视频。
-    while (m_accepting && m_video.size() >= 16 && m_audioError.isEmpty()) {
+    if (m_live && !m_audioActive && (m_liveClockBaseUs < 0 || frame.ptsUs > m_liveClockBaseUs + nowUs() - m_wallOriginUs + 300000)) {
+        m_liveClockBaseUs = frame.ptsUs; m_wallOriginUs = nowUs(); // 首帧/较大跳变追赶直播位置。
+    }
+    if (m_live && m_video.size() >= 8) { m_video.pop_front(); ++m_stats.droppedVideo; }
+    while (!m_live && m_accepting && m_video.size() >= 16 && m_audioError.isEmpty()) {
         if (m_audioActive) m_audio.forceStart();
         m_changed.wait(&m_mutex, 10);
     }
@@ -110,15 +116,16 @@ void MediaPlayer::run()
         // 3. 普通解码对象只在本线程存在；读包/解码/像素转换/上传都不占GUI。
         MediaDecoder decoder;
         const auto info = decoder.open(m_source, [this] { return isInterruptionRequested(); },
-            [this](const PlaybackVideo &frame) { pushVideo(frame); }, [this](const PlaybackAudio &packet) { pushAudio(packet); });
+            [this](const PlaybackVideo &frame) { pushVideo(frame); }, [this](const PlaybackAudio &packet) { pushAudio(packet); }, m_live);
         {
             QMutexLocker lock(&m_mutex); m_audioActive = info.audio && m_audioRequested;
             m_audioEndSamples = info.audioEndSamples; m_wallOriginUs = nowUs();
         }
         if (!isInterruptionRequested()) {
-            if (m_audioActive && !m_audio.begin(info.audioStartSamples)) throw std::runtime_error("音频输出线程尚未退出");
+            if (m_audioActive && !m_audio.begin(info.audioStartSamples, m_live)) throw std::runtime_error("音频输出线程尚未退出");
             emit opened(info);
             while (!isInterruptionRequested()) { checkAudioError(); if (!decoder.readNext()) { endOfFile = true; break; } }
+            if (endOfFile && m_live && !isInterruptionRequested()) throw std::runtime_error("直播媒体已断开，请等待主播重开或重新播放");
             if (endOfFile && !isInterruptionRequested()) {
                 // 6. EOF仍取完解码/SWR尾部，然后关闭音频入口；数据读完不代表已经播完。
                 decoder.finish(); if (m_audioActive) m_audio.finish();
@@ -139,7 +146,7 @@ void MediaPlayer::run()
     const qint64 position = clockUs(); m_audio.stop(); m_audio.wait();
     { QMutexLocker lock(&m_mutex); m_stats.positionUs = endOfFile && !isInterruptionRequested() ? std::min(position, m_mediaEndUs) : position;
       m_accepting = false; m_video.clear(); }
-    if (!error.isEmpty() && !isInterruptionRequested()) emit failed(tr("点播失败：%1").arg(error));
+    if (!error.isEmpty() && !isInterruptionRequested()) emit failed(tr("播放失败：%1").arg(error));
     else emit completed(endOfFile && !isInterruptionRequested());
     // 8. run返回后QThread发finished，Controller才解锁下一轮输入。
 }

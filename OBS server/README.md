@@ -60,12 +60,13 @@ GitHub 地址确认后配置 origin；已有 origin 时先查看 `git remote -v`
 | HTTP 登录节点 1 | 8081 | 8081 | 同上 |
 | HTTP 登录节点 2 | 8082 | 8082 | 同上 |
 | TCP JSON 信令 | 9000 | 9000 | 同上 |
-| RTMP | 1935 | 1935 | 预留，媒体服务后续部署 |
-| 媒体管理 API | 1985 | 1985 | 预留 |
-| 点播 / HLS / HTTP-FLV | 8088 | 8088 | 预留 |
+| RTMP | 1935 | 1935 | 独立OBS-SRS容器 |
+| 媒体管理 API / WHEP | 1985 | 1985 | 独立OBS-SRS容器 |
+| HTTP-FLV / SRS页面 | 8088 | 8088 | 独立OBS-SRS容器 |
+| WebRTC UDP | 8000 | 8000 | OBS-SRS已映射，RTC客户端后续验收 |
 
 所有宿主端口绑定 `127.0.0.1`；Windows 客户端使用该地址。后续容器内业务进程须监听 `0.0.0.0` 对应端口，才能从宿主机访问。
-容器入口自动启动 SSH；业务服务另用开发启动器启动，见 [完整说明](../docs/server-services.md)。媒体服务选型和部署另一步完成。若媒体服务独立部署到其他容器，需调整这几个预留映射，避免重复占用宿主端口。
+容器入口自动启动SSH；业务服务另用开发启动器启动，见[完整说明](../docs/server-services.md)。媒体端口归独立OBS-SRS容器，配置和启停集中在[SRS副项目](../SRS/README.md)，此目录不再映射媒体端口。
 
 ## 启停与重建
 
@@ -106,6 +107,8 @@ python3 run_services.py stop
 启动器创建两个登录节点、一个调度进程和一个信令进程。构建、协议与功能边界见 [服务端说明](../docs/server-services.md)。
 
 ## 当前验证结果
+
+2026-10-12：媒体端口移到OBS-SRS，OBS登录/调度/信令已恢复；服务端四组回归和客户端实际RTMP推拉流通过，见[直播接入](../docs/012-srs-live.md)。重建开发镜像时若镜像站暂时不可达，可用`docker compose build --build-arg UBUNTU_MIRROR=http://archive.ubuntu.com/ubuntu obs`选择官方源。
 
 2026-10-07：OBS 已运行且健康检查通过。已验证 root 密码 SSH 认证、Windows 2222 端口的 SSH 握手、挂载目录写入同步、C++17 编译及 epoll 调用，全部端口映射与上表一致。
 Remote - SSH 插件由用户安装，用户已确认连接成功。定时器与三个业务服务器的最新构建、测试及 Windows 端口链路验证见 [服务端记录](../docs/server-services.md#验证)。

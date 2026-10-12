@@ -10,3 +10,5 @@ out/
 __pycache__/
 .venv/
 OBS server/.env
+SRS/.env
+SRS/upstream/

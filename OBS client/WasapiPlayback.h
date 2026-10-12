@@ -24,7 +24,7 @@ class WasapiPlayback final : public QThread {
 public:
     WasapiPlayback();                         // 构造不打开默认扬声器。
     ~WasapiPlayback() override;               // stop/wait，线程归还COM后再销毁。
-    bool begin(qint64 startSample = 0);        // 播放线程清状态、记录音轨前置静音，再start。
+    bool begin(qint64 startSample = 0, bool live = false); // 清状态；直播使用200ms队列，点播保留1秒背压。
     bool push(const PlaybackAudio &packet);   // 解码线程有界入队；满1秒时等待消费，stop可唤醒。
     void forceStart();                        // 视频队列先满时允许先播放静音，防止等待后置音轨死锁。
     void finish();                            // 解码EOF后关闭入口，排空PCM及设备padding。
@@ -47,5 +47,6 @@ private:
     bool m_accepting = false;                 // finish/stop后拒绝迟到音频。
     bool m_finishing = false;                 // 正常EOF；队列空后等待端点padding清零。
     bool m_force = false;                     // 后置音轨/纯静音区间允许建立时钟。
+    bool m_live = false;                      // 直播溢出丢旧PCM，长时间缺口重新映射媒体时钟。
 };
 }

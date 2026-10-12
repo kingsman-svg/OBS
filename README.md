@@ -16,11 +16,11 @@
 
 已实现同一 CMake 工程中的两个客户端：OBS_Publisher 推流端、OBS_Player 播放端。简单 MVC，共享异步 HTTP 登录与 TCP 信令，已完成节点调度、认证、心跳、房间创建/列表/加入/退出、成员更新、断线重连和会话到期。保留历史类图，后续按最新约定只维护流程时序图。
 
-Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。注释、类图、时序图与真实进程测试同步维护，启动方法见 [服务端说明](docs/server-services.md)。当前使用 root 开发账号，生产账号系统和媒体转发后续实现。
+Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。启动方法见 [服务端说明](docs/server-services.md)。SRS媒体服务器独立放在[SRS副项目](SRS/README.md)，容器OBS-SRS，负责RTMP/HTTP-FLV与后续WebRTC桥接；当前使用root开发账号，生产账号系统后续实现。
 
 先在 OBS 容器启动 `python3 /workspace/code/run_services.py start`，再用 Qt Creator 打开 `OBS client/CMakeLists.txt`，构建并分别运行 OBS_Publisher 和 OBS_Player。两端使用开发账号 `root`、密码 `root`，默认连接本机 Docker 的 8080 调度与 9000 信令。详见 [双端运行说明](docs/003-two-clients.md)。
 
-推流端已接入 WinRT 摄像头、WGC 窗口/屏幕、WASAPI 麦克风/系统声音，提供设备选择、启停、独立非模态预览和双路音量。主窗口仅放操作面板，小窗口可滚动；首帧打开预览，关闭画面后采集继续，可用“打开画面”恢复。底层只有 VideoCapture、WasapiCapture 两个采集类，由现有工作台控制器协调，预览已改为 D3D11 Shader + 双缓冲 SwapChain，生产路径不读回 CPU；采集与渲染成员及流程有中文编号注释。详见 [采集说明](docs/004-capture.md) 与 [GPU 渲染说明](docs/005-gpu-preview.md)。播放端支持直播/点播页面切换，本地文件与HTTP(S)点播已接入软件解码、WASAPI声音输出、独立GPU窗口及音频主时钟；推流端本地编码录制已完成。实际推拉流、GPU美颜与Agent继续逐步接入。LocalAuthServer仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
+推流端已接入 WinRT 摄像头、WGC 窗口/屏幕、WASAPI 麦克风/系统声音，提供设备选择、启停、独立非模态预览和双路音量。主窗口仅放操作面板，小窗口可滚动；首帧打开预览，关闭画面后采集继续，可用“打开画面”恢复。底层只有 VideoCapture、WasapiCapture 两个采集类，由现有工作台控制器协调，预览已改为 D3D11 Shader + 双缓冲 SwapChain，生产路径不读回 CPU；采集与渲染成员及流程有中文编号注释。详见 [采集说明](docs/004-capture.md) 与 [GPU 渲染说明](docs/005-gpu-preview.md)。播放端支持直播/点播切换，本地/HTTP(S)点播以及SRS RTMP直播共用解码和音画播放；推流端支持RTMP直播与本地MP4录制。GPU美颜与Agent继续逐步接入。LocalAuthServer仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
 
 音频已接入 FFmpeg 7.1 libswresample，统一为 48kHz / 立体声 / Float32 / 10ms，按 QPC 对齐麦克风与系统回环，支持各路音量、静音、缺包补零和削波统计。正常停止排空尾部，退出登录丢弃迟到数据；提供混音后的媒体信号，后续接编码器。构建需配置 FFmpeg shared SDK，详见 [音频重采样与混音](docs/006-audio-mix.md)。
 
@@ -36,6 +36,7 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 CourseStudioNext/
 ├─ OBS client/       应用源码、界面和 CMakeLists.txt（源码平铺）
 ├─ OBS server/ Linux 服务端源码和 Docker 开发环境（挂载到 /workspace）
+├─ SRS/       独立媒体服务器副项目：部署、版本、上游源码与二开路线
 ├─ cpp/       独立 Visual Studio 模型优化工程（源码平铺）
 ├─ tests/     行为测试
 ├─ docs/      需求、设计、接口和阶段记录
@@ -52,7 +53,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - 后续功能在已有版本上继续增加，Qt 界面随核心能力逐步完善。
 - UI 采用简单 MVC；完整流程配 UML 时序图，后续不再绘制类图。
 
-编码前音视频同步已接入：共同 QPC 原点、视频 30fps 调度、音频 48kHz 样本 PTS、有界缓冲及启停排空，见 [同步说明](docs/009-media-sync.md)。本地 MP4 已接入：勾选录制后由独立线程消费同步数据，GPU绘制同帧框点到D3D11硬件帧，NVENC编码H.264、FIFO组合AAC，停止后排空并封存文件。媒体/界面库拆为 OBSMediaCore、OBSClientUi，编码封装放 `OBS client/ffmpeg/`，见 [第010步](docs/010-ffmpeg-encode.md)。Player点播形成录制到解码播放闭环，支持播放/停止、音量、实际EOF、重复播放与取消，见 [第011步](docs/011-player-vod.md)。暂停/跳转、硬件解码、RTMP推拉流、WebRTC/ICE后续逐步接入；低延迟的队列、时间戳和缓存约束持续落实。
+编码前同步和本地录制见[第009步](docs/009-media-sync.md)、[第010步](docs/010-ffmpeg-encode.md)，Player点播见[第011步](docs/011-player-vod.md)。RTMP直播闭环已接入，Publisher创建房间、选择源后“开始直播”，Player加入后等待/自动播放，见[第012步](docs/012-srs-live.md)。暂停/跳转、硬件解码、WebRTC客户端/ICE及SRS自定义桥接后续逐步推进。
 
 ## 文档
 

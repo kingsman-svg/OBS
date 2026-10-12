@@ -52,6 +52,9 @@ public:
     bool vodMode() const;                              // 点播模式才接受播放意图，切回直播时停止。
     void applyPlaybackState(bool active, qint64 positionUs, qint64 durationUs, const QString &message); // 控件/进度，不操作解码器。
     void showPlaybackPreview(const csn::VideoFrame &frame); // Player独立窗口消费到期GPU帧，空帧清理。
+    QList<csn::CaptureSource> selectedCaptureSources() const; // 采集/直播按钮共用本轮源选择。
+    bool playbackAudioEnabled() const;                // 点播与直播共用声音选择。
+    void applyLiveOutputState(bool canStart, bool active, const QString &message); // 只展示直播启停状态。
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
@@ -69,6 +72,9 @@ signals:
     void stopPlaybackRequested();                      // 停止、模式切换均交给同一个Controller。
     void playbackVolumeChanged(float volume);         // 实时音量0～1，静音也保留播放时钟。
     void playbackRenderFailed(const QString &message); // 显示失败时Controller停止音频和解码。
+    void startLiveRequested();                         // 主播开始采集并推流；Controller取得房间地址后执行。
+    void stopLiveRequested();                          // 主播停止采集/媒体后通知信令。
+    void playLiveRequested();                          // 观众重试当前直播地址，不新增播放MVC。
 protected:
     void closeEvent(QCloseEvent *event) override;
 private:
@@ -130,4 +136,11 @@ private:
     bool m_ready = false;
     bool m_busy = false;
     bool m_inRoom = false;
+    bool m_roomStreaming = false;                      // 当前房间业务状态，媒体状态由Controller独立展示。
+    QPushButton *m_startLive = nullptr;                // 主播开始直播，创建房间/选好源后启用。
+    QPushButton *m_stopLive = nullptr;                 // 主播异步停播。
+    QLabel *m_liveOutputStatus = nullptr;              // 网络输出统计/错误，长文本自动换行。
+    QPushButton *m_playLive = nullptr;                 // 观众失败后手动重试。
+    QPushButton *m_stopLivePlayback = nullptr;         // 观众停止媒体，可继续留在房间。
+    QLabel *m_livePlaybackStatus = nullptr;            // 直播模式下显示解码/播放信息。
 };

@@ -166,6 +166,8 @@ ClientRole 是区分两个入口的枚举，不含手写类。MainWindow、Login
 
 ## FFmpeg 编码与封存
 
+SRS直播流程：[推流源码](uml/live-publish.mmd)、[PNG](uml/直播推流接入时序图.png)、[SVG](uml/直播推流接入时序图.svg)；[拉流源码](uml/live-play.mmd)、[PNG](uml/直播拉流播放时序图.png)、[SVG](uml/直播拉流播放时序图.svg)；[停止源码](uml/live-stop.mmd)、[PNG](uml/直播停止清理时序图.png)、[SVG](uml/直播停止清理时序图.svg)。部署和上游二开单独列在[SRS副项目](../SRS/README.md)。
+
 Player点播流程：[打开/解码源码](uml/vod-open.mmd)、[PNG](uml/点播打开解码时序图.png)、[SVG](uml/点播打开解码时序图.svg)；[音画调度源码](uml/vod-play.mmd)、[PNG](uml/点播音画调度时序图.png)、[SVG](uml/点播音画调度时序图.svg)；[结束/停止源码](uml/vod-stop.mmd)、[PNG](uml/点播结束停止时序图.png)、[SVG](uml/点播结束停止时序图.svg)。
 
 本地编码与封存流程：[录制时序图源码](uml/ffmpeg-record.mmd)、[PNG](uml/本地编码录制时序图.png)、[SVG](uml/本地编码录制时序图.svg)；[停止封存源码](uml/ffmpeg-stop.mmd)、[PNG](uml/录制停止封存时序图.png)、[SVG](uml/录制停止封存时序图.svg)。类图按约定保留历史版本，不新增。

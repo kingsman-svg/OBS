@@ -28,9 +28,7 @@ services:
       - "127.0.0.1:8081:8081"   # 登录节点 1
       - "127.0.0.1:8082:8082"   # 登录节点 2，验证调度
       - "127.0.0.1:9000:9000"   # TCP JSON 信令服务
-      - "127.0.0.1:1935:1935"   # 预留 RTMP 媒体服务
-      - "127.0.0.1:1985:1985"   # 预留媒体服务 HTTP 管理 API
-      - "127.0.0.1:8088:8088"   # 预留点播文件、HLS / HTTP-FLV
+      # 媒体端口1935/1985/8088/8000归独立SRS容器，见../SRS/compose.yaml。
     healthcheck:
       test: ["CMD", "python3", "-c", "import socket; socket.create_connection(('127.0.0.1',22),2).close()"]
       interval: 10s

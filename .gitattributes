@@ -13,3 +13,5 @@ CMakeLists.txt text eol=lf
 *.sh text eol=lf
 *.yaml text eol=lf
 Dockerfile text eol=lf
+SRS/srs.conf text eol=lf
+SRS/source.lock.json text eol=lf

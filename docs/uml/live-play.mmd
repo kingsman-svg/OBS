@@ -1,0 +1,37 @@
+sequenceDiagram
+actor U as 观众
+participant C as SessionController GUI
+participant S as SignalServer
+participant P as MediaPlayer线程
+participant D as MediaDecoder普通对象
+participant R as SRS独立容器
+participant A as WASAPI输出线程
+participant V as 独立GPU画面窗口
+U->>C: 直播模式加入房间
+C->>S: room.join
+S-->>C: streaming与pullUrl
+alt 尚未开播
+C->>U: 留在房间等待，不启动媒体
+S-->>C: live.changed=true
+else 已经开播
+C->>C: 直接准备播放
+end
+C->>P: begin(source, audioOutput, live=true)
+P->>D: run内open，安装取消/超时回调
+D->>R: RTMP拉流、探测编码参数
+P->>A: begin，直播PCM有界队列
+P-->>C: opened
+R-->>D: H.264/AAC媒体包
+D->>D: 软件解码、BGRA上传、音频重采样
+D->>P: 交付视频纹理与媒体PTS
+P->>A: push 48kHz立体声PCM
+A->>A: 音量、PTS追赶、设备播放时钟
+C->>P: 每10ms takeVideo与stats
+P-->>C: 按主时钟到期画面
+C->>V: 显示纹理
+alt 断流/解码/端点失败
+P-->>C: failed，清理后finished
+C->>U: 错误锁存，允许手动重试
+else 用户隐藏画面
+V->>V: 隐藏窗口，声音与媒体继续
+end

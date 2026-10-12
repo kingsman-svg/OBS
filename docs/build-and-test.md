@@ -69,3 +69,5 @@ GPU 原生窗口测试需要正常 Windows 交互图形会话。受限沙箱或�
 `OBSEncodingTests.exe --gpu` 显式验证NVIDIA D3D11/NVENC，合成90帧/3秒光音信号、解码校验框点/横竖尺寸变化/时间戳。运行时PATH需包含Qt/bin；输出 `out/编码验证.mp4`。`python scripts/run_capture_checks.py --record-face` 验证自建WGC窗口、静音回环、TensorRT、同步、编码一起运行的正常停止/重启/退出，输出在out子目录；`--record` 不启用检测。详见 [第010步](010-ffmpeg-encode.md)。
 
 点播新增libswscale及swscale-8.dll，CMake随其他FFmpeg DLL一起复制。默认测试用SDK/bin/ffmpeg.exe生成素材，不依赖外部视频。`python scripts/run_playback_checks.py --audio-device` 显式验证真实输出设备（音量0），包含音轨延后及长视频尾部；`--mvc-only`支持2倍缩放截图，`--media-file "out/编码验证.mp4"`验证明确选择的录制文件。详见 [第011步](011-player-vod.md)。
+
+独立SRS与直播集成：`./SRS/manage.ps1 start`，确认OBS业务服务已运行，再执行`python SRS/check.py`。构建新增`OBSStreamingTests`目标，验证生成GPU画面/合成PCM经NVENC和SRS到Player，WASAPI音量0；该测试依赖外部容器与NVIDIA，独立于默认CTest。部署/源码版本集中在[SRS目录](../SRS/README.md)，FFmpeg生命周期见[第012步](012-srs-live.md)。

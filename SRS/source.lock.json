@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/ossrs/srs.git",
+  "branch": "6.0release",
+  "commit": "aab043c7dbe038a997e14eb8b4286d089315858e",
+  "runtimeVersion": "6.0.193",
+  "runtimeImage": "ossrs/srs:6@sha256:f1067a846d6fd6ee321a407a828ae5ce41713a9acc8e207c053045b775ce73f3"
+}
