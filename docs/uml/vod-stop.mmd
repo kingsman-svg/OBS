@@ -1,0 +1,38 @@
+sequenceDiagram
+actor U as 用户
+participant C as Controller/GUI
+participant P as MediaPlayer线程
+participant D as MediaDecoder
+participant A as WASAPI输出线程
+participant R as 独立画面窗口
+alt 自然EOF
+P->>D: finish，送空包取延迟帧，排空SWR
+D-->>P: 最后视频及实际音频样本，裁剪AAC填充
+P->>A: 音轨实际尾部到达后finish
+A->>A: 播完PCM队列与端点padding后Stop
+P->>P: 等GUI取完视频并显示最后一帧持续时间
+P->>P: EOF时钟限制到实际结束点
+P->>D: RAII释放输入/解码/SWR/SWS/GPU资源
+P->>A: wait确认音频资源已归还
+P-->>C: completed(true)
+C->>R: 保留最后画面，可重新播放
+else 停止/切回直播/退出登录/关闭程序
+U->>C: stopPlayback意图或登录状态变化
+C->>C: 立即停止GUI交付定时器
+C->>R: 清纹理并隐藏，不接收迟到画面
+C->>P: stop，关交付入口、丢视频并唤醒背压
+P->>D: AVIO中断回调打断打开/读包
+P->>A: stop，丢PCM并退出，音量不恢复旧数据
+P->>D: RAII释放解码/输入资源
+P->>A: wait回收音频线程
+P-->>C: completed(false)
+else 读包/解码/声音/显示失败
+P->>P: 锁存错误并停止本轮，不自动重试
+P->>D: 释放输入和解码资源
+P->>A: stop/wait归还端点
+P-->>C: failed
+C->>R: 清画面，错误文字保留
+end
+P-->>C: QThread.finished
+C->>C: 清playbackPending，解锁输入与播放
+Note over C,P: 构造对象复用；每轮run重建资源，GUI日常停止不wait

@@ -58,13 +58,14 @@ MainWindow::MainWindow(csn::ClientRole role, QWidget *parent)
     loginLayout->addStretch();
     m_preview = new PreviewWindow(
         role == csn::ClientRole::Publisher ? tr("OBS · 采集预览") : tr("OBS · 播放画面"),
-        role == csn::ClientRole::Publisher ? tr("尚无视频画面\n选择视频源后开始采集") : tr("尚无播放画面\n解码模块待接入"), this);
+        role == csn::ClientRole::Publisher ? tr("尚无视频画面\n选择视频源后开始采集") : tr("尚无播放画面\n在点播页选择媒体后播放"), this);
     m_pages = new QStackedWidget(this);
     m_pages->setObjectName(QStringLiteral("pages"));
     m_pages->addWidget(loginPage);
     m_pages->addWidget(buildWorkspace());
     connect(m_preview, &PreviewWindow::failed, this, [this](const QString &message) {
         if (m_captureStatus) m_captureStatus->setText(message);
+        if (m_role == csn::ClientRole::Player) emit playbackRenderFailed(message);
     });
     setCentralWidget(m_pages);
     setStyleSheet(QStringLiteral(
@@ -396,36 +397,71 @@ QWidget *MainWindow::buildPlayerPanel(QWidget *parent)
     liveLayout->addLayout(actions);
     modes->addWidget(live);
     auto *vod = new QWidget(modes);
-    auto *form = new QFormLayout(vod);
+    auto *form = new QVBoxLayout(vod);
     form->setContentsMargins(0, 0, 0, 0);
-    form->setVerticalSpacing(12);
-    auto *local = new QLineEdit(vod);
-    local->setObjectName(QStringLiteral("localMediaEdit"));
-    local->setMinimumWidth(0);
-    local->setReadOnly(true);
-    local->setPlaceholderText(tr("选择本地音视频文件"));
-    auto *browse = new QPushButton(tr("选择文件"), vod);
+    form->setSpacing(12);
+    m_vodSource = new QComboBox(vod);
+    m_vodSource->setObjectName(QStringLiteral("vodSourceCombo"));
+    m_vodSource->addItems({tr("本地文件"), tr("在线 HTTP / HTTPS 地址")});
+    form->addWidget(m_vodSource);
+    auto *inputs = new QStackedWidget(vod);
+    auto *localPage = new QWidget(inputs);
+    auto *localLayout = new QVBoxLayout(localPage); localLayout->setContentsMargins(0, 0, 0, 0);
+    localLayout->addWidget(new QLabel(tr("媒体文件"), localPage));
+    m_localMedia = new QLineEdit(localPage);
+    m_localMedia->setObjectName(QStringLiteral("localMediaEdit"));
+    m_localMedia->setMinimumWidth(0);
+    m_localMedia->setPlaceholderText(tr("选择或粘贴本地音视频文件路径"));
+    m_browseMedia = new QPushButton(tr("选择文件"), localPage);
+    m_browseMedia->setObjectName(QStringLiteral("browseMediaButton"));
     auto *fileRow = new QHBoxLayout;
-    fileRow->addWidget(local, 1);
-    fileRow->addWidget(browse);
-    form->addRow(tr("本地点播"), fileRow);
-    auto *url = new QLineEdit(vod);
-    url->setObjectName(QStringLiteral("mediaUrlEdit"));
-    url->setMinimumWidth(0);
-    url->setPlaceholderText(tr("输入在线媒体地址"));
-    form->addRow(tr("在线点播"), url);
-    auto *play = new QPushButton(tr("播放（解码模块待接入）"), vod);
-    play->setEnabled(false);
-    form->addRow(play);
-    connect(browse, &QPushButton::clicked, this, [this, local] {
+    fileRow->addWidget(m_localMedia, 1); fileRow->addWidget(m_browseMedia);
+    localLayout->addLayout(fileRow); inputs->addWidget(localPage);
+    auto *urlPage = new QWidget(inputs);
+    auto *urlLayout = new QVBoxLayout(urlPage); urlLayout->setContentsMargins(0, 0, 0, 0);
+    urlLayout->addWidget(new QLabel(tr("在线媒体地址"), urlPage));
+    m_mediaUrl = new QLineEdit(urlPage);
+    m_mediaUrl->setObjectName(QStringLiteral("mediaUrlEdit"));
+    m_mediaUrl->setMinimumWidth(0); m_mediaUrl->setPlaceholderText(tr("https://…/video.mp4"));
+    urlLayout->addWidget(m_mediaUrl); inputs->addWidget(urlPage); form->addWidget(inputs);
+    connect(m_vodSource, &QComboBox::currentIndexChanged, inputs, &QStackedWidget::setCurrentIndex);
+    auto *soundRow = new QHBoxLayout;
+    m_playAudio = new QCheckBox(tr("播放声音"), vod); m_playAudio->setChecked(true);
+    m_playAudio->setObjectName(QStringLiteral("playAudioCheck"));
+    m_playVolume = new QSpinBox(vod); m_playVolume->setRange(0, 100); m_playVolume->setValue(50); m_playVolume->setSuffix(QStringLiteral("%"));
+    m_playVolume->setObjectName(QStringLiteral("playbackVolumeSpin"));
+    soundRow->addWidget(m_playAudio); soundRow->addStretch();
+    soundRow->addWidget(new QLabel(tr("音量"), vod)); soundRow->addWidget(m_playVolume); form->addLayout(soundRow);
+    auto *playRow = new QHBoxLayout;
+    m_playMedia = new QPushButton(tr("播放"), vod); m_playMedia->setObjectName(QStringLiteral("playMediaButton"));
+    m_stopMedia = new QPushButton(tr("停止"), vod); m_stopMedia->setObjectName(QStringLiteral("stopMediaButton"));
+    m_playMedia->setEnabled(false); m_stopMedia->setEnabled(false);
+    playRow->addWidget(m_playMedia); playRow->addWidget(m_stopMedia); playRow->addStretch(); form->addLayout(playRow);
+    m_playProgress = new QProgressBar(vod); m_playProgress->setRange(0, 1000); m_playProgress->setValue(0);
+    // 音频电平条的全局样式只有8px；点播进度显示时间，按字体单独给足高度。
+    m_playProgress->setStyleSheet(QStringLiteral("QProgressBar { min-height:%1px; max-height:%1px; text-align:center; }")
+        .arg(m_playProgress->fontMetrics().lineSpacing() + 12));
+    m_playProgress->setFormat(tr("尚未播放")); m_playProgress->setObjectName(QStringLiteral("playbackProgress")); form->addWidget(m_playProgress);
+    m_playbackStatus = new QLabel(tr("选择媒体后播放；画面在独立窗口，关闭画面不停止声音。"), vod);
+    m_playbackStatus->setObjectName(QStringLiteral("playbackStatusLabel"));
+    m_playbackStatus->setWordWrap(true); m_playbackStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum);
+    m_playbackStatus->setMinimumHeight(m_playbackStatus->fontMetrics().lineSpacing() * 2); form->addWidget(m_playbackStatus);
+    connect(m_browseMedia, &QPushButton::clicked, this, [this] {
         const QString path = QFileDialog::getOpenFileName(this, tr("选择音视频文件"));
-        if (!path.isEmpty()) local->setText(path);
+        if (!path.isEmpty()) m_localMedia->setText(QDir::toNativeSeparators(path));
     });
+    connect(m_playMedia, &QPushButton::clicked, this, [this] {
+        emit playbackRequested(m_vodSource->currentIndex() == 0 ? m_localMedia->text().trimmed() : m_mediaUrl->text().trimmed(), m_playAudio->isChecked());
+    });
+    connect(m_stopMedia, &QPushButton::clicked, this, &MainWindow::stopPlaybackRequested);
+    connect(m_playVolume, &QSpinBox::valueChanged, this, [this](int value) { emit playbackVolumeChanged(value / 100.0f); });
     modes->addWidget(vod);
     layout->addWidget(modes);
     connect(m_mode, &QComboBox::currentIndexChanged, modes, &QStackedWidget::setCurrentIndex);
     connect(m_mode, &QComboBox::currentIndexChanged, this, [this](int index) {
         if (index == 1 && m_inRoom) emit leaveRoomRequested();
+        if (index == 0) emit stopPlaybackRequested();
+        m_playMedia->setEnabled(index == 1 && m_loggedIn && !m_playbackActive && !m_busy && !m_inRoom);
         m_join->setEnabled(index == 0 && m_ready && !m_busy && !m_inRoom && m_rooms->currentItem());
     });
     connect(m_refresh, &QPushButton::clicked, this, &MainWindow::refreshRoomsRequested);
@@ -470,6 +506,7 @@ void MainWindow::applySessionState(bool ready, bool busy, bool connecting, const
         m_refresh->setEnabled(ready && !busy);
         m_join->setEnabled(ready && !busy && !m_inRoom && m_mode->currentIndex() == 0 && m_rooms->currentItem());
         m_mode->setEnabled(!busy);
+        m_playMedia->setEnabled(m_loggedIn && vodMode() && !m_playbackActive && !busy && !m_inRoom);
     }
 }
 
@@ -487,6 +524,7 @@ void MainWindow::applyLoginState(const QString &message, bool busy, bool loggedI
     m_reconnect->setEnabled(loggedIn && !m_ready);
     m_welcome->setText(message);
     m_pages->setCurrentIndex(loggedIn ? 1 : 0);
+    if (m_playMedia) m_playMedia->setEnabled(loggedIn && vodMode() && !m_playbackActive && !m_busy && !m_inRoom);
     setWindowTitle(tr("OBS %1 · %2").arg(m_role == csn::ClientRole::Publisher ? tr("推流端") : tr("播放端"), loggedIn ? tr("工作台") : tr("登录")));
 }
 QString MainWindow::signalHost() const { return m_signalHost->text().trimmed(); }
@@ -571,3 +609,25 @@ void MainWindow::showMediaSyncStatus(const QString &message) { if (m_syncStatus)
 bool MainWindow::recordingEnabled() const { return m_recording && m_recording->isChecked(); }
 QString MainWindow::recordingDirectory() const { return m_recordDirectory ? m_recordDirectory->text().trimmed() : QString(); }
 void MainWindow::showRecordingStatus(const QString &message) { if (m_recordStatus) m_recordStatus->setText(message); }
+bool MainWindow::vodMode() const { return m_mode && m_mode->currentIndex() == 1; }
+void MainWindow::showPlaybackPreview(const csn::VideoFrame &frame)
+{
+    if (!frame.texture || (m_role == csn::ClientRole::Player && m_loggedIn && vodMode())) m_preview->setFrame(frame);
+}
+void MainWindow::applyPlaybackState(bool active, qint64 positionUs, qint64 durationUs, const QString &message)
+{
+    if (!m_playMedia) return;
+    m_playbackActive = active;
+    m_playMedia->setEnabled(m_loggedIn && vodMode() && !active && !m_busy && !m_inRoom);
+    m_stopMedia->setEnabled(active); m_vodSource->setEnabled(!active); m_localMedia->setEnabled(!active);
+    m_mediaUrl->setEnabled(!active); m_browseMedia->setEnabled(!active); m_playAudio->setEnabled(!active);
+    const auto time = [](qint64 us) {
+        const qint64 seconds = std::max<qint64>(0, us / 1000000);
+        return QStringLiteral("%1:%2:%3").arg(seconds / 3600, 2, 10, QLatin1Char('0'))
+            .arg(seconds / 60 % 60, 2, 10, QLatin1Char('0')).arg(seconds % 60, 2, 10, QLatin1Char('0'));
+    };
+    const auto position = durationUs > 0 ? std::min(positionUs, durationUs) : positionUs;
+    m_playProgress->setValue(durationUs > 0 ? int(std::clamp<double>(double(position) / durationUs * 1000, 0, 1000)) : 0);
+    m_playProgress->setFormat(durationUs > 0 ? time(position) + QStringLiteral(" / ") + time(durationUs) : time(position));
+    m_playbackStatus->setText(message);
+}

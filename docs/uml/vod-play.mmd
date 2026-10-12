@@ -1,0 +1,41 @@
+sequenceDiagram
+participant P as MediaPlayer线程
+participant D as MediaDecoder
+participant Q as 有界视频队列
+participant A as WASAPI输出线程
+participant S as 输出端点/IAudioClock
+participant C as Controller/GUI
+participant R as 独立GPU窗口
+P->>D: readNext或EOF排空
+D->>D: 软件解码视频、SWS转BGRA、上传独立GPU纹理
+D->>Q: pushVideo，媒体PTS/时长与纹理引用
+alt 视频队列达到16帧
+Q->>P: 背压等待GUI消费，stop可唤醒
+P->>A: 音轨未到时允许先建立静音时钟
+else 有空间
+Q->>Q: 保留未来帧，避免无界GPU内存
+end
+D->>D: 音频SWR转48kHz立体声Float32，实际样本数推进PTS
+alt 本轮启用声音
+D->>A: 有界PCM入队，最多1秒
+A->>A: 100ms预缓冲、保留PTS缺口/前置静音
+A->>S: GetCurrentPadding，GetBuffer/ReleaseBuffer后Start
+S-->>A: GetPosition与GetFrequency
+A->>A: 发布实际播放微秒时钟快照
+else 本轮关闭声音
+P->>P: 仍记录音频有效尾长，使用QPC时钟
+end
+C->>P: 每10ms takeVideo
+P->>A: 快速复制音频时钟；没有输出则用QPC
+alt 视频PTS尚未到期
+P-->>C: 空纹理，保留当前画面并等待
+else 到期帧
+P->>Q: 取到期帧，明显迟到时跳过旧帧
+P-->>C: PlaybackVideo
+C->>R: showPlaybackPreview，Shader绘制/SwapChain Present
+end
+alt 音轨已结束但视频更长
+A->>S: 排空padding后Stop，释放COM
+P->>P: 从音频结束位置按QPC继续视频尾部
+end
+Note over Q,R: 关闭独立画面仅隐藏，后续帧继续更新缓存，不停止声音

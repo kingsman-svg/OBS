@@ -49,6 +49,9 @@ public:
     bool recordingEnabled() const;                     // 开始采集时读取；默认仅预览。
     QString recordingDirectory() const;                // 本地MP4保存目录，文件名由Controller生成。
     void showRecordingStatus(const QString &message);   // 编码计数、封存结果或独立错误提示。
+    bool vodMode() const;                              // 点播模式才接受播放意图，切回直播时停止。
+    void applyPlaybackState(bool active, qint64 positionUs, qint64 durationUs, const QString &message); // 控件/进度，不操作解码器。
+    void showPlaybackPreview(const csn::VideoFrame &frame); // Player独立窗口消费到期GPU帧，空帧清理。
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
@@ -62,6 +65,10 @@ signals:
     void stopCaptureRequested();
     void refreshDevicesRequested();
     void audioMixChanged(csn::CaptureSource::Kind kind, float gain, bool muted); // 控件只发意图，不处理 PCM。
+    void playbackRequested(const QString &source, bool audioOutput); // 选择的本地文件或HTTP(S)地址。
+    void stopPlaybackRequested();                      // 停止、模式切换均交给同一个Controller。
+    void playbackVolumeChanged(float volume);         // 实时音量0～1，静音也保留播放时钟。
+    void playbackRenderFailed(const QString &message); // 显示失败时Controller停止音频和解码。
 protected:
     void closeEvent(QCloseEvent *event) override;
 private:
@@ -108,6 +115,17 @@ private:
     QLineEdit *m_recordDirectory = nullptr;    // 保存目录，运行期间锁定。
     QPushButton *m_chooseRecordDirectory = nullptr; // 选择目录，不打开文件或启动编码。
     QLabel *m_recordStatus = nullptr;         // 独占整行，长路径换行，由滚动区承载。
+    QComboBox *m_vodSource = nullptr;          // 本地文件/在线地址，运行期间锁定。
+    QLineEdit *m_localMedia = nullptr;         // 选择或粘贴本地媒体路径。
+    QLineEdit *m_mediaUrl = nullptr;           // HTTP(S)点播地址，不与直播房间地址混用。
+    QPushButton *m_browseMedia = nullptr;      // 选择文件不自动播放。
+    QPushButton *m_playMedia = nullptr;        // 发begin意图，finished前禁用。
+    QPushButton *m_stopMedia = nullptr;        // 请求异步停止。
+    QCheckBox *m_playAudio = nullptr;          // 本轮是否打开扬声器；关闭时用单调时钟。
+    QSpinBox *m_playVolume = nullptr;          // 0～100%，运行中可调。
+    QProgressBar *m_playProgress = nullptr;    // 只读进度，本步尚未接入跳转。
+    QLabel *m_playbackStatus = nullptr;        // 时长、解码统计和错误详情独占整行。
+    bool m_playbackActive = false;            // begin到GUI收到finished之间不更换输入。
     bool m_loggedIn = false;
     bool m_ready = false;
     bool m_busy = false;

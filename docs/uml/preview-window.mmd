@@ -4,9 +4,9 @@ participant V as MainWindow
 participant C as SessionController
 participant P as PreviewWindow
 participant R as VideoRenderer
-U->>V: 开始采集
-V-->>C: captureRequested
-C->>V: 首个同步视频帧 showFacePreview
+U->>V: 开始采集或点播
+V-->>C: captureRequested或playbackRequested
+C->>V: 首个同步/到期视频帧，显示独立画面
 V->>P: setFrame(VideoFrame,同帧框点)
 P->>R: 缓存GPU纹理，show后绘制
 U->>P: 关闭画面窗口
@@ -27,6 +27,6 @@ end
 alt GPU设备或Shader失败
 R-->>P: failed
 P->>P: 保留错误文字，停止后重启可重试
-P-->>V: 显示预览错误，采集继续
+P-->>V: 显示错误；采集继续，点播则停止解码/声音
 end
-Note over V,P: 主窗口保留操作面板；关闭预览不发出停止采集意图
+Note over V,P: 主窗口保留操作面板；关闭画面不发出停止采集/点播意图

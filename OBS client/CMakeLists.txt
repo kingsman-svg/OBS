@@ -36,9 +36,9 @@ set(OBS_FFMPEG_ROOT "$ENV{FFMPEG_7_HOME}" CACHE PATH "FFmpeg 7.x shared SDK root
 if(NOT OBS_FFMPEG_ROOT)
     set(OBS_FFMPEG_ROOT "C:/dev/ffmpeg-7.1-full_build-shared" CACHE PATH "FFmpeg 7.x shared SDK root" FORCE)
 endif()
-foreach(dependency include/libswresample/swresample.h include/libavutil/channel_layout.h include/libavcodec/avcodec.h include/libavformat/avformat.h
-        lib/swresample.lib lib/avutil.lib lib/avcodec.lib lib/avformat.lib
-        bin/swresample-5.dll bin/avutil-59.dll bin/avcodec-61.dll bin/avformat-61.dll)
+foreach(dependency include/libswresample/swresample.h include/libavutil/channel_layout.h include/libavcodec/avcodec.h include/libavformat/avformat.h include/libswscale/swscale.h
+        lib/swresample.lib lib/avutil.lib lib/avcodec.lib lib/avformat.lib lib/swscale.lib
+        bin/swresample-5.dll bin/avutil-59.dll bin/avcodec-61.dll bin/avformat-61.dll bin/swscale-8.dll)
     if(NOT EXISTS "${OBS_FFMPEG_ROOT}/${dependency}")
         message(FATAL_ERROR "Missing ${OBS_FFMPEG_ROOT}/${dependency}. Set OBS_FFMPEG_ROOT to a FFmpeg 7.x shared SDK.")
     endif()
@@ -47,7 +47,7 @@ add_library(OBSFFmpegAudio INTERFACE)
 target_include_directories(OBSFFmpegAudio INTERFACE "${OBS_FFMPEG_ROOT}/include")
 target_link_libraries(OBSFFmpegAudio INTERFACE "${OBS_FFMPEG_ROOT}/lib/swresample.lib" "${OBS_FFMPEG_ROOT}/lib/avutil.lib")
 # 所有可执行文件共用父目录；编码与封装DLL也复制到这里。
-foreach(runtime swresample-5 avutil-59 avcodec-61 avformat-61)
+foreach(runtime swresample-5 avutil-59 avcodec-61 avformat-61 swscale-8)
     configure_file("${OBS_FFMPEG_ROOT}/bin/${runtime}.dll" "${CMAKE_CURRENT_BINARY_DIR}/${runtime}.dll" COPYONLY)
 endforeach()
 
@@ -67,6 +67,7 @@ add_library(OBSMediaCore STATIC
     CaptureSource.h VideoCapture.cpp VideoCapture.h WasapiCapture.cpp WasapiCapture.h
     AudioPacket.h AudioResampler.cpp AudioResampler.h AudioMixer.cpp AudioMixer.h
     MediaTimeline.cpp MediaTimeline.h
+    WasapiPlayback.cpp WasapiPlayback.h
     FaceDetection.h FaceDetection.cpp GpuFaceDetector.h GpuFaceDetector.cpp
 )
 target_include_directories(OBSMediaCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -130,6 +131,11 @@ if(BUILD_TESTING)
     target_link_libraries(OBSEncodingTests PRIVATE OBSFFmpegCore Qt6::Test)
     add_test(NAME client.encode COMMAND OBSEncodingTests)
     set_tests_properties(client.encode PROPERTIES TIMEOUT 40)
+    add_executable(OBSPlaybackTests ../tests/PlaybackTests.cpp)
+    target_link_libraries(OBSPlaybackTests PRIVATE OBSClientUi Qt6::Test)
+    target_compile_definitions(OBSPlaybackTests PRIVATE OBS_TEST_FFMPEG="${OBS_FFMPEG_ROOT}/bin/ffmpeg.exe")
+    add_test(NAME client.playback COMMAND OBSPlaybackTests)
+    set_tests_properties(client.playback PROPERTIES TIMEOUT 40 ENVIRONMENT "QT_QPA_PLATFORM=windows")
     add_executable(OBSFaceTests ../tests/FaceTests.cpp)
     target_link_libraries(OBSFaceTests PRIVATE OBSClientUi Qt6::Test)
     add_test(NAME client.face COMMAND OBSFaceTests)
@@ -167,6 +173,7 @@ if(MSVC)
         target_compile_options(OBSAudioTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSMediaTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSEncodingTests PRIVATE /utf-8 /W4)
+        target_compile_options(OBSPlaybackTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSFaceTests PRIVATE /utf-8 /W4)
     endif()
 endif()

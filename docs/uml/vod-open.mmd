@@ -1,0 +1,37 @@
+sequenceDiagram
+actor U as 用户
+participant V as Player/MainWindow
+participant C as Controller/GUI
+participant P as MediaPlayer线程
+participant D as MediaDecoder
+participant F as FFmpeg输入/解码
+participant A as WASAPI输出线程
+U->>V: 点播页选择本地文件或HTTP(S)，点击播放
+V-->>C: playbackRequested(source, 声音开关)
+C->>C: 校验登录、模式、房间与上轮finished
+C->>V: 清画面、锁输入、显示正在打开
+C->>P: begin，清队列/统计后start
+P->>P: QThread调用run，创建普通解码对象
+P->>D: open，绑定停止/视频/音频回调
+D->>F: avformat_open_input，AVIO停止及10秒操作超时
+alt 路径/网络/媒体初始化失败
+D-->>P: 抛错误，RAII关闭输入和资源
+P-->>C: failed，之后finished
+C->>V: 错误保留、按钮恢复
+else 成功
+D->>F: find_stream_info，建立两个软件解码上下文
+D->>D: 记录共同原点、轨道时长与视频上传设备
+D-->>P: MediaInfo
+alt 有音轨且启用声音
+P->>A: begin，独立线程初始化共享输出
+A->>A: MTA、默认端点、Float32流、事件与音频时钟
+else 关闭声音或纯视频
+P->>P: 使用QPC单调时钟
+end
+P-->>C: opened，状态排队回GUI
+C->>V: 显示时长及正在播放
+P->>D: readNext，读包并按stream_index分发
+D->>F: send_packet / receive_frame，取完本次可用输出
+F-->>D: 原始视频帧或音频PCM
+end
+Note over C,P: GUI只控制和取到期帧，不读取文件或执行解码

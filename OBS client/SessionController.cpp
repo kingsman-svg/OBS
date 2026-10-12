@@ -7,6 +7,7 @@
 #include "GpuFaceDetector.h"
 #include "WasapiCapture.h"
 #include "ffmpeg/MediaPublisher.h"
+#include "ffmpeg/MediaPlayer.h"
 #include <QCoreApplication>
 #include <QDir>
 #include <QUuid>
@@ -72,12 +73,15 @@ SessionController::SessionController(MainWindow *view, LoginModel *login, Sessio
     connect(signal, &SignalClient::eventReceived, this, &SessionController::onEvent);
     refreshView();
     if (view->role() == ClientRole::Publisher) setupCapture();
+    else setupPlayback();
     onLoginChanged();
 }
 
 SessionController::~SessionController()
 {
     m_captureDelivery.stop();
+    m_playbackDelivery.stop();
+    if (m_player) { m_player->stop(); m_player->wait(); }
     if (!m_video) return;
     m_video->stop(); m_microphone->stop(); m_system->stop();
     m_faces->stop();
@@ -99,10 +103,88 @@ void SessionController::onLoginChanged()
         reconnect();
     } else {
         stopCapture();
+        stopPlayback();
         m_expiry.stop();
         m_signal->disconnectFromServer(tr("已退出登录。"));
     }
     refreshCaptureView();
+    refreshPlaybackView();
+}
+
+void SessionController::setupPlayback()
+{
+    // 1. 线程对象在GUI构造；文件/网络读取及音视频解码延迟到run执行。
+    m_player = new MediaPlayer(this);
+    connect(m_view, &MainWindow::playbackRequested, this, &SessionController::startPlayback);
+    connect(m_view, &MainWindow::stopPlaybackRequested, this, &SessionController::stopPlayback);
+    connect(m_view, &MainWindow::playbackVolumeChanged, m_player, &MediaPlayer::setVolume);
+    connect(qApp, &QCoreApplication::aboutToQuit, this, &SessionController::stopPlayback);
+    connect(m_view, &MainWindow::playbackRenderFailed, this, [this](const QString &message) {
+        if (!m_playbackPending || m_playbackStopping) return;
+        m_playbackFailed = true; m_playbackMessage = message; stopPlayback();
+    });
+    // 2. 工作线程只发状态；GUI交付视频，不在这些槽里读文件/等待线程。
+    connect(m_player, &MediaPlayer::opened, this, [this](const MediaInfo &info) {
+        m_playbackDurationUs = info.durationUs;
+        if (!m_playbackStopping) m_playbackMessage = tr("正在播放%1").arg(info.video ? tr(" · 画面显示在独立窗口") : tr(" · 仅音频"));
+        refreshPlaybackView();
+    });
+    connect(m_player, &MediaPlayer::failed, this, [this](const QString &message) {
+        m_playbackFailed = true; m_playbackStopping = true; m_playbackMessage = message;
+        m_playbackDelivery.stop(); m_view->showPlaybackPreview({}); refreshPlaybackView();
+    });
+    connect(m_player, &MediaPlayer::completed, this, [this](bool eof) {
+        m_playbackDelivery.stop();
+        if (!m_playbackFailed) m_playbackMessage = eof ? tr("播放结束，可重新播放") : tr("已停止");
+        refreshPlaybackView();
+    });
+    // 3. Decoder/输出端点均已归还，finished回到GUI后才解锁，防止上轮事件影响新一轮。
+    connect(m_player, &QThread::finished, this, [this] {
+        m_playbackPending = false; m_playbackStopping = false;
+        m_playbackDelivery.stop(); refreshPlaybackView();
+    });
+    m_playbackDelivery.setInterval(10);
+    connect(&m_playbackDelivery, &QTimer::timeout, this, &SessionController::deliverPlayback);
+    m_playbackMessage = tr("选择本地文件或HTTP(S)媒体地址后播放");
+    refreshPlaybackView();
+}
+void SessionController::startPlayback(const QString &source, bool audioOutput)
+{
+    // 1. 房间切换须先完成；本地/在线点播不要求信令已连接，但仍沿用登录工作台。
+    if (!m_player || !m_loggedIn || !m_view->vodMode() || m_playbackPending || m_model->busy() || !m_model->room().isEmpty()) return;
+    if (source.isEmpty()) { m_playbackMessage = tr("请选择媒体文件或输入在线地址"); refreshPlaybackView(); return; }
+    m_view->showPlaybackPreview({}); m_playbackFailed = m_playbackStopping = false; m_playbackDurationUs = 0;
+    m_playbackMessage = tr("正在打开媒体…"); m_playbackPending = true;
+    // 2. begin只清状态并start，run负责打开/探测，GUI此时仍可停止。
+    if (m_player->begin(source, audioOutput)) m_playbackDelivery.start();
+    else { m_playbackPending = false; m_playbackMessage = tr("播放线程尚未退出，请稍后重试"); }
+    refreshPlaybackView();
+}
+void SessionController::stopPlayback()
+{
+    if (!m_player) return;
+    m_playbackDelivery.stop(); m_player->stop(); m_view->showPlaybackPreview({});
+    if (m_playbackPending) {
+        m_playbackStopping = true;
+        if (!m_playbackFailed) m_playbackMessage = tr("正在停止播放…");
+    }
+    refreshPlaybackView();
+}
+void SessionController::deliverPlayback()
+{
+    if (!m_loggedIn || !m_view->vodMode() || !m_playbackPending || m_playbackStopping) return;
+    const auto frame = m_player->takeVideo();
+    if (frame.source.texture) { emit playbackFrameReady(frame.source); m_view->showPlaybackPreview(frame.source); }
+    refreshPlaybackView();
+}
+void SessionController::refreshPlaybackView()
+{
+    if (!m_player) return;
+    const auto stats = m_player->stats();
+    m_view->applyPlaybackState(m_playbackPending, stats.positionUs, m_playbackDurationUs,
+        tr("%1\n解码 %2 帧 · 显示 %3 帧 · 跳过 %4 帧 · 音频 %5 秒 · 补静音 %6 次")
+            .arg(m_playbackMessage).arg(stats.decodedVideo).arg(stats.displayedVideo).arg(stats.droppedVideo)
+            .arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.audioUnderruns));
 }
 
 void SessionController::scheduleExpiry()

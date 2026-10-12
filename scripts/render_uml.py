@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'vod-open': '点播打开解码时序图', 'vod-play': '点播音画调度时序图', 'vod-stop': '点播结束停止时序图',
     'ffmpeg-record': '本地编码录制时序图', 'ffmpeg-stop': '录制停止封存时序图',
     'media-sync': '音视频同步时序图',
     'gpu-face': 'GPU人脸检测时序图',

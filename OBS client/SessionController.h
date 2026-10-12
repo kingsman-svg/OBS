@@ -17,10 +17,11 @@ class VideoCapture;
 class WasapiCapture;
 class GpuFaceDetector;
 class MediaPublisher;
+class MediaPlayer;
 struct VideoFrame;
 struct AudioPacket;
 
-// 工作台控制器协调信令、房间及采集；底层采集类只负责设备和数据。
+// 工作台控制器协调信令、房间、采集录制及点播；底层媒体类只负责设备和数据。
 class SessionController final : public QObject {
     Q_OBJECT
 public:
@@ -34,6 +35,7 @@ signals:
     void mixedAudioReady(const csn::AudioPacket &packet); // 混音诊断出口；编码使用下方同步信号。
     void synchronizedVideoReady(const csn::TimedVideoFrame &frame); // 30fps、PTS时间基1/30，编码的新入口。
     void synchronizedAudioReady(const csn::TimedAudioPacket &packet); // PTS时间基1/48000，与视频共用原点。
+    void playbackFrameReady(const csn::VideoFrame &frame); // GUI调度后的播放帧，诊断/测试出口。
 private:
     void onLoginChanged(); // 登录后连接信令；退出时停止采集、检测和会话计时。
     void reconnect();      // 使用有效登录会话重新连接，避免重复连接请求。
@@ -60,6 +62,11 @@ private:
     void refreshMediaView();                  // 同步等待、输出帧/包与丢弃统计。
     void setupRecording();                    // 创建编码工作线程，绑定快速入队和结果回调。
     void refreshRecordingView();              // GUI读取统计快照，录制错误不影响采集/预览。
+    void setupPlayback();                     // Player创建播放线程，绑定begin意图和结果回调。
+    void startPlayback(const QString &source, bool audioOutput); // GUI检查登录/模式/finished后begin。
+    void stopPlayback();                      // GUI请求退出并立即暂停交付，线程异步回收。
+    void deliverPlayback();                   // 每10ms按主时钟取到期帧，避免逐帧Qt事件积压。
+    void refreshPlaybackView();               // 独立播放状态/时长/统计，不依赖信令连接成功。
     MainWindow *m_view;        // 非拥有 View，控制器仅调用其展示接口。
     LoginModel *m_login;       // 非拥有登录状态与凭据，不能打印其中令牌。
     SessionModel *m_model;     // 非拥有工作台业务状态，网络与媒体仍由模块处理。
@@ -92,5 +99,12 @@ private:
     MediaPublisher *m_publisher = nullptr;    // 控制器拥有的独立编码/封装QThread，播放端不创建。
     bool m_recordingPending = false;          // begin到GUI处理finished之间锁定下一轮录制。
     QString m_recordingMessage;               // 本轮等待、录制、封存、失败或保存路径。
+    MediaPlayer *m_player = nullptr;          // Player控制器拥有，内部再持有WASAPI输出线程。
+    QTimer m_playbackDelivery;                // GUI播放交付定时器，正常停止立即停。
+    bool m_playbackPending = false;           // begin到GUI处理finished之间锁定下一轮。
+    bool m_playbackStopping = false;          // 拒绝迟到画面，退出/模式切换不会弹回窗口。
+    bool m_playbackFailed = false;            // 锁存解码/声音/显示错误，finished不覆盖。
+    qint64 m_playbackDurationUs = 0;          // 已打开媒体的时长，未知时只显示当前时间。
+    QString m_playbackMessage;                // 开始、播放、EOF、停止或错误文本。
 };
 }
