@@ -13,6 +13,10 @@ struct PlaybackStats {
     quint64 droppedVideo = 0;          // 主时钟落后超过80ms时跳过的到期旧帧。
     quint64 audioUnderruns = 0;        // WASAPI等待解码数据时的补零次数。
     qint64 positionUs = 0;             // 当前媒体时钟，GUI用来显示进度。
+    quint64 gpuVideo = 0;              // D3D11VA解码并在GPU转换交付的帧数。
+    quint64 softwareVideo = 0;         // 软件解码/CPU转换后上传的帧数。
+    quint64 readbackVideo = 0;         // 硬解成功但转换回读的帧数，单独列出性能回退。
+    QString decoderNote;              // 当前路径的回退原因，显示在已有状态标签。
 };
 // Controller拥有的播放QThread；持有一个WASAPI输出线程，普通MediaDecoder只在run中存在。
 class MediaPlayer final : public QThread {
@@ -20,7 +24,8 @@ class MediaPlayer final : public QThread {
 public:
     explicit MediaPlayer(QObject *parent = nullptr); // 构造只绑定音频线程错误，不打开媒体。
     ~MediaPlayer() override;               // stop/wait，保证解码和音频线程先结束。
-    bool begin(const QString &source, bool audioOutput = true, bool live = false); // GUI清本轮队列/状态，再start。
+    bool begin(const QString &source, bool audioOutput = true, bool live = false,
+               VideoDecodeMode mode = VideoDecodeMode::Automatic); // GUI保存策略、清状态，再start。
     void stop();                            // GUI关闭交付入口、唤醒背压并停止声音，常规停止不wait。
     void setVolume(float volume);           // GUI快速转交输出线程的原子音量。
     PlaybackVideo takeVideo();              // GUI按主时钟取一张到期帧，空纹理表示继续等，不清画面。
@@ -51,6 +56,7 @@ private:
     bool m_accepting = false;                // stop后不再交付任何迟到画面。
     bool m_decodeEof = false;                // 全部解码尾部已交付，主时钟最多走到实际媒体结束点。
     bool m_live = false;                     // 直播有界丢旧画面，点播继续背压；运行中不改模式。
+    VideoDecodeMode m_decodeMode = VideoDecodeMode::Automatic; // 本轮硬件优先/软件/严格硬件，不跨轮复用设备。
     qint64 m_liveClockBaseUs = -1;           // 关闭声音时首帧建立直播时钟，GUI不追随无限积压。
 };
 }

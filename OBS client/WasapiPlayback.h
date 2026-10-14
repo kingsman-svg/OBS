@@ -24,7 +24,8 @@ class WasapiPlayback final : public QThread {
 public:
     WasapiPlayback();                         // 构造不打开默认扬声器。
     ~WasapiPlayback() override;               // stop/wait，线程归还COM后再销毁。
-    bool begin(qint64 startSample = 0, bool live = false); // 清状态；直播使用200ms队列，点播保留1秒背压。
+    bool begin(qint64 startSample = 0, bool live = false, bool waitForVideo = false); // 清状态，可等首张转换后视频就绪。
+    void videoReady();                        // 首张转换后画面就绪；视频点播200ms、直播100ms预缓冲。
     bool push(const PlaybackAudio &packet);   // 解码线程有界入队；满1秒时等待消费，stop可唤醒。
     void forceStart();                        // 视频队列先满时允许先播放静音，防止等待后置音轨死锁。
     void finish();                            // 解码EOF后关闭入口，排空PCM及设备padding。
@@ -46,7 +47,9 @@ private:
     std::atomic<float> m_volume{0.5f};         // 音量不经过文件解码队列，静音也继续推进时钟。
     bool m_accepting = false;                 // finish/stop后拒绝迟到音频。
     bool m_finishing = false;                 // 正常EOF；队列空后等待端点padding清零。
-    bool m_force = false;                     // 后置音轨/纯静音区间允许建立时钟。
+    bool m_force = false;                     // 任一队列先满时允许建立时钟，避免媒体读包互相等待。
     bool m_live = false;                      // 直播溢出丢旧PCM，长时间缺口重新映射媒体时钟。
+    bool m_videoReady = true;                 // 有视频时先等解码/转换初始化完成，避免启动阶段补静音。
+    qint64 m_prebufferFrames = 4800;          // 音频/直播100ms；视频点播200ms，端点预填后仍留一段余量。
 };
 }

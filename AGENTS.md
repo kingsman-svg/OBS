@@ -12,7 +12,7 @@
 - 保持简单分级：应用源码集中在 `OBS client/`，测试放 `tests/`，说明放 `docs/`，图示放 `docs/uml/`，工具放 `scripts/`；不为空模块预建目录。
 - 用户最新约定：FFmpeg 编码/封装单独放在 `OBS client/ffmpeg/` 一级目录；CMake 用 `OBSMediaCore` 表示采集处理、`OBSClientUi` 表示界面/控制器，避免混入一个 OBSClientCore 目标。
 - 讲解模块时先交代对象持有的线程和资源，再按 Controller → begin → start → run → 数据交接 → stop → 清理/finished → 重启串起端到端流程，并明确各接口的调用线程。
-- Player点播用同一套本地/HTTP(S)输入、解封装/解码和音画调度；仍由SessionController编排，MediaPlayer持有WASAPI输出线程，不额外增加播放MVC。首期软件解码/BGRA上传，硬件解码及暂停跳转后续逐步推进。
+- Player点播用同一套本地/HTTP(S)输入、解封装/解码和音画调度；仍由SessionController编排，MediaPlayer持有WASAPI输出线程，不额外增加播放MVC。优先D3D11VA硬件解码/GPU转换，明确软件回退；暂停跳转后续逐步推进。
 - 所有项目图片（包括 SVG、PNG 和生成截图）使用中文文件名；修改名称时同步文档和生成脚本。
 - UML 使用 Mermaid 源码，并提供 SVG/PNG 图像；代码、图与说明应对应当前实现。
 - 逐类、逐流程增量实现；避免为未来需求预先建立大量抽象或界面。
@@ -21,6 +21,8 @@
 - 不打印密码、认证数据包或令牌。
 - Linux 服务端源码和 Docker 配置集中在 `OBS server/`，容器名 `OBS`，工作目录 `/workspace`；保持简单分级。客户端继续使用 `OBS client/`。
 - SRS作为独立副项目放在一级`SRS/`，容器`OBS-SRS`；部署、源码版本与二开路线单独维护。OBS通过RTMP/HTTP/WebRTC协议接入，通用FFmpeg代码不依赖SRS内部类型。
+- 用户最新明确：SRS、MediaMTX、OpenH264的三个研究/二开项目都在Mac独立开展，与Windows OBS、CourseStudio不联调；OBS现有媒体服务接入继续保留，不依赖Mac二开成果。
+- Player当前推进D3D11VA硬件解码与GPU颜色转换，输出独立BGRA快照，复用MediaPlayer的线程/同步/启停；软件回退和硬件回读应在统计中如实区分。
 - 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。
 - 服务端协议放 `code/protocol/`，登录/调度/信令放 `code/services/`；共用同一网络库与 CMake 工程，配置不得保存签名密钥或真实密码。
 - 容器 `/repo` 挂载完整 CourseStudioNext 仓库，用于 Git 和全工程浏览；`/workspace` 保留服务端目录别名和原构建路径。两者为同一份本地文件。

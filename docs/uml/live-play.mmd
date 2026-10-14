@@ -22,10 +22,11 @@ D->>R: RTMP拉流、探测编码参数
 P->>A: begin，直播PCM有界队列
 P-->>C: opened
 R-->>D: H.264/AAC媒体包
-D->>D: 软件解码、BGRA上传、音频重采样
-D->>P: 交付视频纹理与媒体PTS
+D->>D: 优先D3D11VA/GPU转BGRA，明确软件/回读回退
+D->>P: 交付独立视频纹理、媒体PTS与路径计数
+P->>P: 最多16张未来帧，超界丢旧帧
 P->>A: push 48kHz立体声PCM
-A->>A: 音量、PTS追赶、设备播放时钟
+A->>A: 首帧就绪及100ms预缓冲、PTS追赶、设备时钟
 C->>P: 每10ms takeVideo与stats
 P-->>C: 按主时钟到期画面
 C->>V: 显示纹理

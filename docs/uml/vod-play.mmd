@@ -7,8 +7,13 @@ participant S as 输出端点/IAudioClock
 participant C as Controller/GUI
 participant R as 独立GPU窗口
 P->>D: readNext或EOF排空
-D->>D: 软件解码视频、SWS转BGRA、上传独立GPU纹理
-D->>Q: pushVideo，媒体PTS/时长与纹理引用
+alt D3D11VA与GPU转换成功
+D->>D: NV12/P010数组层经VideoProcessor生成独立BGRA
+else 软件或硬件回读回退
+D->>D: SWS/上传，明确记录实际路径与原因
+end
+D->>A: 首帧交付时videoReady
+D->>Q: pushVideo，媒体PTS/时长、纹理与路径计数
 alt 视频队列达到16帧
 Q->>P: 背压等待GUI消费，stop可唤醒
 P->>A: 音轨未到时允许先建立静音时钟
@@ -18,7 +23,10 @@ end
 D->>D: 音频SWR转48kHz立体声Float32，实际样本数推进PTS
 alt 本轮启用声音
 D->>A: 有界PCM入队，最多1秒
-A->>A: 100ms预缓冲、保留PTS缺口/前置静音
+A->>A: 视频点播200ms/纯音频100ms预缓冲，保留PTS缺口
+alt 视频迟到且PCM队列先满
+A->>A: 放开首帧等待，开始消费以继续读媒体包
+end
 A->>S: GetCurrentPadding，GetBuffer/ReleaseBuffer后Start
 S-->>A: GetPosition与GetFrequency
 A->>A: 发布实际播放微秒时钟快照

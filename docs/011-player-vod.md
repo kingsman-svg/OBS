@@ -43,7 +43,7 @@ VideoRenderer → SwapChain        IAudioClock.GetPosition
         ↑────── 音频实际播放位置作为主时钟 ────┘
 ```
 
-首期使用FFmpeg软件解码，视频通过libswscale转换成BGRA后上传，Renderer再直接采样GPU纹理。因此播放器包含CPU像素转换/上传；D3D11硬件解码与NV12→BGRA GPU转换仍为后续优化。采集/录制侧已有的GPU输入链路保持原实现。
+本步初版使用FFmpeg软件解码，视频通过libswscale转换成BGRA后上传，Renderer采样GPU纹理。后续[第013步](013-gpu-decode.md)已将默认视频路径升级为D3D11VA硬解与GPU颜色转换，软件上传作为明确回退。当前有视频的点播预缓冲200ms并等待首帧就绪，直播/纯音频维持100ms；线程、主时钟与启停契约沿用本页设计。
 
 每张输出纹理由ComPtr独立持有，不引用会被解码器复用的AVFrame字节。支持最高3840×2160；封面图、字幕和其他流忽略；软件解码器用2个内部线程。B帧按best_effort_timestamp调度，不能按读取包的先后当作画面顺序。
 
@@ -102,6 +102,6 @@ python scripts/run_playback_checks.py --mvc-only
 
 本机2026-10-12构建及8组CTest全部通过。此前NVENC生成的H.264/AAC合成录制文件，Player显示90帧、结束位置3.000秒，未跳帧或补静音。2倍缩放/小窗口验证路径、长错误文本及时间进度条完整显示，截图保存out/。
 
-时序图：[打开与解码](uml/vod-open.mmd)、[音画调度](uml/vod-play.mmd)、[停止与结束](uml/vod-stop.mmd)。后续继续部署媒体服务、RTMP推拉流闭环，再接WebRTC/ICE及实测低延迟优化。
+时序图已同步当前实现：[打开与解码](uml/vod-open.mmd)、[音画调度](uml/vod-play.mmd)、[停止与结束](uml/vod-stop.mmd)。后续RTMP闭环和硬件解码已分别完成，见[第012步](012-srs-live.md)、[第013步](013-gpu-decode.md)。WebRTC/ICE及实测低延迟优化仍为后续阶段。
 
 接口依据：[FFmpeg7.1 send/receive](https://ffmpeg.org/doxygen/7.1/group__lavc__encdec.html)、[libswresample](https://ffmpeg.org/doxygen/7.1/group__lswr.html)、[WASAPI输出缓冲](https://learn.microsoft.com/en-us/windows/win32/coreaudio/rendering-a-stream)、[音频实际位置](https://learn.microsoft.com/en-us/windows/win32/api/audioclient/nf-audioclient-iaudioclock-getposition)。

@@ -59,6 +59,8 @@ bool fixtures(const QString &main, const QString &directory)
     CHECK(ffmpeg({"-i", main, "-an", "-c:v", "copy", QDir(directory).filePath("video.mp4")}));
     CHECK(ffmpeg({"-i", main, "-vn", "-c:a", "copy", QDir(directory).filePath("audio.m4a")}));
     CHECK(ffmpeg({"-i", main, "-itsoffset", "0.8", "-i", main, "-map", "0:v", "-map", "1:a", "-c", "copy", QDir(directory).filePath("delayed.mp4")}));
+    // 音频先到超过有界PCM队列容量，验证等首张视频时仍能解除背压。
+    CHECK(ffmpeg({"-i", main, "-itsoffset", "1.2", "-i", main, "-map", "1:v", "-map", "0:a", "-c", "copy", QDir(directory).filePath("delayed-video.mp4")}));
     CHECK(ffmpeg({"-f", "lavfi", "-i", "color=c=blue:s=160x90:r=25:d=2.04", "-i", main,
         "-map", "0:v", "-map", "1:a", "-c:v", "mpeg4", "-c:a", "copy", QDir(directory).filePath("long-video.mp4")}));
     return true;
@@ -222,6 +224,7 @@ int main(int argc, char **argv)
         if (app.arguments().contains("--mvc-only")) return mvcChecks(media) ? 0 : 1;
         if (app.arguments().contains("--audio-device")) {
             if (!playWorker(media, true, 1040000) || !playWorker(directory.filePath("delayed.mp4"), true, 1840000)
+                || !playWorker(directory.filePath("delayed-video.mp4"), true, 2240000)
                 || !playWorker(directory.filePath("long-video.mp4"), true, 2040000)) return 1;
         } else {
             if (!decoderChecks(media) || !workerLifecycle(media) || !playWorker(media, false, 1040000)

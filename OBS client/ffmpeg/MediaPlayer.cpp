@@ -23,7 +23,7 @@ MediaPlayer::MediaPlayer(QObject *parent) : QThread(parent)
     }, Qt::DirectConnection);
 }
 MediaPlayer::~MediaPlayer() { stop(); wait(); }
-bool MediaPlayer::begin(const QString &source, bool audioOutput, bool live)
+bool MediaPlayer::begin(const QString &source, bool audioOutput, bool live, VideoDecodeMode mode)
 {
     // 2. GUI只保存输入、清状态并start；Controller等finished回到GUI后才允许重启。
     QMutexLocker lock(&m_mutex);
@@ -31,7 +31,7 @@ bool MediaPlayer::begin(const QString &source, bool audioOutput, bool live)
     m_source = source.trimmed(); m_audioRequested = audioOutput; m_audioActive = false;
     m_audioError.clear(); m_stats = {}; m_video.clear(); m_wallOriginUs = m_mediaEndUs = 0;
     m_audioEndSamples = -1;
-    m_live = live; m_liveClockBaseUs = -1;
+    m_live = live; m_liveClockBaseUs = -1; m_decodeMode = mode;
     m_accepting = true; m_decodeEof = false; start(); return true;
 }
 void MediaPlayer::stop()
@@ -90,14 +90,20 @@ void MediaPlayer::pushVideo(const PlaybackVideo &frame)
     if (m_live && !m_audioActive && (m_liveClockBaseUs < 0 || frame.ptsUs > m_liveClockBaseUs + nowUs() - m_wallOriginUs + 300000)) {
         m_liveClockBaseUs = frame.ptsUs; m_wallOriginUs = nowUs(); // 首帧/较大跳变追赶直播位置。
     }
-    if (m_live && m_video.size() >= 8) { m_video.pop_front(); ++m_stats.droppedVideo; }
+    // 直播也保留最多16张未来帧：硬解首屏比音频主时钟快时，不能在到期前全部挤掉。
+    if (m_live && m_video.size() >= 16) { m_video.pop_front(); ++m_stats.droppedVideo; }
     while (!m_live && m_accepting && m_video.size() >= 16 && m_audioError.isEmpty()) {
         if (m_audioActive) m_audio.forceStart();
         m_changed.wait(&m_mutex, 10);
     }
     if (!m_audioError.isEmpty()) throw std::runtime_error(m_audioError.toStdString());
     if (!m_accepting || isInterruptionRequested()) throw std::runtime_error("播放已停止");
+    if (m_stats.decodedVideo == 0 && m_audioActive) m_audio.videoReady(); // 首帧硬解/GPU转换已完成，声音才建立主时钟。
     m_video.push_back(frame); ++m_stats.decodedVideo;
+    if (frame.decodePath == VideoDecodePath::D3D11Gpu) ++m_stats.gpuVideo;
+    else if (frame.decodePath == VideoDecodePath::D3D11Readback) ++m_stats.readbackVideo;
+    else ++m_stats.softwareVideo;
+    m_stats.decoderNote = frame.decoderNote;
     m_mediaEndUs = std::max(m_mediaEndUs, frame.ptsUs + frame.durationUs);
 }
 void MediaPlayer::pushAudio(const PlaybackAudio &packet)
@@ -116,13 +122,13 @@ void MediaPlayer::run()
         // 3. 普通解码对象只在本线程存在；读包/解码/像素转换/上传都不占GUI。
         MediaDecoder decoder;
         const auto info = decoder.open(m_source, [this] { return isInterruptionRequested(); },
-            [this](const PlaybackVideo &frame) { pushVideo(frame); }, [this](const PlaybackAudio &packet) { pushAudio(packet); }, m_live);
+            [this](const PlaybackVideo &frame) { pushVideo(frame); }, [this](const PlaybackAudio &packet) { pushAudio(packet); }, m_live, m_decodeMode);
         {
             QMutexLocker lock(&m_mutex); m_audioActive = info.audio && m_audioRequested;
             m_audioEndSamples = info.audioEndSamples; m_wallOriginUs = nowUs();
         }
         if (!isInterruptionRequested()) {
-            if (m_audioActive && !m_audio.begin(info.audioStartSamples, m_live)) throw std::runtime_error("音频输出线程尚未退出");
+            if (m_audioActive && !m_audio.begin(info.audioStartSamples, m_live, info.video)) throw std::runtime_error("音频输出线程尚未退出");
             emit opened(info);
             while (!isInterruptionRequested()) { checkAudioError(); if (!decoder.readNext()) { endOfFile = true; break; } }
             if (endOfFile && m_live && !isInterruptionRequested()) throw std::runtime_error("直播媒体已断开，请等待主播重开或重新播放");

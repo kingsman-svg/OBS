@@ -22,14 +22,15 @@ struct EventDelete { void operator()(void *handle) const { if (handle) CloseHand
 }
 WasapiPlayback::WasapiPlayback() = default;
 WasapiPlayback::~WasapiPlayback() { stop(); wait(); }
-bool WasapiPlayback::begin(qint64 startSample, bool live)
+bool WasapiPlayback::begin(qint64 startSample, bool live, bool waitForVideo)
 {
     // 1. MediaPlayer::run调用；上一轮必须已wait结束，工作线程不会看到旧PCM/时钟。
     QMutexLocker lock(&m_mutex);
     if (isRunning()) return false;
     m_packets.clear(); m_queuedFrames = m_offset = 0; m_clock = {};
     m_startSample = std::max<qint64>(0, startSample);
-    m_accepting = true; m_finishing = false; m_force = false; m_live = live; start(); return true;
+    m_accepting = true; m_finishing = false; m_force = false; m_live = live; m_videoReady = !waitForVideo;
+    m_prebufferFrames = waitForVideo && !live ? 9600 : 4800; start(); return true;
 }
 bool WasapiPlayback::push(const PlaybackAudio &packet)
 {
@@ -38,7 +39,11 @@ bool WasapiPlayback::push(const PlaybackAudio &packet)
         throw std::invalid_argument("播放PCM必须是有PTS的48kHz立体声Float32，单包不超过1秒");
     QMutexLocker lock(&m_mutex);
     // 2. 点播保留未到期数据，用背压限制内存；用户停止会关闭入口并唤醒等待者。
-    while (!m_live && m_accepting && m_queuedFrames + frames > 48000) m_changed.wait(&m_mutex);
+    while (!m_live && m_accepting && m_queuedFrames + frames > 48000) {
+        // 音轨领先视频超过1秒时，先消费已到PCM；否则读包线程无法读到首张视频。
+        if (!m_videoReady) { m_force = true; m_changed.wakeAll(); }
+        m_changed.wait(&m_mutex);
+    }
     if (!m_accepting) return false;
     PlaybackAudio accepted = packet;
     if (m_live) {
@@ -54,6 +59,7 @@ bool WasapiPlayback::push(const PlaybackAudio &packet)
     m_packets.push_back(std::move(accepted)); m_queuedFrames += frames; m_changed.wakeAll(); return true;
 }
 void WasapiPlayback::forceStart() { QMutexLocker lock(&m_mutex); m_force = true; m_changed.wakeAll(); }
+void WasapiPlayback::videoReady() { QMutexLocker lock(&m_mutex); m_videoReady = true; m_changed.wakeAll(); }
 void WasapiPlayback::finish() { QMutexLocker lock(&m_mutex); m_accepting = false; m_finishing = true; m_changed.wakeAll(); }
 void WasapiPlayback::stop()
 {
@@ -92,10 +98,11 @@ void WasapiPlayback::run()
             ComPtr<IAudioClock> clock; winrt::check_hresult(client->GetService(IID_PPV_ARGS(&clock)));
             UINT64 frequency = 0; winrt::check_hresult(clock->GetFrequency(&frequency));
             if (!frequency || !capacity) throw std::runtime_error("音频输出时钟/缓冲无效");
-            // 5. 预缓冲100ms，或EOF/视频先满后提前建立时钟；等待可被stop立即唤醒。
+            // 5. 点播视频预缓冲200ms，端点预填100ms后仍有余量；直播/纯音频保持100ms。
             {
                 QMutexLocker lock(&m_mutex);
-                while (m_queuedFrames < 4800 && !m_finishing && !m_force && !isInterruptionRequested()) m_changed.wait(&m_mutex, 10);
+                while ((m_queuedFrames < m_prebufferFrames || !m_videoReady) && !m_finishing && !m_force && !isInterruptionRequested())
+                    m_changed.wait(&m_mutex, 10);
             }
             qint64 submitted = 0, mediaOffset = 0; // 直播追赶时媒体位置跳转，设备时钟仍连续。
             bool started = false;
@@ -116,7 +123,10 @@ void WasapiPlayback::run()
                                 if (m_finishing || isInterruptionRequested()) break;
                                 std::memset(bytes + written * 8, 0, size_t(available - written) * 8);
                                 submitted += available - written; written = available;
-                                if (started && submitted > m_startSample) ++m_clock.underruns;
+                                if (started && submitted > m_startSample) {
+                                    ++m_clock.underruns;
+                                    if (qEnvironmentVariableIsSet("OBS_DECODE_TRACE")) qInfo("audio underrun: submitted=%lld force=%d", submitted, m_force);
+                                }
                                 break;
                             }
                             auto &packet = m_packets.front();

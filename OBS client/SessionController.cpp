@@ -196,9 +196,10 @@ void SessionController::refreshPlaybackView()
     if (!m_player) return;
     const auto stats = m_player->stats();
     m_view->applyPlaybackState(m_playbackPending, stats.positionUs, m_playbackDurationUs,
-        tr("%1\n解码 %2 帧 · 显示 %3 帧 · 跳过 %4 帧 · 音频 %5 秒 · 补静音 %6 次")
-            .arg(m_playbackMessage).arg(stats.decodedVideo).arg(stats.displayedVideo).arg(stats.droppedVideo)
-            .arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.audioUnderruns));
+        tr("%1\n解码 %2 帧（GPU %3 / 软件 %4 / 硬件回读 %5）\n显示 %6 帧 · 跳过 %7 帧 · 音频 %8 秒 · 补静音 %9 次%10")
+            .arg(m_playbackMessage).arg(stats.decodedVideo).arg(stats.gpuVideo).arg(stats.softwareVideo).arg(stats.readbackVideo)
+            .arg(stats.displayedVideo).arg(stats.droppedVideo).arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.audioUnderruns)
+            .arg(stats.decoderNote.isEmpty() ? QString() : QStringLiteral("\n") + stats.decoderNote));
 }
 
 void SessionController::scheduleExpiry()

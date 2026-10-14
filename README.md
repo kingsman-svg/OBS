@@ -16,7 +16,7 @@
 
 已实现同一 CMake 工程中的两个客户端：OBS_Publisher 推流端、OBS_Player 播放端。简单 MVC，共享异步 HTTP 登录与 TCP 信令，已完成节点调度、认证、心跳、房间创建/列表/加入/退出、成员更新、断线重连和会话到期。保留历史类图，后续按最新约定只维护流程时序图。
 
-Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。启动方法见 [服务端说明](docs/server-services.md)。SRS媒体服务器独立放在[SRS副项目](SRS/README.md)，容器OBS-SRS，负责RTMP/HTTP-FLV与后续WebRTC桥接；当前使用root开发账号，生产账号系统后续实现。
+Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。启动方法见 [服务端说明](docs/server-services.md)。Windows现有SRS媒体部署放在[SRS目录](SRS/README.md)，容器OBS-SRS，提供RTMP运行基线；当前使用root开发账号，生产账号系统后续实现。用户的SRS、MediaMTX、OpenH264二开研究在Mac独立开展，与本工程不联调。
 
 先在 OBS 容器启动 `python3 /workspace/code/run_services.py start`，再用 Qt Creator 打开 `OBS client/CMakeLists.txt`，构建并分别运行 OBS_Publisher 和 OBS_Player。两端使用开发账号 `root`、密码 `root`，默认连接本机 Docker 的 8080 调度与 9000 信令。详见 [双端运行说明](docs/003-two-clients.md)。
 
@@ -36,7 +36,7 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 CourseStudioNext/
 ├─ OBS client/       应用源码、界面和 CMakeLists.txt（源码平铺）
 ├─ OBS server/ Linux 服务端源码和 Docker 开发环境（挂载到 /workspace）
-├─ SRS/       独立媒体服务器副项目：部署、版本、上游源码与二开路线
+├─ SRS/       Windows现有媒体服务部署与版本记录
 ├─ cpp/       独立 Visual Studio 模型优化工程（源码平铺）
 ├─ tests/     行为测试
 ├─ docs/      需求、设计、接口和阶段记录
@@ -53,7 +53,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - 后续功能在已有版本上继续增加，Qt 界面随核心能力逐步完善。
 - UI 采用简单 MVC；完整流程配 UML 时序图，后续不再绘制类图。
 
-编码前同步和本地录制见[第009步](docs/009-media-sync.md)、[第010步](docs/010-ffmpeg-encode.md)，Player点播见[第011步](docs/011-player-vod.md)。RTMP直播闭环已接入，Publisher创建房间、选择源后“开始直播”，Player加入后等待/自动播放，见[第012步](docs/012-srs-live.md)。暂停/跳转、硬件解码、WebRTC客户端/ICE及SRS自定义桥接后续逐步推进。
+编码前同步和本地录制见[第009步](docs/009-media-sync.md)、[第010步](docs/010-ffmpeg-encode.md)，Player点播见[第011步](docs/011-player-vod.md)。RTMP直播闭环已接入，Publisher创建房间、选择源后“开始直播”，Player加入后等待/自动播放，见[第012步](docs/012-srs-live.md)。Player现默认优先D3D11VA硬件解码、GPU颜色转换和独立纹理显示，界面区分GPU/软件/硬件回读帧数，见[第013步](docs/013-gpu-decode.md)。暂停/跳转、WebRTC客户端/ICE、GPU美颜与Agent后续逐步推进。
 
 ## 文档
 
@@ -72,6 +72,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 006 步：音频重采样与混音](docs/006-audio-mix.md)
 - [第 007 步：独立 TensorRT 模型优化](docs/007-model-optimization.md)
 - [第 008 步：实时 GPU 人脸检测](docs/008-gpu-face.md)
+- [第 013 步：Player GPU 加速解码](docs/013-gpu-decode.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

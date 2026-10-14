@@ -1,0 +1,43 @@
+sequenceDiagram
+participant P as MediaPlayer线程
+participant D as MediaDecoder
+participant F as FFmpeg解码线程
+participant G as GpuVideoConverter
+participant Q as 有界视频队列
+participant C as Controller/GUI
+participant R as VideoRenderer
+P->>D: open，默认Automatic
+D->>D: 建同一D3D11设备、AVHWDevice设备引用
+D->>G: 构造，取得VideoDevice/Context与完成查询
+D->>F: 设置opaque、get_format、hw_device_ctx
+P->>D: readNext，按视频流分发包
+D->>F: send_packet / receive_frame
+F->>D: get_format，提供像素格式列表
+alt D3D11VA可用
+D-->>F: 选择AV_PIX_FMT_D3D11
+F-->>D: AVFrame，纹理数组与层索引
+D->>G: convert，输入帧保持借用
+G->>G: 校验设备、NV12/P010、裁剪与SDR颜色
+G->>G: 尺寸/格式变化时重建VideoProcessor
+G->>G: 新建独立BGRA纹理并VideoProcessorBlt
+G->>G: EVENT确认完成，可取消，2秒超时
+G-->>D: 独立BGRA纹理，实际路径D3D11Gpu
+alt 自动模式下GPU转换不支持
+D->>D: 锁存回读策略，下载/SWS/上传
+D->>D: 路径D3D11Readback，保留明确原因
+end
+else 不支持硬解，自动模式
+D-->>F: 选择软件像素格式并保存原因
+F-->>D: 软件AVFrame
+D->>D: SWS转BGRA并GPU上传，SoftwareUpload
+end
+alt 严格模式失败/停止/设备移除/超时
+D-->>P: 退出本轮，清理解码池/GPU资源
+else 正常获得输出纹理
+D->>Q: 独立纹理、原PTS/时长、路径与原因
+D->>F: 归还AVFrame，解码池可复用数组层
+C->>Q: 每10ms按WASAPI/QPC主时钟取到期帧
+Q-->>C: PlaybackVideo，更新实际路径计数
+C->>R: BGRA纹理直接Shader显示
+end
+Note over D,R: 已交付纹理独立存活，解码池释放或重配置不改变GUI画面

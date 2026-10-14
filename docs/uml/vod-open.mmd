@@ -19,12 +19,14 @@ D-->>P: 抛错误，RAII关闭输入和资源
 P-->>C: failed，之后finished
 C->>V: 错误保留、按钮恢复
 else 成功
-D->>F: find_stream_info，建立两个软件解码上下文
-D->>D: 记录共同原点、轨道时长与视频上传设备
+D->>F: find_stream_info，建立音频解码与视频硬件候选
+D->>D: 记录共同原点、轨道时长与共用D3D11设备
+D->>F: 设置get_format/AVHWDevice，实际格式首包确定
 D-->>P: MediaInfo
 alt 有音轨且启用声音
 P->>A: begin，独立线程初始化共享输出
 A->>A: MTA、默认端点、Float32流、事件与音频时钟
+A->>A: 有视频点播等首帧及200ms预缓冲
 else 关闭声音或纯视频
 P->>P: 使用QPC单调时钟
 end
@@ -32,6 +34,6 @@ P-->>C: opened，状态排队回GUI
 C->>V: 显示时长及正在播放
 P->>D: readNext，读包并按stream_index分发
 D->>F: send_packet / receive_frame，取完本次可用输出
-F-->>D: 原始视频帧或音频PCM
+F-->>D: D3D11视频帧或软件回退帧、音频PCM
 end
 Note over C,P: GUI只控制和取到期帧，不读取文件或执行解码

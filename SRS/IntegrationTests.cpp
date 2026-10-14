@@ -2,6 +2,7 @@
 #include "ffmpeg/MediaPublisher.h"
 #include "ffmpeg/MediaPlayer.h"
 #include "SessionController.h"
+#include "PreviewWindow.h"
 #include "SessionModel.h"
 #include "SignalClient.h"
 #include "LoginModel.h"
@@ -133,10 +134,16 @@ bool integration()
             if (!playErrors.isEmpty()) qCritical().noquote() << playErrors.first().first().toString();
             CHECK(errors.isEmpty() && playErrors.isEmpty());
         }
+        const auto liveStats = player->stats();
+        qInfo("live startup: announced=%d transmitting=%lld running=%d decoded=%llu GPU=%llu displayed=%d dropped=%llu samples=%llu clock=%.3fs",
+            announced, transmitted.size(), player->isRunning(), liveStats.decodedVideo, liveStats.gpuVideo, displayed - before,
+            liveStats.droppedVideo, liveStats.audioSamples, liveStats.positionUs / 1000000.0);
         CHECK(announced && transmitted.size() == 1 && displayed - before >= 40);
         const auto stats = player->stats(); CHECK(stats.audioSamples > 48000 && stats.positionUs > 1000000);
-        qInfo("PASS live round %d: decoded=%llu displayed=%d audioSamples=%llu clock=%.3fs underruns=%llu",
-            round + 1, stats.decodedVideo, displayed - before, stats.audioSamples, stats.positionUs / 1000000.0, stats.audioUnderruns);
+        CHECK(stats.gpuVideo == stats.decodedVideo && stats.gpuVideo > 0 && stats.readbackVideo == 0 && stats.softwareVideo == 0);
+        CHECK(view.findChild<PreviewWindow *>()->isVisible());
+        qInfo("PASS live round %d: decoded=%llu GPU=%llu displayed=%d audioSamples=%llu clock=%.3fs underruns=%llu",
+            round + 1, stats.decodedVideo, stats.gpuVideo, displayed - before, stats.audioSamples, stats.positionUs / 1000000.0, stats.audioUnderruns);
         if (round == 0) {
             view.resize(640, 480); view.show(); QTest::qWait(30);
             QDir().mkpath("out/直播接入"); CHECK(view.grab().save(QStringLiteral("out/直播接入/播放端直播布局.png")));

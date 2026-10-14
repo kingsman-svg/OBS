@@ -1,14 +1,20 @@
 #include "MediaDecoder.h"
+#include "GpuVideoConverter.h"
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/error.h>
+#include <libavutil/hwcontext.h>
+#include <libavutil/hwcontext_d3d11va.h>
+#include <libavutil/pixdesc.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
 #include <QFileInfo>
 #include <QUrl>
+#include <QMutex>
+#include <QMutexLocker>
 #include <d3d11_4.h>
 #include <winrt/base.h>
 #include <algorithm>
@@ -32,17 +38,48 @@ qint64 nowUs()
 }
 struct PacketDelete { void operator()(AVPacket *packet) const { av_packet_free(&packet); } };
 struct FrameDelete { void operator()(AVFrame *frame) const { av_frame_free(&frame); } };
+ComPtr<ID3D11Device> playbackDevice()
+{
+    // Windows播放优先选NVIDIA适配器，普通硬件/WARP仍可用于软件解码纹理上传。
+    ComPtr<IDXGIFactory1> factory; ComPtr<IDXGIAdapter1> selected;
+    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) for (UINT i = 0;; ++i) {
+        ComPtr<IDXGIAdapter1> adapter;
+        if (factory->EnumAdapters1(i, &adapter) == DXGI_ERROR_NOT_FOUND) break;
+        DXGI_ADAPTER_DESC1 desc{};
+        if (adapter && SUCCEEDED(adapter->GetDesc1(&desc)) && desc.VendorId == 0x10de) { selected = adapter; break; }
+    }
+    ComPtr<ID3D11Device> result;
+    const UINT flags = D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT;
+    HRESULT created = E_FAIL;
+    if (selected) created = D3D11CreateDevice(selected.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, flags,
+        nullptr, 0, D3D11_SDK_VERSION, &result, nullptr, nullptr);
+    if (FAILED(created)) created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, flags,
+        nullptr, 0, D3D11_SDK_VERSION, &result, nullptr, nullptr);
+    if (FAILED(created)) created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, D3D11_SDK_VERSION, &result, nullptr, nullptr);
+    if (FAILED(created)) winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        nullptr, 0, D3D11_SDK_VERSION, &result, nullptr, nullptr));
+    ComPtr<ID3D11DeviceContext> context; result->GetImmediateContext(&context);
+    ComPtr<ID3D11Multithread> protection; winrt::check_hresult(context.As(&protection)); protection->SetMultithreadProtected(TRUE);
+    return result;
+}
 }
 
 struct MediaDecoder::Resources {
     AVFormatContext *format = nullptr;           // 独占输入容器，包含AVStream和底层IO。
-    AVCodecContext *video = nullptr, *audio = nullptr; // 非封面视频/最佳音频的软解码器。
+    AVCodecContext *video = nullptr, *audio = nullptr; // 视频优先D3D11VA，音频继续CPU解码。
     int videoIndex = -1, audioIndex = -1;        // 其余流直接忽略，不把字幕/封面当视频。
     SwsContext *sws = nullptr;                  // 解码像素格式转换成现有Renderer支持的BGRA。
     SwrContext *swr = nullptr;                  // 解码音频统一成48kHz立体声交错Float32。
     AVChannelLayout inputLayout{};             // 已配置SWR输入布局，重建时比较而非只看声道数。
     int inputRate = 0, inputFormat = -1;        // 运行中音频格式变化时重建SWR。
-    ComPtr<ID3D11Device> device;                // 视频纹理上传设备，同轮所有帧复用。
+    ComPtr<ID3D11Device> device;                // 同轮硬解、GPU转换、上传与显示共用的设备。
+    AVBufferRef *hardware = nullptr;           // FFmpeg持有设备引用，释放video后再归还本轮引用。
+    std::unique_ptr<GpuVideoConverter> gpu;    // 普通转换对象，借用硬件AVFrame，输出独立BGRA。
+    VideoDecodeMode mode = VideoDecodeMode::Automatic; // 本轮策略，不在读包过程中切换。
+    QString decoderNote;                     // 未获硬件/转换失败的明确原因，随帧反馈界面。
+    QMutex noteMutex;                         // FFmpeg的get_format可能在内部解码线程调用，保护提示文本。
+    bool conversionFailed = false;           // GPU转换失败后锁存回读策略，不每帧重复初始化。
     VideoSink videoSink; AudioSink audioSink;   // 同播放线程调用，回调负责背压/停止检查。
     std::function<bool()> cancelled;           // 读取期间的线程停止判断；不访问GUI对象。
     qint64 deadlineUs = 0;                     // 打开/探测/单次读包最多10秒，停止随时可打断。
@@ -54,29 +91,75 @@ struct MediaDecoder::Resources {
     bool live = false;                         // 直播缩短读包超时，来源由Controller明确指定。
     ~Resources() {
         avcodec_free_context(&video); avcodec_free_context(&audio); avformat_close_input(&format);
+        gpu.reset(); av_buffer_unref(&hardware);
         sws_freeContext(sws); swr_free(&swr); av_channel_layout_uninit(&inputLayout);
     }
     static int interrupt(void *opaque) {
         const auto &r = *static_cast<Resources *>(opaque);
         return r.cancelled() || nowUs() >= r.deadlineUs;
     }
+    void setNote(const QString &note) { QMutexLocker lock(&noteMutex); decoderNote = note; } // C回调与播放线程共享。
+    static AVPixelFormat chooseFormat(AVCodecContext *context, const AVPixelFormat *formats) {
+        // 2a. get_format由FFmpeg解码线程调用，不能向C栈抛异常；初始化或动态格式变化时均可触发。
+        auto &r = *static_cast<Resources *>(context->opaque);
+        try {
+            if (r.hardware) for (auto *p = formats; *p != AV_PIX_FMT_NONE; ++p)
+                if (*p == AV_PIX_FMT_D3D11) return *p;
+            if (r.mode == VideoDecodeMode::RequireHardware) return AV_PIX_FMT_NONE;
+            if (r.hardware) r.setNote(QStringLiteral("设备/视频格式未能启用D3D11VA，使用软件解码"));
+            for (auto *p = formats; *p != AV_PIX_FMT_NONE; ++p) {
+                const auto *description = av_pix_fmt_desc_get(*p);
+                if (description && !(description->flags & AV_PIX_FMT_FLAG_HWACCEL)) return *p;
+            }
+        } catch (...) { return AV_PIX_FMT_NONE; }
+        return AV_PIX_FMT_NONE;
+    }
+    void prepareHardware(const AVCodec *codec) {
+        if (mode == VideoDecodeMode::Software) { decoderNote = QStringLiteral("已选择软件解码"); return; }
+        bool supported = false;
+        for (int i = 0;; ++i) {
+            const auto *config = avcodec_get_hw_config(codec, i); if (!config) break;
+            if (config->device_type == AV_HWDEVICE_TYPE_D3D11VA && config->pix_fmt == AV_PIX_FMT_D3D11
+                && (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) { supported = true; break; }
+        }
+        if (!supported) {
+            if (mode == VideoDecodeMode::RequireHardware) throw std::runtime_error("此视频解码器没有D3D11VA硬件配置");
+            decoderNote = QStringLiteral("此编码格式未提供D3D11VA，使用软件解码"); return;
+        }
+        try {
+            // FFmpeg与显示借用相同设备；AddRef使AVHWDevice的释放不会提前销毁显示纹理。
+            gpu = std::make_unique<GpuVideoConverter>(device.Get());
+            hardware = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D11VA); if (!hardware) throw std::bad_alloc();
+            auto *native = static_cast<AVD3D11VADeviceContext *>(reinterpret_cast<AVHWDeviceContext *>(hardware->data)->hwctx);
+            native->device = device.Get(); native->device->AddRef();
+            check(av_hwdevice_ctx_init(hardware), "initialize D3D11VA decoder device");
+        } catch (const winrt::hresult_error &error) {
+            if (mode == VideoDecodeMode::RequireHardware) throw;
+            decoderNote = QStringLiteral("D3D11视频设备不可用，软件回退：") + QString::fromStdWString(error.message().c_str());
+            gpu.reset(); av_buffer_unref(&hardware);
+        } catch (const std::exception &error) {
+            if (mode == VideoDecodeMode::RequireHardware) throw;
+            decoderNote = QStringLiteral("硬件解码初始化失败，软件回退：") + QString::fromUtf8(error.what());
+            gpu.reset(); av_buffer_unref(&hardware);
+        }
+    }
     qint64 ptsUs(const AVFrame *frame, int index, qint64 fallback) const {
         return frame->best_effort_timestamp == AV_NOPTS_VALUE ? fallback
             : av_rescale_q(frame->best_effort_timestamp, format->streams[index]->time_base, {1, 1000000}) - originUs;
     }
-    void outputVideo(const AVFrame *frame) {
-        // 4. 首期软件解码 → BGRA → GPU上传；上传后的纹理由ComPtr独立持有。
-        if (frame->width <= 0 || frame->height <= 0 || frame->width > 3840 || frame->height > 2160)
-            throw std::runtime_error("当前点播支持最大3840×2160视频");
-        const qint64 pts = ptsUs(frame, videoIndex, nextVideoUs);
-        const qint64 duration = frame->duration > 0
-            ? av_rescale_q(frame->duration, format->streams[videoIndex]->time_base, {1, 1000000}) : defaultFrameUs;
-        nextVideoUs = pts + std::max<qint64>(1, duration);
-        if (pts < 0) return; // 不展示编辑列表/解码预卷之前的帧。
-        sws = sws_getCachedContext(sws, frame->width, frame->height, AVPixelFormat(frame->format),
+    ComPtr<ID3D11Texture2D> uploadSoftware(const AVFrame *frame) {
+        // 4b. 软件或硬件回读回退才执行SWS/CPU上传；正常D3D11VA路径不经过此处。
+        // YUVJ与对应YUV的平面布局相同，全范围由color_range描述，避免SWS每帧重建旧格式。
+        auto pixelFormat = AVPixelFormat(frame->format);
+        if (pixelFormat == AV_PIX_FMT_YUVJ420P) pixelFormat = AV_PIX_FMT_YUV420P;
+        else if (pixelFormat == AV_PIX_FMT_YUVJ422P) pixelFormat = AV_PIX_FMT_YUV422P;
+        else if (pixelFormat == AV_PIX_FMT_YUVJ444P) pixelFormat = AV_PIX_FMT_YUV444P;
+        else if (pixelFormat == AV_PIX_FMT_YUVJ440P) pixelFormat = AV_PIX_FMT_YUV440P;
+        sws = sws_getCachedContext(sws, frame->width, frame->height, pixelFormat,
             frame->width, frame->height, AV_PIX_FMT_BGRA, SWS_BILINEAR, nullptr, nullptr, nullptr);
         if (!sws) throw std::bad_alloc();
-        const int matrix = frame->colorspace == AVCOL_SPC_BT709 ? SWS_CS_ITU709 : SWS_CS_ITU601;
+        const int matrix = frame->colorspace == AVCOL_SPC_BT709 ? SWS_CS_ITU709
+            : frame->colorspace == AVCOL_SPC_BT2020_NCL ? SWS_CS_BT2020 : SWS_CS_ITU601;
         check(sws_setColorspaceDetails(sws, sws_getCoefficients(matrix), frame->color_range == AVCOL_RANGE_JPEG,
             sws_getCoefficients(matrix), 1, 0, 1 << 16, 1 << 16), "video color conversion");
         QByteArray bgra(qsizetype(frame->width) * frame->height * 4, '\0');
@@ -87,10 +170,45 @@ struct MediaDecoder::Resources {
         D3D11_TEXTURE2D_DESC desc{}; desc.Width = frame->width; desc.Height = frame->height;
         desc.ArraySize = desc.MipLevels = desc.SampleDesc.Count = 1; desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         desc.BindFlags = D3D11_BIND_SHADER_RESOURCE; desc.Usage = D3D11_USAGE_IMMUTABLE;
-        D3D11_SUBRESOURCE_DATA data{bgra.constData(), UINT(strides[0]), 0};
+        D3D11_SUBRESOURCE_DATA data{bgra.constData(), UINT(strides[0]), 0}; ComPtr<ID3D11Texture2D> texture;
+        winrt::check_hresult(device->CreateTexture2D(&desc, &data, &texture)); return texture;
+    }
+    void outputVideo(const AVFrame *frame) {
+        // 4. 保留原PTS/时长；只替换解码像素的交付路径，不改变主时钟和EOF排空契约。
+        if (frame->width <= 0 || frame->height <= 0 || frame->width > 3840 || frame->height > 2160)
+            throw std::runtime_error("当前点播支持最大3840×2160视频");
+        const qint64 pts = ptsUs(frame, videoIndex, nextVideoUs);
+        const qint64 duration = frame->duration > 0
+            ? av_rescale_q(frame->duration, format->streams[videoIndex]->time_base, {1, 1000000}) : defaultFrameUs;
+        nextVideoUs = pts + std::max<qint64>(1, duration);
+        if (pts < 0) return; // 不展示编辑列表/解码预卷之前的帧。
         PlaybackVideo output; output.ptsUs = pts; output.durationUs = std::max<qint64>(1, duration);
         output.source.sequence = ++sequence; output.source.timestamp100ns = nowUs() * 10;
-        winrt::check_hresult(device->CreateTexture2D(&desc, &data, &output.source.texture));
+        if (qEnvironmentVariableIsSet("OBS_DECODE_TRACE") && (sequence == 1 || sequence % 30 == 0))
+            qInfo("decode frame: sequence=%llu pts=%lld best=%lld duration=%lld format=%d", sequence, pts,
+                frame->best_effort_timestamp, duration, frame->format);
+        if (frame->format == AV_PIX_FMT_D3D11) {
+            if (!conversionFailed) try {
+                output.source.texture = gpu->convert(*frame, cancelled); output.decodePath = VideoDecodePath::D3D11Gpu;
+            } catch (const winrt::hresult_error &error) {
+                if (mode == VideoDecodeMode::RequireHardware || cancelled() || FAILED(device->GetDeviceRemovedReason())
+                    || error.code() == HRESULT_FROM_WIN32(ERROR_TIMEOUT)) throw;
+                conversionFailed = true; setNote(QStringLiteral("GPU转换不可用，硬件回读：") + QString::fromStdWString(error.message().c_str()));
+            } catch (const std::exception &error) {
+                if (mode == VideoDecodeMode::RequireHardware || cancelled()) throw;
+                conversionFailed = true; setNote(QStringLiteral("GPU转换不可用，硬件回读：") + QString::fromUtf8(error.what()));
+            }
+            if (conversionFailed) {
+                std::unique_ptr<AVFrame, FrameDelete> software(av_frame_alloc()); if (!software) throw std::bad_alloc();
+                check(av_hwframe_transfer_data(software.get(), frame, 0), "readback hardware fallback");
+                check(av_frame_copy_props(software.get(), frame), "copy decoded frame properties");
+                output.source.texture = uploadSoftware(software.get()); output.decodePath = VideoDecodePath::D3D11Readback;
+            }
+        } else {
+            if (mode == VideoDecodeMode::RequireHardware) throw std::runtime_error("实际输出未使用D3D11硬件解码");
+            output.source.texture = uploadSoftware(frame);
+        }
+        { QMutexLocker lock(&noteMutex); output.decoderNote = decoderNote; }
         videoSink(output);
     }
     void emitAudio(QByteArray bytes, int count) {
@@ -159,7 +277,7 @@ struct MediaDecoder::Resources {
 };
 MediaDecoder::MediaDecoder() = default;
 MediaDecoder::~MediaDecoder() = default;
-MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancelled, VideoSink videoSink, AudioSink audioSink, bool live)
+MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancelled, VideoSink videoSink, AudioSink audioSink, bool live, VideoDecodeMode mode)
 {
     // 1. 本地文件与HTTP(S)共用输入；停止/10秒操作超时通过AVIO interrupt回调打断。
     if (m_resources || !cancelled || !videoSink || !audioSink) throw std::logic_error("解码器状态/回调无效");
@@ -171,7 +289,7 @@ MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancel
         if (!url.isValid() || url.host().isEmpty() || !url.userInfo().isEmpty()) throw std::invalid_argument("在线点播需要有效的HTTP(S)媒体地址");
         static const int network = avformat_network_init(); check(network, "initialize media network");
     } else if (!QFileInfo(source).isFile()) throw std::invalid_argument("请选择存在的本地媒体文件");
-    auto r = std::make_unique<Resources>(); r->cancelled = std::move(cancelled); r->live = live;
+    auto r = std::make_unique<Resources>(); r->cancelled = std::move(cancelled); r->live = live; r->mode = mode;
     r->videoSink = std::move(videoSink); r->audioSink = std::move(audioSink); r->deadlineUs = nowUs() + 10000000;
     r->format = avformat_alloc_context(); if (!r->format) throw std::bad_alloc();
     r->format->interrupt_callback = {Resources::interrupt, r.get()};
@@ -190,7 +308,7 @@ MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancel
     r->originUs = r->format->start_time == AV_NOPTS_VALUE ? 0 : r->format->start_time;
     MediaInfo info; info.live = live;
     info.durationUs = live || r->format->duration == AV_NOPTS_VALUE ? 0 : std::max<int64_t>(0, r->format->duration);
-    // 2. 创建普通软解码器；AVCodecContext::pkt_timebase必须与输入流对应。
+    // 2. 先为视频建立共用D3D11设备和硬件候选，实际get_format在首包/格式变化时由FFmpeg调用。
     auto openCodec = [&](int index) {
         const auto *stream = r->format->streams[index]; const auto *codec = avcodec_find_decoder(stream->codecpar->codec_id);
         if (!codec) throw std::runtime_error("FFmpeg缺少此媒体的解码器");
@@ -198,6 +316,10 @@ MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancel
         try {
             check(avcodec_parameters_to_context(context, stream->codecpar), "decoder parameters");
             context->pkt_timebase = stream->time_base; context->thread_count = 2;
+            if (index == r->videoIndex) {
+                context->opaque = r.get(); context->get_format = Resources::chooseFormat;
+                if (r->hardware) { context->hw_device_ctx = av_buffer_ref(r->hardware); if (!context->hw_device_ctx) throw std::bad_alloc(); }
+            }
             check(avcodec_open2(context, codec, nullptr), "open decoder");
         } catch (...) { avcodec_free_context(&context); throw; }
         return context;
@@ -206,15 +328,13 @@ MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancel
         if (r->format->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO && !(r->format->streams[i]->disposition & AV_DISPOSITION_ATTACHED_PIC)) { r->videoIndex = int(i); break; }
     r->audioIndex = av_find_best_stream(r->format, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
     if (r->videoIndex >= 0) {
+        r->device = playbackDevice();
+        const auto *codec = avcodec_find_decoder(r->format->streams[r->videoIndex]->codecpar->codec_id);
+        if (!codec) throw std::runtime_error("FFmpeg缺少此媒体的视频解码器");
+        r->prepareHardware(codec);
         r->video = openCodec(r->videoIndex); info.video = true; info.width = r->video->width; info.height = r->video->height;
         const auto rate = av_guess_frame_rate(r->format, r->format->streams[r->videoIndex], nullptr);
         if (rate.num > 0 && rate.den > 0) r->defaultFrameUs = std::max<int64_t>(1, av_rescale_q(1, av_inv_q(rate), {1, 1000000}));
-        HRESULT created = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            nullptr, 0, D3D11_SDK_VERSION, &r->device, nullptr, nullptr);
-        if (FAILED(created)) winrt::check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &r->device, nullptr, nullptr));
-        ComPtr<ID3D11DeviceContext> immediate; r->device->GetImmediateContext(&immediate);
-        ComPtr<ID3D11Multithread> protection; winrt::check_hresult(immediate.As(&protection)); protection->SetMultithreadProtected(TRUE);
     }
     if (r->audioIndex >= 0) {
         r->audio = openCodec(r->audioIndex); info.audio = true; const auto *stream = r->format->streams[r->audioIndex];

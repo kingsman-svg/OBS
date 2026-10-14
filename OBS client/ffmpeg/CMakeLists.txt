@@ -1,6 +1,7 @@
 # 编码/封装及解封装/解码独立为一级目录与库；捕获、GPU检测、WASAPI输出仍在OBSMediaCore。
 add_library(OBSFFmpegCore STATIC
     GpuVideoOutput.cpp GpuVideoOutput.h
+    GpuVideoConverter.cpp GpuVideoConverter.h
     MediaEncoder.cpp MediaEncoder.h
     MediaPublisher.cpp MediaPublisher.h
     MediaDecoder.cpp MediaDecoder.h MediaPlayer.cpp MediaPlayer.h)

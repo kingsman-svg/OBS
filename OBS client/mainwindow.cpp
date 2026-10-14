@@ -635,7 +635,7 @@ void MainWindow::showRecordingStatus(const QString &message) { if (m_recordStatu
 bool MainWindow::vodMode() const { return m_mode && m_mode->currentIndex() == 1; }
 void MainWindow::showPlaybackPreview(const csn::VideoFrame &frame)
 {
-    if (!frame.texture || (m_role == csn::ClientRole::Player && m_loggedIn && vodMode())) m_preview->setFrame(frame);
+    if (!frame.texture || (m_role == csn::ClientRole::Player && m_loggedIn)) m_preview->setFrame(frame);
 }
 void MainWindow::applyPlaybackState(bool active, qint64 positionUs, qint64 durationUs, const QString &message)
 {

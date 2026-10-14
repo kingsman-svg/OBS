@@ -70,4 +70,6 @@ GPU 原生窗口测试需要正常 Windows 交互图形会话。受限沙箱或�
 
 点播新增libswscale及swscale-8.dll，CMake随其他FFmpeg DLL一起复制。默认测试用SDK/bin/ffmpeg.exe生成素材，不依赖外部视频。`python scripts/run_playback_checks.py --audio-device` 显式验证真实输出设备（音量0），包含音轨延后及长视频尾部；`--mvc-only`支持2倍缩放截图，`--media-file "out/编码验证.mp4"`验证明确选择的录制文件。详见 [第011步](011-player-vod.md)。
 
+Player现优先D3D11VA硬解与GPU转换，不新增SDK。`python scripts/run_decode_checks.py`显式运行`OBSHardwareDecodeTests`，要求真实D3D11硬件，独立于默认CTest；生成H.264素材、强制硬解验收和软件对照，验证NV12/P010转换、颜色/裁剪/纹理所有权、尺寸变化、回退、音频主时钟、重复播放/停止和GUI计数。声音音量0，不打开采集设备；中文截图保存`out/GPU解码验证/`。`--player-only`可只跑播放/界面检查。详见[第013步](013-gpu-decode.md)。
+
 独立SRS与直播集成：`./SRS/manage.ps1 start`，确认OBS业务服务已运行，再执行`python SRS/check.py`。构建新增`OBSStreamingTests`目标，验证生成GPU画面/合成PCM经NVENC和SRS到Player，WASAPI音量0；该测试依赖外部容器与NVIDIA，独立于默认CTest。部署/源码版本集中在[SRS目录](../SRS/README.md)，FFmpeg生命周期见[第012步](012-srs-live.md)。

@@ -45,9 +45,11 @@
 - 已实现：OBS 的 D3D11/CUDA 互操作、GPU 预处理、TensorRT 实时检测和 Shader 框点叠加，检测线程与采集独立、失败回退原预览，见 [第 008 步](008-gpu-face.md)。
 - 已实现：编码前MediaTimeline共同原点、30fps/48kHz两路PTS、120ms总等待、有界缓存和停止排空，见 [第009步](009-media-sync.md)。
 - 已实现：`ffmpeg/`独立编码封装，D3D11硬件帧到NVENC H.264、AAC FIFO、MP4录制、有界输入、尾部与文件安全收尾；库目标拆为OBSMediaCore、OBSClientUi、OBSFFmpegCore，见 [第010步](010-ffmpeg-encode.md)。
-- 已实现：Player本地/HTTP(S)点播、FFmpeg软件解码、BGRA上传/独立GPU显示、WASAPI音频主时钟、播放/停止/音量、EOF排空和重复播放，见 [第011步](011-player-vod.md)。暂停跳转与硬件解码逐步补充。
+- 已实现：Player本地/HTTP(S)点播、解码/独立GPU显示、WASAPI音频主时钟、播放/停止/音量、EOF排空和重复播放，见 [第011步](011-player-vod.md)。
 - 已实现：SRS独立副项目与OBS-SRS容器、固定上游源码分支、NVENC/AAC→FLV/RTMP输出、房间媒体启停与Player直播拉流，见[第012步](012-srs-live.md)及[SRS副项目](../SRS/README.md)。
-- 接续：SRS原生RTMP→WebRTC播放基线与RTC客户端 → SRS时间戳/首屏缓存/重传策略二开 → ICE及STUN/TURN部署 → 网络抖动/拥塞与端到端低延迟调优。低延迟基础持续落实。
+- 已实现：Player优先D3D11VA硬件解码，NV12/P010经VideoProcessor转换为独立BGRA，实际路径计数、明确软件/硬件回读回退，复用启停与音画同步，见[第013步](013-gpu-decode.md)。
+- 边界更新：SRS、MediaMTX、OpenH264的二开研究在Mac独立进行，与Windows OBS/CourseStudio不联调；Windows既有SRS容器继续用于现有RTMP运行，不依赖这些研究项目。
+- 接续：GPU美颜效果与模型精度/延迟验收，再围绕现有媒体能力接入小范围Agent任务。OBS自身的WebRTC/ICE与低延迟调优作为后续独立阶段，不包含Mac服务器二开任务。
 - GPU美颜与模型精度路线继续保留：准备独立校准/验证集、标注精度评估，增加可调磨皮/提亮Shader，再按精细变形需求补密集关键点或分割。
 - 人脸模型已选择 SCRFD-10G-KPS，预训练权重仅非商业研究使用。FP16 是精度转换，INT8 是量化；正式验收未完成。剪枝需准备精度恢复训练条件再推进，不使用本次失败候选。AI Agent 留到媒体能力稳定后再接。
-- 暂未完成：生产账号数据库与令牌撤销、生产媒体鉴权、暂停跳转/硬件解码、长期时钟漂移补偿、WebRTC客户端/ICE、SRS自定义桥接策略、GPU美颜、模型正式标注精度验收或Agent实现。
+- 暂未完成：生产账号数据库与令牌撤销、生产媒体鉴权、暂停跳转、长期时钟漂移补偿、WebRTC客户端/ICE、GPU美颜、模型正式标注精度验收或Agent实现。GPU解码的HDR色彩管理、其他编码/驱动与长期负载验收仍需逐步补充。
