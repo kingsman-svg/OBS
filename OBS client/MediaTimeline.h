@@ -7,7 +7,7 @@
 namespace csn {
 // 保留来源时间，PTS 另外描述这一帧应出现在输出时间线的哪个位置。
 struct TimedVideoFrame {
-    FaceFrame source;                // 同一采集纹理与检测结果，重复输出也不修改采集时间。
+    FaceFrame source;                // 同帧采集/美颜纹理与检测结果，重复不修改原采集时间。
     qint64 pts = 0;                  // 时间基 1/30 秒，供后续视频编码器使用。
     bool repeated = false;           // 静止/缺帧时复用上一张图，PTS 仍继续推进。
     bool discontinuity = false;      // 积压跳过、输入溢出或迟到，后续编码须保留时间间隔。

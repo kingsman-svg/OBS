@@ -69,6 +69,7 @@ add_library(OBSMediaCore STATIC
     MediaTimeline.cpp MediaTimeline.h
     WasapiPlayback.cpp WasapiPlayback.h
     FaceDetection.h FaceDetection.cpp GpuFaceDetector.h GpuFaceDetector.cpp
+    GpuBeauty.h GpuBeauty.cpp
 )
 target_include_directories(OBSMediaCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(OBSMediaCore PUBLIC Qt6::Widgets OBSFFmpegAudio OBSFaceGpu d3d11 dxgi d3dcompiler windowsapp ole32 uuid)
@@ -144,6 +145,11 @@ if(BUILD_TESTING)
     add_test(NAME client.playback COMMAND OBSPlaybackTests)
     set_tests_properties(client.playback PROPERTIES TIMEOUT 40 ENVIRONMENT "QT_QPA_PLATFORM=windows")
     add_executable(OBSFaceTests ../tests/FaceTests.cpp)
+    add_executable(OBSBeautyTests ../tests/BeautyTests.cpp)
+    target_link_libraries(OBSBeautyTests PRIVATE OBSClientUi Qt6::Test)
+    add_test(NAME client.beauty COMMAND OBSBeautyTests)
+    set_tests_properties(client.beauty PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=windows")
+    obs_deploy_face_runtime(OBSBeautyTests)
     target_link_libraries(OBSFaceTests PRIVATE OBSClientUi Qt6::Test)
     add_test(NAME client.face COMMAND OBSFaceTests)
     set_tests_properties(client.face PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=windows")
@@ -182,6 +188,7 @@ if(MSVC)
         target_compile_options(OBSEncodingTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSPlaybackTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSHardwareDecodeTests PRIVATE /utf-8 /W4)
+    target_compile_options(OBSBeautyTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSStreamingTests PRIVATE /utf-8 /W4)
         target_compile_options(OBSFaceTests PRIVATE /utf-8 /W4)
     endif()

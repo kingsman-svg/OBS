@@ -30,13 +30,13 @@ W->>G: Flush提交复制，不依赖SwapChain Present
 W->>W: 更新单帧邮箱和QPC时间戳
 C->>W: 每33ms取 latestFrame
 C-->>C: videoFrameReady，保留原始诊断
-alt 未启用检测或检测失败
+alt 未启用人脸处理或处理失败
 C->>T: pushVideo 原始GPU快照
-else 启用人脸检测
+else 启用检测或美颜
 C->>F: submit 最新GPU快照，慢处理替换待处理帧
-F->>F: D3D11/CUDA预处理、TensorRT、解码与NMS
+F->>F: GPU预处理、TensorRT、NMS、可选GPU美颜
 C->>F: 定时取latestResult
-C->>T: pushVideo 同帧纹理和框点
+C->>T: pushVideo 同帧美颜/原图纹理与可选框点
 end
 C->>T: takeFrames(当前QPC)，按30fps时间格调度
 T-->>C: TimedVideoFrame，来源时间与PTS独立

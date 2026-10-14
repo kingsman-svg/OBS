@@ -7,7 +7,7 @@
 #include <QUrl>
 #include <array>
 namespace Ui { class MainWindow; }
-namespace csn { struct VideoFrame; struct FaceFrame; }
+namespace csn { struct VideoFrame; struct FaceFrame; struct BeautySettings; }
 class QStackedWidget;
 class QLabel;
 class QLineEdit;
@@ -40,6 +40,7 @@ public:
                            const QString &devices, const QStringList &messages); // 同步按钮及各路状态。
     void showCapturePreview(const csn::VideoFrame &frame); // 交给独立 GPU 预览窗口；空帧清理。
     bool faceDetectionEnabled() const;                 // 本轮开始前读取勾选，运行期间锁定。
+    csn::BeautySettings beautySettings() const;        // View读取美颜开关/强度，处理交给现有检测线程。
     QString faceEnginePath() const;                    // 已选本地引擎路径，不在 View 读取文件。
     void showFacePreview(const csn::FaceFrame &frame);   // 原画面与检测框点一起交给预览。
     void showFaceStatus(const QString &message);        // 独立状态文字，失败不覆盖采集/音频状态。
@@ -68,6 +69,7 @@ signals:
     void stopCaptureRequested();
     void refreshDevicesRequested();
     void audioMixChanged(csn::CaptureSource::Kind kind, float gain, bool muted); // 控件只发意图，不处理 PCM。
+    void beautyStrengthChanged(float smoothing, float brightness); // 强度实时更新，界面不提交GPU命令。
     void playbackRequested(const QString &source, bool audioOutput); // 选择的本地文件或HTTP(S)地址。
     void stopPlaybackRequested();                      // 停止、模式切换均交给同一个Controller。
     void playbackVolumeChanged(float volume);         // 实时音量0～1，静音也保留播放时钟。
@@ -114,6 +116,9 @@ private:
     QLabel *m_mixStatus = nullptr;            // 输出格式、包数、削波和处理错误。
     QLabel *m_syncStatus = nullptr;           // 同步状态独占整行，文字增高后由滚动区承载。
     QCheckBox *m_faceDetection = nullptr;     // 勾选后启用实时检测；默认关闭。
+    QCheckBox *m_beauty = nullptr;            // 本轮启用本地AI定位/GPU美颜，独立于诊断框点。
+    QSpinBox *m_smoothing = nullptr;          // 磨皮0～100%，运行时可调整。
+    QSpinBox *m_brightness = nullptr;         // 提亮0～100%，只影响检测到的人脸区域。
     QLineEdit *m_faceEngine = nullptr;        // 本地 .engine 路径，可浏览选择。
     QPushButton *m_chooseEngine = nullptr;    // 仅停止时允许更换引擎。
     QLabel *m_faceStatus = nullptr;           // 人脸数、耗时、邮箱替换数或失败信息。

@@ -128,6 +128,7 @@ ClientRole 是区分两个入口的枚举，不含手写类。MainWindow、Login
 
 ## 实时 GPU 人脸检测
 
+- [本地GPU美颜源码](uml/gpu-beauty.mmd) · [PNG](uml/本地GPU美颜时序图.png) · [SVG](uml/本地GPU美颜时序图.svg)，见[第014步](014-local-beauty.md)。
 - [流程源码](uml/gpu-face.mmd) · [GPU人脸检测时序图](uml/GPU人脸检测时序图.png) · [SVG](uml/GPU人脸检测时序图.svg)
 
 ## 编码前音视频同步

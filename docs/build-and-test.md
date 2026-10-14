@@ -46,6 +46,7 @@ python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 | client.encode | AAC/MP4软件解码验收：左右声道、缺口补零、尾长、单调DTS、中文路径、文件不覆盖、失败/abort/重启、迟到输入和有界队列；WARP验证编码GPU输出，不打开有效采集源 |
 | client.playback | 合成MP4/M4A，B帧尾部、BGRA上传、44.1kHz重采样/声道/尾长、纯音频/视频、背压、HTTP和读包取消、实际Player按钮/独立窗口/重启/退出；默认关闭声音 |
 | client.face | SCRFD anchor、NMS、逆缩放、错误张量、缺失引擎、停止等待首帧、重启与清空邮箱；不打开有效采集源 |
+| client.beauty | WARP人工纹理的人脸区域磨皮/提亮、背景/眼睛保护、透传、原纹理只读、独立结果/尺寸变化、共享状态恢复、取消与小窗口控件；不打开有效采集源 |
 | client.live_services | 可选；Windows Qt → Docker 调度/登录/信令；两个角色与关闭/断线/过期清理 |
 
 LocalAuthServer 只编译进 CSNLoginTests，不进入业务可执行程序。真实集成测试会短暂创建自己的测试房间，完成后关闭连接，由服务器清理；不要与同账号正式演示混用（当前仅开发账号）。
@@ -71,5 +72,7 @@ GPU 原生窗口测试需要正常 Windows 交互图形会话。受限沙箱或�
 点播新增libswscale及swscale-8.dll，CMake随其他FFmpeg DLL一起复制。默认测试用SDK/bin/ffmpeg.exe生成素材，不依赖外部视频。`python scripts/run_playback_checks.py --audio-device` 显式验证真实输出设备（音量0），包含音轨延后及长视频尾部；`--mvc-only`支持2倍缩放截图，`--media-file "out/编码验证.mp4"`验证明确选择的录制文件。详见 [第011步](011-player-vod.md)。
 
 Player现优先D3D11VA硬解与GPU转换，不新增SDK。`python scripts/run_decode_checks.py`显式运行`OBSHardwareDecodeTests`，要求真实D3D11硬件，独立于默认CTest；生成H.264素材、强制硬解验收和软件对照，验证NV12/P010转换、颜色/裁剪/纹理所有权、尺寸变化、回退、音频主时钟、重复播放/停止和GUI计数。声音音量0，不打开采集设备；中文截图保存`out/GPU解码验证/`。`--player-only`可只跑播放/界面检查。详见[第013步](013-gpu-decode.md)。
+
+本地美颜：`python scripts/run_beauty_checks.py`与默认`client.beauty`同范围；`--gpu`显式使用已有`cpp/out/scrfd_final_smoke.engine`和示例图，只采集测试自建图像窗口，验证TensorRT、美颜、时间线、预览及NVENC MP4/GPU解码。可用`--engine`、`--image`指定素材。现有Windows业务服务和OBS-SRS启动后，`python SRS/check.py --beauty`验证美颜RTMP与观众GPU解码，不涉及Mac研究项目。详见[第014步](014-local-beauty.md)。
 
 独立SRS与直播集成：`./SRS/manage.ps1 start`，确认OBS业务服务已运行，再执行`python SRS/check.py`。构建新增`OBSStreamingTests`目标，验证生成GPU画面/合成PCM经NVENC和SRS到Player，WASAPI音量0；该测试依赖外部容器与NVIDIA，独立于默认CTest。部署/源码版本集中在[SRS目录](../SRS/README.md)，FFmpeg生命周期见[第012步](012-srs-live.md)。

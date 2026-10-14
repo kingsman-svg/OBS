@@ -102,7 +102,7 @@ void GpuVideoOutput::render(const FaceFrame &frame, ID3D11Texture2D *target)
     const D3D11_VIEWPORT viewport{(output.Width - width) / 2, (output.Height - height) / 2, width, height, 0, 1};
     Overlay overlay{};
     overlay.image[0] = float(source.Width); overlay.image[1] = float(source.Height);
-    overlay.image[2] = float(std::min<qsizetype>(16, frame.faces.size())); overlay.image[3] = 2 / scale;
+    overlay.image[2] = frame.drawFaces ? float(std::min<qsizetype>(16, frame.faces.size())) : 0; overlay.image[3] = 2 / scale;
     for (int i = 0; i < int(overlay.image[2]); ++i) {
         const auto &face = frame.faces[i]; auto *values = overlay.faces[i];
         values[0] = float(face.box.left()); values[1] = float(face.box.top());

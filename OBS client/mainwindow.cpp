@@ -302,7 +302,7 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     hint->setWordWrap(true);
     layout->addWidget(hint);
     // 4. 人脸开关、引擎路径和状态独立排布；完整路径可在提示中查看。
-    auto *face = new QGroupBox(tr("人脸检测"), panel);
+    auto *face = new QGroupBox(tr("AI 人脸与美颜"), panel);
     face->setObjectName(QStringLiteral("faceDetectionGroup"));
     auto *faceLayout = new QVBoxLayout(face);
     faceLayout->setContentsMargins(16, 24, 16, 16);
@@ -311,6 +311,18 @@ QWidget *MainWindow::buildCapturePanel(QWidget *parent)
     m_faceDetection = new QCheckBox(tr("显示人脸框与五点"), face);
     m_faceDetection->setObjectName(QStringLiteral("faceDetectionCheck"));
     faceLayout->addWidget(m_faceDetection);
+    m_beauty = new QCheckBox(tr("启用本地 GPU 美颜"), face);
+    m_beauty->setObjectName(QStringLiteral("beautyCheck")); faceLayout->addWidget(m_beauty);
+    auto *beautyForm = new QFormLayout;
+    m_smoothing = new QSpinBox(face); m_smoothing->setObjectName(QStringLiteral("beautySmoothingSpin"));
+    m_brightness = new QSpinBox(face); m_brightness->setObjectName(QStringLiteral("beautyBrightnessSpin"));
+    for (auto *spin : {m_smoothing, m_brightness}) { spin->setRange(0, 100); spin->setSuffix(QStringLiteral("%")); spin->setMinimumWidth(85); }
+    m_smoothing->setValue(50); m_brightness->setValue(15);
+    beautyForm->addRow(tr("磨皮强度"), m_smoothing); beautyForm->addRow(tr("提亮强度"), m_brightness);
+    faceLayout->addLayout(beautyForm);
+    const auto strengthChanged = [this] { emit beautyStrengthChanged(m_smoothing->value() / 100.0f, m_brightness->value() / 100.0f); };
+    connect(m_smoothing, &QSpinBox::valueChanged, this, strengthChanged);
+    connect(m_brightness, &QSpinBox::valueChanged, this, strengthChanged);
     faceLayout->addWidget(new QLabel(tr("引擎文件（.engine）"), face));
     auto *engineRow = new QHBoxLayout;
     m_faceEngine = new QLineEdit(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("models/scrfd_10g.engine")), face);
@@ -585,6 +597,8 @@ void MainWindow::applyCaptureState(bool canStart, bool active, bool enumerating,
     m_stopCapture->setEnabled(active);
     m_refreshDevices->setEnabled(!active && !enumerating);
     m_faceDetection->setEnabled(canStart);
+    m_beauty->setEnabled(canStart);
+    m_smoothing->setEnabled(canStart || active); m_brightness->setEnabled(canStart || active);
     m_faceEngine->setEnabled(canStart);
     m_recording->setEnabled(canStart);
     m_recordDirectory->setEnabled(canStart);
@@ -606,10 +620,16 @@ void MainWindow::showCapturePreview(const csn::VideoFrame &frame)
     if (m_role == csn::ClientRole::Publisher && m_loggedIn) m_preview->setFrame(frame);
 }
 bool MainWindow::faceDetectionEnabled() const { return m_faceDetection && m_faceDetection->isChecked(); }
+csn::BeautySettings MainWindow::beautySettings() const
+{
+    return {m_beauty && m_beauty->isChecked(), m_smoothing ? m_smoothing->value() / 100.0f : 0,
+        m_brightness ? m_brightness->value() / 100.0f : 0};
+}
 QString MainWindow::faceEnginePath() const { return m_faceEngine ? m_faceEngine->text().trimmed() : QString(); }
 void MainWindow::showFacePreview(const csn::FaceFrame &frame)
 {
-    if (m_role == csn::ClientRole::Publisher && m_loggedIn) m_preview->setFrame(frame.video, frame.faces);
+    if (m_role == csn::ClientRole::Publisher && m_loggedIn)
+        m_preview->setFrame(frame.video, frame.drawFaces ? frame.faces : QVector<csn::FaceDetection>{});
 }
 void MainWindow::showFaceStatus(const QString &message) { if (m_faceStatus) m_faceStatus->setText(message); }
 void MainWindow::showAudioLevels(float microphone, float system)

@@ -1,4 +1,5 @@
 #include "GpuFaceDetector.h"
+#include "GpuBeauty.h"
 #include "FacePreprocess.h"
 #include <NvInfer.h>
 #include <cuda_d3d11_interop.h>
@@ -57,6 +58,7 @@ struct GpuFaceDetector::Resources final {
     FaceTensors outputs;                                // CPU 后处理读取模型输出，不读取视频像素。
     float *input = nullptr;                             // 固定 Float32 RGB NCHW 输入显存。
     quint64 registrations = 0;                          // 本资源注册次数，供调试验证复用。
+    std::unique_ptr<GpuBeauty> beauty;                  // 普通GPU美颜类，在检测后复用同一线程/设备。
 
     ~Resources() // 任何部分初始化失败也走同一条幂等清理路径；不调用 cudaDeviceReset。
     {
@@ -129,7 +131,8 @@ struct GpuFaceDetector::Resources final {
         checkCuda(cudaGraphicsResourceSetMapFlags(registered, cudaGraphicsMapFlagsReadOnly));
         size = newSize; ++registrations;
     }
-    FaceFrame process(const VideoFrame &frame) // 拷贝快照 → map/预处理/unmap → enqueue → 解码。
+    FaceFrame process(const VideoFrame &frame, const BeautySettings &settings, bool drawFaces,
+                      const std::function<bool()> &cancelled) // 原图推理 → 同帧框点 → 可选独立美颜纹理。
     {
         QElapsedTimer timer; timer.start();
         D3D11_TEXTURE2D_DESC desc{}; frame.texture->GetDesc(&desc);
@@ -167,8 +170,16 @@ struct GpuFaceDetector::Resources final {
         float preprocessing = 0, inference = 0;
         checkCuda(cudaEventElapsedTime(&preprocessing, events[0], events[1]));
         checkCuda(cudaEventElapsedTime(&inference, events[2], events[3]));
-        result.gpuMs = preprocessing + inference; result.processingMs = timer.elapsed();
+        result.gpuMs = preprocessing + inference; result.drawFaces = drawFaces;
         result.registrations = registrations;
+        // 5. AI只提供同帧定位；GPU Shader执行磨皮/提亮。美颜后的纹理同时供预览与编码。
+        if (settings.enabled && !result.faces.isEmpty()) {
+            QElapsedTimer elapsed; elapsed.start();
+            if (!beauty) beauty = std::make_unique<GpuBeauty>(device.Get());
+            result.video = beauty->apply(result, settings, cancelled);
+            result.beautified = result.video.texture.Get() != frame.texture.Get(); result.beautyMs = elapsed.elapsed();
+        }
+        result.processingMs = timer.elapsed();
         return result;
     }
 };
@@ -176,13 +187,18 @@ struct GpuFaceDetector::Resources final {
 GpuFaceDetector::GpuFaceDetector(QObject *parent) : QThread(parent) {}
 GpuFaceDetector::~GpuFaceDetector() { stop(); wait(); }
 
-bool GpuFaceDetector::begin(const QString &enginePath)
+bool GpuFaceDetector::begin(const QString &enginePath, BeautySettings beauty, bool drawFaces)
 {
     // 1. 上一轮 finished 由控制器处理后再启动；此处不加载引擎、不等待 GPU。
     if (isRunning()) return false;
     QMutexLocker lock(&m_mutex);
     m_enginePath = enginePath; m_pending = {}; m_latest = {}; m_replaced = 0; m_accepting = true;
+    m_beauty = beauty; m_drawFaces = drawFaces;
     start(); return true;
+}
+void GpuFaceDetector::setBeautyStrength(float smoothing, float brightness)
+{
+    QMutexLocker lock(&m_mutex); m_beauty.smoothing = smoothing; m_beauty.brightness = brightness;
 }
 void GpuFaceDetector::submit(const VideoFrame &frame)
 {
@@ -212,13 +228,14 @@ void GpuFaceDetector::run()
         std::unique_ptr<Resources> gpu;
         quint64 previousRegistrations = 0;
         while (!isInterruptionRequested()) {
-            VideoFrame frame;
+            VideoFrame frame; BeautySettings settings; bool drawFaces;
             {
                 // 2. 单帧邮箱，慢处理时丢旧待处理帧；停止无需等待下一帧到来。
                 QMutexLocker lock(&m_mutex);
                 while (m_accepting && !m_pending.texture) m_available.wait(&m_mutex);
                 if (!m_accepting) break;
                 frame = std::move(m_pending); m_pending = {};
+                settings = m_beauty; drawFaces = m_drawFaces;
             }
             Microsoft::WRL::ComPtr<ID3D11Device> device; frame.texture->GetDevice(&device);
             if (!gpu || gpu->device.Get() != device.Get()) {
@@ -228,7 +245,7 @@ void GpuFaceDetector::run()
                 gpu->initialize(device.Get(), plan);
                 if (!isInterruptionRequested()) emit opened();
             }
-            auto result = gpu->process(frame);
+            auto result = gpu->process(frame, settings, drawFaces, [this] { return isInterruptionRequested(); });
             {
                 // 4. 结果与原帧一起原子发布；stop 后结果被丢弃，避免退出/重启闪回旧帧。
                 QMutexLocker lock(&m_mutex);
@@ -247,6 +264,6 @@ void GpuFaceDetector::run()
         report = m_accepting && !error.isEmpty(); m_accepting = false; m_pending = {};
         if (!error.isEmpty()) m_latest = {};
     }
-    if (report) emit failed(tr("人脸检测失败：%1；已恢复原画面。停止采集后可重试。").arg(error));
+    if (report) emit failed(tr("人脸处理失败：%1；已恢复原画面。停止采集后可重试。").arg(error));
 }
 }

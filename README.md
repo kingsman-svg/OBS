@@ -26,7 +26,9 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 
 独立模型优化工程位于 `cpp/FaceOptimizer.sln`，使用原生 C++ / TensorRT，优化 SCRFD-10G-KPS，比较 FP32、FP16、INT8 PTQ，提供可选 2:4 剪枝和验证报告。输出 `.engine`，本阶段与 OBS 分离；详见 [模型优化说明](docs/007-model-optimization.md)。
 
-推流端已接入实时 GPU 人脸检测：专用 D3D11 纹理与 CUDA 互操作、GPU 预处理、TensorRT runtime、CPU 解码/NMS及同帧 Shader 框点叠加。采集面板勾选“显示人脸框与五点”，选择本机生成的引擎即可；失败恢复原预览，音频继续。新模块只增加一个公开工作类，中文成员与编号流程注释完整；详见 [第 008 步](docs/008-gpu-face.md)。本步是检测定位，磨皮、提亮与精细变形仍待实现。
+推流端已接入实时 GPU 人脸检测：专用 D3D11 纹理与 CUDA 互操作、GPU 预处理、TensorRT runtime、CPU 解码/NMS及同帧 Shader 框点叠加。采集面板勾选“显示人脸框与五点”，选择本机生成的引擎即可；失败恢复原预览，音频继续。检测阶段只增加一个公开工作类，中文成员与编号流程注释完整；详见 [第 008 步](docs/008-gpu-face.md)。
+
+本地GPU美颜已接入：复用检测线程，用SCRFD同帧框/五点限制磨皮、提亮区域，输出独立纹理同时供预览、MP4与RTMP；界面支持美颜开关及实时强度调节，诊断框点可单独关闭。无脸/零强度透传，处理失败恢复原帧，见[第014步](docs/014-local-beauty.md)。当前使用区域Shader效果，皮肤分割、精细变形及长期效果/性能验收继续逐步推进。
 
 ## 工作方式
 
@@ -73,6 +75,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 007 步：独立 TensorRT 模型优化](docs/007-model-optimization.md)
 - [第 008 步：实时 GPU 人脸检测](docs/008-gpu-face.md)
 - [第 013 步：Player GPU 加速解码](docs/013-gpu-decode.md)
+- [第 014 步：本地 AI 定位与 GPU 美颜](docs/014-local-beauty.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

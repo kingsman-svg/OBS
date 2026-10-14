@@ -324,9 +324,9 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
         videoSelected = videoSelected || (source.kind != CaptureSource::Kind::Microphone && source.kind != CaptureSource::Kind::Loopback);
     // 检测只在选择视频源时启用；文件读取和 CUDA 初始化都在检测线程。
     m_faceMessage = tr("人脸检测未启用");
-    if (m_view->faceDetectionEnabled() && videoSelected) {
+    if ((m_view->faceDetectionEnabled() || m_view->beautySettings().enabled) && videoSelected) {
         m_faceMessage = tr("正在等待视频帧并加载引擎…");
-        if (m_faces->begin(m_view->faceEnginePath())) m_pendingCapture.insert(m_faces);
+        if (m_faces->begin(m_view->faceEnginePath(), m_view->beautySettings(), m_view->faceDetectionEnabled())) m_pendingCapture.insert(m_faces);
         else { m_faceFailed = true; m_faceMessage = tr("检测线程尚未退出，当前显示原画面"); }
     }
     m_view->showFaceStatus(m_faceMessage);
@@ -423,9 +423,9 @@ void SessionController::deliverCapture()
             m_lastFaceSequence = result.video.sequence;
             m_media.pushVideo(result);
             const qint64 ageMs = std::max<qint64>(0, (audioNow() - result.video.timestamp100ns) / 10000);
-            m_faceMessage = tr("%1 张人脸 · GPU %2 ms · 处理 %3 ms · 帧龄 %4 ms\n替换待处理帧 %5 次 · 纹理注册 %6 次")
+            m_faceMessage = tr("%1 张人脸 · 推理GPU %2 ms · 处理 %3 ms · 帧龄 %4 ms\n替换待处理帧 %5 次 · 纹理注册 %6 次 · 美颜%7（%8 ms）")
                 .arg(result.faces.size()).arg(result.gpuMs, 0, 'f', 2).arg(result.processingMs).arg(ageMs)
-                .arg(result.replacedFrames).arg(result.registrations);
+                .arg(result.replacedFrames).arg(result.registrations).arg(result.beautified ? tr("已应用") : tr("透传")).arg(result.beautyMs);
             m_view->showFaceStatus(m_faceMessage);
         }
     }
@@ -471,6 +471,7 @@ void SessionController::setupFaceDetection()
 {
     // 1. 线程只负责模型和 GPU；登录、采集和 View 仍由本控制器编排。
     m_faces = new GpuFaceDetector(this);
+    connect(m_view, &MainWindow::beautyStrengthChanged, m_faces, &GpuFaceDetector::setBeautyStrength);
     connect(m_faces, &GpuFaceDetector::opened, this, [this] {
         if (!m_stoppingCapture && m_loggedIn && !m_faceFailed) {
             m_faceMessage = tr("引擎已加载，等待首个检测结果…"); m_view->showFaceStatus(m_faceMessage);

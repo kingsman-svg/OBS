@@ -8,8 +8,8 @@ participant G as CUDA和TensorRT
 participant P as GPU预览
 participant T as MediaTimeline
 participant E as MediaPublisher线程
-U->>C: 勾选框点并选择本地engine，开始采集
-C->>F: begin(enginePath)，不在GUI加载
+U->>C: 勾选框点或美颜，选择本地engine，开始采集
+C->>F: begin(enginePath, beauty, drawFaces)，GUI不加载
 C->>W: begin(source)，采集与模型初始化独立
 F->>F: 读取有界引擎文件
 alt 文件缺失或读取失败
@@ -36,13 +36,14 @@ F->>G: CUDA等比缩放补黑、BGRA转RGB、归一化、NCHW
 F->>G: 等预处理完成，销毁采样对象并unmap
 F->>G: enqueueV3，同stream读回模型输出并同步
 F->>F: CPU解码、NMS、还原原图框点
-F->>F: 原子发布FaceFrame，持有同一原始纹理
+F->>F: 可选同帧GPU磨皮/提亮，生成独立BGRA
+F->>F: 原子发布FaceFrame，保留原序号与QPC
 C->>F: 每33ms取最新完成结果
 C->>T: pushVideo同帧纹理加框点，保留采集QPC
 C->>T: takeFrames，120ms总等待与30fps时间格
 T-->>C: 带PTS的同帧数据
 C->>P: 同步预览，Shader绘制后Present
-C->>E: 可选同步帧入队，GPU绘制框点后NVENC编码
+C->>E: 同一美颜纹理入队，可选框点后NVENC编码
 end
 alt 设备不支持或反序列化/执行失败
 F-->>C: failed，释放本轮GPU资源后finished

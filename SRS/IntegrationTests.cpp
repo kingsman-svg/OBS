@@ -15,6 +15,9 @@
 #include <QElapsedTimer>
 #include <QFontDatabase>
 #include <QLabel>
+#include <QLineEdit>
+#include <QImage>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -170,8 +173,15 @@ bool integration()
     cancelled.restart(); stalledPlayer.stop(); CHECK(stalledPlayer.wait(2000));
     qInfo("PASS stalled RTMP player cancelled: %lldms", cancelled.elapsed());
     // 5. 实际Publisher MVC只捕获本测试创建的窗口；验证begin/采集/同步/RTMP全流程。
-    QWidget target; target.setWindowTitle(QStringLiteral("直播验证生成窗口"));
-    target.setStyleSheet("background:#df2020;"); target.resize(320, 180); target.show();
+    QLabel target; target.setWindowTitle(QStringLiteral("直播验证生成窗口"));
+    const bool beauty = qApp->arguments().contains("--beauty");
+    const auto argument = [](const QString &key) { const int i = qApp->arguments().indexOf(key);
+        return i >= 0 && i + 1 < qApp->arguments().size() ? qApp->arguments()[i + 1] : QString(); };
+    if (beauty) {
+        const QImage image(argument("--image")); CHECK(!image.isNull());
+        target.setPixmap(QPixmap::fromImage(image)); target.setScaledContents(true); target.resize(image.size());
+    } else { target.setStyleSheet("background:#df2020;"); target.resize(320, 180); }
+    target.show();
     CHECK(QTest::qWaitForWindowExposed(&target));
     MainWindow publisherView(ClientRole::Publisher); LoginModel publisherLogin; SessionModel publisherSession; SignalClient guiSignal;
     SessionController publisherController(&publisherView, &publisherLogin, &publisherSession, &guiSignal);
@@ -179,6 +189,14 @@ bool integration()
     CHECK(until([&] { return publisherSession.ready() && publisherView.findChild<QPushButton *>("startCaptureButton")->isEnabled(); }));
     publisherView.setCaptureSources({{CaptureSource::Kind::Window, "generated", QStringLiteral("窗口 · 直播验证生成窗口"), quintptr(target.winId())}});
     publisherView.findChild<QComboBox *>("videoSourceCombo")->setCurrentIndex(1);
+    int beautified = 0;
+    if (beauty) {
+        publisherView.findChild<QCheckBox *>("beautyCheck")->setChecked(true);
+        publisherView.findChild<QLineEdit *>("faceEngineEdit")->setText(argument("--engine"));
+        QObject::connect(&publisherController, &SessionController::synchronizedVideoReady, &publisherView, [&](const TimedVideoFrame &frame) {
+            if (frame.source.beautified && !frame.source.drawFaces) ++beautified;
+        });
+    }
     publisherView.createRoomRequested(QStringLiteral("完整采集直播验证"));
     CHECK(until([&] { return publisherView.findChild<QPushButton *>("startLiveButton")->isEnabled(); }));
     QTest::mouseClick(publisherView.findChild<QPushButton *>("startLiveButton"), Qt::LeftButton);
@@ -187,11 +205,13 @@ bool integration()
     view.joinRoomRequested(publisherSession.room().value("roomId").toString());
     CHECK(until([&] { return displayed >= prior + 30; }));
     CHECK(player->stats().positionUs > 500000);
+    if (beauty) CHECK(beautified >= 20 && player->stats().gpuVideo > 20);
     // 直接关闭直播中的房间，验证停止媒体/leave串行和观众清理，不只验证单独stop按钮。
     QTest::mouseClick(publisherView.findChild<QPushButton *>("leaveRoomButton"), Qt::LeftButton);
     CHECK(until([&] { return session.room().isEmpty() && publisherSession.room().isEmpty() && !player->isRunning()
         && publisherView.findChild<QPushButton *>("startCaptureButton")->isEnabled(); }));
     qInfo("PASS Publisher MVC: generated window WGC -> timeline -> NVENC -> SRS -> late viewer / close-room cleanup");
+    if (beauty) qInfo("PASS local beauty -> existing RTMP -> GPU Player: beautified=%d", beautified);
     return true;
 }
 }

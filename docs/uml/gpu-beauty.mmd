@@ -1,0 +1,43 @@
+sequenceDiagram
+actor U as 用户
+participant C as Controller/GUI
+participant W as VideoCapture线程
+participant F as GpuFaceDetector线程
+participant G as CUDA/TensorRT
+participant B as GpuBeauty普通对象
+participant T as MediaTimeline
+participant O as 预览/MediaPublisher
+U->>C: 选择engine、勾选美颜、设置强度，开始
+C->>F: begin(engine, settings, drawFaces)，start
+C->>W: begin，独立采集线程
+W-->>C: latestFrame，独立BGRA快照及原QPC
+C->>F: submit，替换单帧邮箱
+F->>G: 原图GPU预处理、enqueueV3、读模型输出
+G-->>F: 同帧人脸框与五点，NMS/逆缩放
+alt 美颜启用且有有效人脸和非零强度
+F->>B: apply，取本帧参数快照
+B->>B: 软边人脸蒙版、五点保护、肤色门控
+B->>B: 保边平滑/提亮，绘制独立BGRA纹理
+B->>B: 恢复共享状态，确认GPU完成，可取消/超时
+B-->>F: 保留原序号/QPC的美颜纹理
+else 关闭/无脸/零强度
+F->>F: 原纹理透传，统计明确标记
+end
+F-->>C: latestResult，原子发布同帧结果
+C->>T: pushVideo，按原QPC与音频统一调度
+T-->>C: TimedVideoFrame，固定PTS
+C->>O: 同一美颜纹理，预览与编码共享结果
+O->>O: 可选诊断框点，NVENC录制/RTMP输出
+U->>C: 实时调整磨皮/提亮
+C->>F: setBeautyStrength，下一帧读取
+alt 模型/设备/美颜失败
+F-->>C: failed，资源清理后finished
+C->>T: 恢复原帧，音频继续，停止后可重试
+else 停止/退出登录
+C->>W: stop
+C->>F: stop，清邮箱、请求中断
+F->>B: GPU完成查询观察取消，释放私有资源
+F->>G: 完成同步，注销互操作并释放模型资源
+F-->>C: finished，才允许下一轮
+end
+Note over F,O: 图像一直在GPU，只有模型输出张量进入CPU后处理
