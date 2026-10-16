@@ -1,5 +1,7 @@
 # 第 010 步：GPU 编码与本地 MP4
 
+2026-10-16已精简独立硬件/UI阶段测试。本文保留当时的专项验收记录，当前构建及测试命令以[构建与验证](build-and-test.md)为准；旧专项源码可从Git历史恢复。
+
 本步完成推流端的 **GPU 输出 → H.264 NVENC / AAC → MP4**。既有同步层直接提供输入，Controller 继续协调启停。播放端仍只有直播/点播页面，本步没有实现播放器解码、RTMP 或 WebRTC 传输；测试中的解码只用于检验生成文件。
 
 ## 目录和库目标
@@ -93,8 +95,6 @@ powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
 $env:PATH = "C:/software/Qt/6.11.2/msvc2022_64/bin;C:/software/Qt/Tools/CMake_64/bin;" + $env:PATH
 python scripts/run_checks.py
 & ".\OBS client\build-agent\OBSEncodingTests.exe" --gpu
-python scripts/run_capture_checks.py --record-face
-python scripts/run_capture_checks.py --ui-only
 ```
 
 实际使用：启动 Docker 登录/信令服务 → 打开 OBS_Publisher → 登录 → 选择采集源 → 勾选本地录制/选目录 → 开始 → 停止 → 等“已保存”与按钮恢复。房间信令和本地录制独立，本步无需媒体服务器。OBS_Player 当前不会播放此文件，可用现有系统播放器验证。

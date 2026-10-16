@@ -1,5 +1,7 @@
 # 第 005 步：GPU 渲染与 SwapChain
 
+2026-10-16已精简独立硬件/UI阶段测试。本文保留当时的专项验收记录，当前构建及测试命令以[构建与验证](build-and-test.md)为准；旧专项源码可从Git历史恢复。
+
 独立预览窗口现在直接消费 `VideoFrame.texture`，通过 D3D11 Shader 绘制到双缓冲 flip SwapChain。移除了采集层原先的 staging、Map、QImage 缩放及低频预览缓存。摄像头驱动只提供 SoftwareBitmap 时仍保留 CPU → GPU 上传，这是输入兼容路径。
 
 ## 封装与数据流
@@ -55,7 +57,6 @@ VideoCapture、WasapiCapture、VideoFrame、AudioPacket、CaptureSource 和新�
 powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
 $env:PATH = "C:/software/Qt/Tools/CMake_64/bin;" + $env:PATH
 python scripts/run_checks.py
-python scripts/run_capture_checks.py --window-preview
 ```
 
 需要 Windows 正常交互图形会话。受限沙箱可能没有窗口 expose/paint 事件，原生 SwapChain 不能用 offscreen 代替验收。测试专用 colorFrame 用 WARP 产生可重复纹理；真实采集到预览的测试使用 WGC 的硬件 D3D11 设备。生产渲染始终复用输入设备。

@@ -1,5 +1,7 @@
 # 第 008 步：实时 GPU 人脸检测
 
+2026-10-16已精简独立硬件/UI阶段测试。本文保留当时的专项验收记录，当前构建及测试命令以[构建与验证](build-and-test.md)为准；旧专项源码可从Git历史恢复。
+
 本页记录检测基线；后续[第014步](014-local-beauty.md)已复用本线程增加本地GPU磨皮/提亮，预览和编码共同消费处理后的纹理，框点显示独立控制。
 
 本步把独立优化工程输出的 SCRFD-10G-KPS `.engine` 接入 OBS 推流端。实现检测定位和框点叠加；磨皮、提亮、精细变形、编码及实际推流后续推进。按最新约定不再绘制类图，继续维护流程时序图。
@@ -82,17 +84,9 @@ CUDA 实现与 CPU OpenCV resize 的 uint8 插值舍入可能相差一个灰度�
 
 ```powershell
 python scripts/run_checks.py
-./scripts/run_face_checks.ps1
 ```
 
-显式硬件验收只显示/捕获测试自己创建的窗口和项目本地示例图片，不打开摄像头、麦克风或整个屏幕：
-
-```powershell
-./scripts/build_clients.ps1 -FaceReferenceTests -Deploy
-./scripts/run_face_checks.ps1 -Gpu
-```
-
-`-FaceReferenceTests` 仅为测试程序增加 OpenCV CPU 预处理和独立 `EngineSession` 对照；业务可执行文件没有该依赖。默认 build 不要求 OpenCV。测试脚本设置 QtTest/可选 OpenCV DLL 路径并抑制 Windows 错误弹窗；硬件 SwapChain 需要正常交互图形会话。
+现有Windows业务服务与OBS-SRS启动后，执行`python SRS/check.py --beauty`验证自建窗口到检测、美颜、直播和GPU播放的整链路。独立OpenCV CPU对照程序及其构建开关已删除；以下保留当时的专项记录。
 
 2026-10-10 本机验证：
 

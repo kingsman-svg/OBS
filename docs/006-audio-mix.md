@@ -1,5 +1,7 @@
 # 第 006 步：音频重采样与双路混音
 
+2026-10-16已精简独立硬件/UI阶段测试。本文保留当时的专项验收记录，当前构建及测试命令以[构建与验证](build-and-test.md)为准；旧专项源码可从Git历史恢复。
+
 在现有推流端接通 WASAPI → AudioResampler → AudioMixer → `SessionController::mixedAudioReady`。统一输出为 **48kHz、立体声、交错 Float32、每包 10ms**，供后续音频编码使用。没有新增 Demo、采集 Model 或 Controller；源码继续平铺在 `OBS client/`。
 
 第 009 步已接入编码前同步：`mixedAudioReady` 保留诊断用途，编码改用 `synchronizedAudioReady`，与 `synchronizedVideoReady` 共用媒体原点。详见 [音视频同步](009-media-sync.md)。以下说明中的 80ms 是混音窗口，新增同步层的总等待为 120ms。
@@ -71,13 +73,11 @@ powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
 ```powershell
 $env:PATH = "C:/software/Qt/Tools/CMake_64/bin;" + $env:PATH
 python scripts/run_checks.py
-python scripts/run_capture_checks.py --audio-mix
-python scripts/run_capture_checks.py --ui-only
 ```
 
 `client.audio` 使用人工数据，不打开设备。检查 44.1kHz 单声道 → 48kHz 立体声、任意分包、累计时间、96kHz 下采样抗混叠、多声道与非法布局、重复包、格式切换、时间跳变、双路对齐、补零、静音消费、音量、削波、有界缓存和停止排空。完整测试会生成 `out/音频重采样混音验证.wav`：48kHz、双声道、PCM16、1 秒；Float32 → PCM16 仅在测试写 WAV 时进行。
 
-`--audio-mix` 在 Windows 正常交互图形会话使用默认输出设备，短暂播放人工零值音频，然后验证真实 WASAPI 回环 → 重采样 → 混音 → 控制器信号，以及正常停止、重启、退出登录。没有可用默认端点时明确 SKIP；不打开麦克风，不保存任何采集音频。
+历史回环专项（现已删除）在 Windows 正常交互图形会话使用默认输出设备，短暂播放人工零值音频，然后验证真实 WASAPI 回环 → 重采样 → 混音 → 控制器信号，以及正常停止、重启、退出登录。没有可用默认端点时明确 SKIP；不打开麦克风，不保存任何采集音频。
 
 2026-10-08，Qt 6.11.2 / MSVC x64 Debug 实测：
 

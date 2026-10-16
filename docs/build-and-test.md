@@ -14,7 +14,7 @@ powershell -ExecutionPolicy Bypass -File scripts/build_clients.ps1 -Deploy
 
 音频处理与编码封装依赖 FFmpeg 7.x x64 shared SDK，默认使用 CourseStudio 的 `C:/dev/ffmpeg-7.1-full_build-shared`。更换路径时在 Qt Creator CMake 配置设置 `OBS_FFMPEG_ROOT:PATH`；首次配置也可设置环境变量 `FFMPEG_7_HOME`。当前 Ninja 单配置构建由 CMake 复制 swresample-5.dll / avutil-59.dll / avcodec-61.dll / avformat-61.dll 到可执行文件目录，不提交 SDK 或 DLL。详见 [音频处理](006-audio-mix.md) 与 [编码录制](010-ffmpeg-encode.md)。库目标为 OBSMediaCore、OBSClientUi、OBSFFmpegCore；Qt Creator 重新配置即可，不需要删除源码或改类名。
 
-实时人脸检测增加 TensorRT 11 runtime / CUDA 13 SDK，使用 `TENSORRT_ROOT`、`CUDA_PATH` 或 `OBS_TENSORRT_ROOT`、`CMAKE_CUDA_COMPILER`；CMake 至少3.24。默认针对 RTX 5060 的 SM120 编译，构建部署匹配运行库与本机存在的示例 engine。OBS 不依赖 OpenCV/ORT/parser；`-FaceReferenceTests` 仅对照测试需要 OpenCV，详见 [第 008 步](008-gpu-face.md)。
+实时人脸检测增加TensorRT 11 runtime / CUDA 13 SDK，使用`TENSORRT_ROOT`、`CUDA_PATH`或`OBS_TENSORRT_ROOT`、`CMAKE_CUDA_COMPILER`；CMake至少3.24。默认针对RTX 5060的SM120编译，部署匹配运行库与已有示例engine。OBS不依赖OpenCV/ORT/parser，独立CPU对照测试及其构建开关已移除。
 
 需要真实服务器联调测试时，先启动 Docker 业务服务，再在构建命令中增加 -LiveTests。未启用时测试仅使用动态本机端口，不依赖外部服务。Qt 的 Windows 部署工具用法见 [官方说明](https://doc.qt.io/qt-6/windows-deployment.html)。
 
@@ -34,20 +34,21 @@ $env:PATH = "C:/software/Qt/Tools/CMake_64/bin;" + $env:PATH
 python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 ```
 
-脚本给测试子进程设置 DLL/插件路径，网络与界面测试使用 offscreen，采集测试使用 Windows 原生平台，用实际按钮验证 MVC。测试会加载 Windows 微软雅黑；offscreen 的默认字体目录警告不影响本项目中文截图。
+脚本给测试子进程设置DLL/插件路径，网络与界面使用offscreen；播放和推流控制使用Windows原生平台。测试加载Windows微软雅黑，offscreen默认字体目录警告不影响中文截图。
+
+2026-10-16按用户要求精简：删除独立采集、硬件解码、人脸、美颜阶段测试与模型优化CLI阶段脚本，配套启动脚本及OpenCV对照构建选项一并移除。默认保留下面7组核心回归；阶段文档保留历史验收记录，当前运行入口以本页为准。旧专项可从Git历史恢复。
+
+精简后两个客户端重新配置、构建及部署通过，7组CTest全部通过（18.35秒）；已清理旧测试目标的12个EXE/PDB/ILK编译产物。服务端测试和现有SRS集成入口继续保留。
 
 | CTest | 内容 |
 | --- | --- |
 | login.http_mvc | 原 7 组 HTTP、MVC、取消、限长、本地认证测试 |
 | client.protocol_mvc | TCP 分片粘包、并发编号、事件、心跳、非法帧、请求超时、重连、HTTP 调度和取消 |
-| client.capture | Windows 原生平台；PCM 格式、无效目标重复启停、设备枚举响应、D3D11 WARP 交换链、共享上下文状态恢复、设备切换、独立窗口生命周期、小窗口布局和退出登录；不打开有效采集源 |
 | client.audio | 六组人工音频测试；重采样/抗混叠、声道布局、时间戳与跳变、双路对齐、补零、音量/静音、削波、有界缓存与停止排空；不打开设备 |
 | client.media_sync | 共同原点、两路PTS、120ms总等待、静态复用、6000次合成闪光/脉冲、有界追赶、停止/退出与重启 |
 | client.encode | AAC/MP4软件解码验收：左右声道、缺口补零、尾长、单调DTS、中文路径、文件不覆盖、失败/abort/重启、迟到输入和有界队列；WARP验证编码GPU输出，不打开有效采集源 |
-| client.publish_control | WARP人工媒体队列数量/时间/峰值、阻塞握手期间参数/统计响应、最新请求合并、停止拒绝/重启清零、纯音频、文件IO统计与手动码率UI；不打开有效采集源 |
+| client.publish_control | 队列数量/时间、阻塞期间参数响应、手动码率、过期裁剪/共同截止点、AAC主动追赶、停止/重启与界面；不打开有效采集源 |
 | client.playback | 合成MP4/M4A，B帧尾部、BGRA上传、44.1kHz重采样/声道/尾长、纯音频/视频、背压、HTTP和读包取消、实际Player按钮/独立窗口/重启/退出；默认关闭声音 |
-| client.face | SCRFD anchor、NMS、逆缩放、错误张量、缺失引擎、停止等待首帧、重启与清空邮箱；不打开有效采集源 |
-| client.beauty | WARP人工纹理的人脸区域磨皮/提亮、背景/眼睛保护、透传、原纹理只读、独立结果/尺寸变化、共享状态恢复、取消与小窗口控件；不打开有效采集源 |
 | client.live_services | 可选；Windows Qt → Docker 调度/登录/信令；两个角色与关闭/断线/过期清理 |
 
 LocalAuthServer 只编译进 CSNLoginTests，不进入业务可执行程序。真实集成测试会短暂创建自己的测试房间，完成后关闭连接，由服务器清理；不要与同账号正式演示混用（当前仅开发账号）。
@@ -62,20 +63,16 @@ python scripts/render_uml.py
 
 需要 Pillow 与 Windows 微软雅黑。按最新约定，脚本默认只生成时序图，每张同时有中文名 SVG/PNG；历史类图不再更新。渲染后检查新增图像，源码、图与业务行为保持一致。
 
-采集使用 C++20、Windows SDK 和 d3d11/dxgi/d3dcompiler/windowsapp/ole32/uuid。硬件验证由 python scripts/run_capture_checks.py --hardware 显式执行，详见 [采集说明](004-capture.md)；不放入默认 CTest，避免常规测试打开设备。
+采集与原生GPU预览直接运行两个客户端调试；WGC示例窗口、人脸/美颜和GPU播放的自动整链路检查保留在单份SRS集成中。独立NV12/P010颜色对照等深度硬件专项已删除，当前7组回归不再宣称覆盖那些历史专项。
 
-GPU 原生窗口测试需要正常 Windows 交互图形会话。受限沙箱或非交互会话可能没有 expose/paint 事件，不能用 offscreen 代替 SwapChain 验收。`--window-preview` 只捕获测试自建色块和预览窗口，验证四象限方向/颜色、等比留边、ResizeBuffers、设备切换、恢复、真实 WGC 到 GPU 预览与退出；详见 [第 005 步](005-gpu-preview.md)。
-
-`python scripts/run_capture_checks.py --audio-mix` 显式验证默认输出设备的 WASAPI 回环 → 重采样 → 混音信号、停止、重启与退出；短暂播放人工零值音频，不打开麦克风、不保存采集声音。没有默认端点时明确 SKIP，不计为硬件通过。`--ui-only` 可单独验证音量/静音控件、混音统计和长错误文本布局，支持 `QT_SCALE_FACTOR=2`；各专项参数互斥。
-
-`OBSEncodingTests.exe --gpu` 显式验证NVIDIA D3D11/NVENC，合成90帧/3秒光音信号、解码校验框点/横竖尺寸变化/时间戳。运行时PATH需包含Qt/bin；输出 `out/编码验证.mp4`。`python scripts/run_capture_checks.py --record-face` 验证自建WGC窗口、静音回环、TensorRT、同步、编码一起运行的正常停止/重启/退出，输出在out子目录；`--record` 不启用检测。详见 [第010步](010-ffmpeg-encode.md)。
+`OBSEncodingTests.exe --gpu`仍可显式验证NVIDIA D3D11/NVENC：合成90帧/3秒光音信号，解码核对框点/尺寸变化/时间戳。运行时PATH需包含Qt/bin，输出`out/编码验证.mp4`。详见[第010步](010-ffmpeg-encode.md)。
 
 点播新增libswscale及swscale-8.dll，CMake随其他FFmpeg DLL一起复制。默认测试用SDK/bin/ffmpeg.exe生成素材，不依赖外部视频。`python scripts/run_playback_checks.py --audio-device` 显式验证真实输出设备（音量0），包含音轨延后及长视频尾部；`--mvc-only`支持2倍缩放截图，`--media-file "out/编码验证.mp4"`验证明确选择的录制文件。详见 [第011步](011-player-vod.md)。
 
-Player现优先D3D11VA硬解与GPU转换，不新增SDK。`python scripts/run_decode_checks.py`显式运行`OBSHardwareDecodeTests`，要求真实D3D11硬件，独立于默认CTest；生成H.264素材、强制硬解验收和软件对照，验证NV12/P010转换、颜色/裁剪/纹理所有权、尺寸变化、回退、音频主时钟、重复播放/停止和GUI计数。声音音量0，不打开采集设备；中文截图保存`out/GPU解码验证/`。`--player-only`可只跑播放/界面检查。详见[第013步](013-gpu-decode.md)。
-
-本地美颜：`python scripts/run_beauty_checks.py`与默认`client.beauty`同范围；`--gpu`显式使用已有`cpp/out/scrfd_final_smoke.engine`和示例图，只采集测试自建图像窗口，验证TensorRT、美颜、时间线、预览及NVENC MP4/GPU解码。可用`--engine`、`--image`指定素材。现有Windows业务服务和OBS-SRS启动后，`python SRS/check.py --beauty`验证美颜RTMP与观众GPU解码，不涉及Mac研究项目。详见[第014步](014-local-beauty.md)。
+本地美颜与GPU解码整链路：现有Windows业务服务和OBS-SRS启动后，执行`python SRS/check.py --beauty`，使用既有示例图/引擎和自建窗口验证WGC、TensorRT、美颜、RTMP与观众GPU解码。不涉及Mac研究项目，详见[第014步](014-local-beauty.md)。
 
 独立SRS与直播集成：`./SRS/manage.ps1 start`，确认OBS业务服务已运行，再执行`python SRS/check.py`。构建新增`OBSStreamingTests`目标，验证生成GPU画面/合成PCM经NVENC和SRS到Player，WASAPI音量0；该测试依赖外部容器与NVIDIA，独立于默认CTest。部署/源码版本集中在[SRS目录](../SRS/README.md)，FFmpeg生命周期见[第012步](012-srs-live.md)。
 
 推流观测/手动码率：`python scripts/run_publish_checks.py`验证默认范围，`--gpu`显式生成270张限幅噪声帧，验证单会话内3000→400→2000kbps目标、独立重读MP4包字节/PTS/DTS/关键帧。临时媒体自动清理，截图为`out/推流控制验证/手动码率页面.png`；`QT_SCALE_FACTOR=2`额外保存中文二倍缩放截图。现有`python SRS/check.py`增加运行中调节、真实Publisher初始值/应用按钮和发送统计检查，`--beauty`同时覆盖美颜。详见[第015步](015-publish-control.md)。
+
+`python scripts/run_publish_checks.py --weak-network`保留独立本机TCP代理/RTMP收流的真实受阻恢复检查，使用生成纹理/静音PCM，不依赖Docker，要求NVIDIA；检查主动追赶、收到的FLV时间戳与GPU解码，见[第016步](016-live-queue.md)。模型优化工具保留内建`--self-test`和`--smoke`。

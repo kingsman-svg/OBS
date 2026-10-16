@@ -1,5 +1,7 @@
 # 第 009 步：编码前音视频同步
 
+2026-10-16已精简独立硬件/UI阶段测试。本文保留当时的专项验收记录，当前构建及测试命令以[构建与验证](build-and-test.md)为准；旧专项源码可从Git历史恢复。
+
 本步在现有工程增加一个 `MediaTimeline` 类，复用 `SessionController`，不增加采集 MVC 或 Demo。音频仍由 `AudioMixer` 完成麦克风/系统声音对齐与混合；本层让混音 PCM 和视频结果进入同一输出时间线。
 
 ## 当前接法
@@ -37,14 +39,11 @@ MediaTimeline → synchronizedVideoReady / synchronizedAudioReady → MediaPubli
 ```powershell
 ./scripts/build_clients.ps1 -Deploy
 python scripts/run_checks.py
-python scripts/run_capture_checks.py --media-sync
-python scripts/run_capture_checks.py --window-preview
-./scripts/run_face_checks.ps1 -Gpu
 ```
 
 `client.media_sync` 使用人工时钟、PCM 和 WARP 小纹理，不使用采集设备。模拟 10 分钟，每 100ms 同时产生一次画面变化与声音脉冲，GPU 结果晚到 50ms，调用方每 30ms 取批次，检查 6000 次事件的 PTS 对齐及连续输出。它验证时间计算，**不代表真实设备长期时钟漂移或实际播放唇音同步已验收**。其它检查覆盖 120ms 总等待、不同时间基、静止重复、估计时间、迟到/重叠拒绝、队列溢出、200ms 追赶、停止尾部、单路失败、退出丢弃与重启。
 
-`--media-sync` 只捕获测试自己创建的变化色块窗口，短暂播放人工静音驱动默认输出的 WASAPI 回环；检查真实控制器的两路同步输出、单调 PTS、共同起点、正常停止、重启与退出丢弃。不打开摄像头/麦克风/整个屏幕，不保存采集音视频；没有默认输出端点时报告 SKIP。
+历史双路采集同步专项（现已删除）只捕获测试自己创建的变化色块窗口，短暂播放人工静音驱动默认输出的 WASAPI 回环；检查真实控制器的两路同步输出、单调 PTS、共同起点、正常停止、重启与退出丢弃。不打开摄像头/麦克风/整个屏幕，不保存采集音视频；没有默认输出端点时报告 SKIP。
 
 在主窗口“音视频采集”区查看新增的两行同步状态；小窗口向下滚动。推荐断点：`startCapture` → `MediaTimeline::begin` → `pushVideo/pushAudio` → `takeFrames/takeUntil` → `deliverMedia` → `finishAudio/finishMedia`。观察 `m_origin`、源时间、两路 PTS、`m_nextVideo`、两个队列和 stats。调试停顿会主动触发积压丢弃，算法测试用人工时钟更容易复现。
 

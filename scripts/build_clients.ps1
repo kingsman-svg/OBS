@@ -2,8 +2,7 @@ param(
     [string]$QtRoot = 'C:/software/Qt/6.11.2/msvc2022_64',
     [string]$BuildDir = 'OBS client/build-agent',
     [switch]$LiveTests,
-    [switch]$Deploy,
-    [switch]$FaceReferenceTests
+    [switch]$Deploy
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -32,7 +31,6 @@ foreach ($file in @($cmakeExe, $ninjaExe, $devCommand)) {
     if (!(Test-Path -LiteralPath $file)) { throw "Missing build tool: $file" }
 }
 $liveOption = if ($LiveTests) { 'ON' } else { 'OFF' }
-$faceReferenceOption = if ($FaceReferenceTests) { 'ON' } else { 'OFF' }
 New-Item -ItemType Directory -Force -Path $clientBuild | Out-Null
 # Keep compiler environment in a child process and generated commands in the ignored build directory.
 $commandFile = Join-Path $clientBuild 'build-clients.cmd'
@@ -43,7 +41,7 @@ setlocal
 call "$devCommand" -arch=x64 >nul
 if errorlevel 1 exit /b 1
 set VSLANG=$compilerLanguage
-"$cmakeExe" -S "$projectRoot/OBS client" -B "$clientBuild" -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninjaExe" "-DCMAKE_PREFIX_PATH=$qtPath" -DCMAKE_BUILD_TYPE=Debug -DOBS_LIVE_TESTS=$liveOption -DOBS_FACE_REFERENCE_TESTS=$faceReferenceOption "-DOBS_MSVC_INCLUDE_PREFIX=$includePrefix"
+"$cmakeExe" -S "$projectRoot/OBS client" -B "$clientBuild" -G Ninja "-DCMAKE_MAKE_PROGRAM=$ninjaExe" "-DCMAKE_PREFIX_PATH=$qtPath" -DCMAKE_BUILD_TYPE=Debug -DOBS_LIVE_TESTS=$liveOption "-DOBS_MSVC_INCLUDE_PREFIX=$includePrefix"
 if errorlevel 1 exit /b 1
 "$cmakeExe" --build "$clientBuild" --parallel 4
 if errorlevel 1 exit /b 1

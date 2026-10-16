@@ -1,5 +1,7 @@
 # 第 007 步：独立 C++ TensorRT 模型优化工程
 
+2026-10-16已精简独立硬件/UI阶段测试。本文保留当时的专项验收记录，当前构建及测试命令以[构建与验证](build-and-test.md)为准；旧专项源码可从Git历史恢复。
+
 本步在 `cpp/` 新建 Visual Studio 原生 C++ 工程，模型改为 **SCRFD-10G-KPS**。只推进离线优化与验证；OBS 客户端没有新增模型依赖，也没有修改采集、音频或渲染流程。
 
 ## 模型与优化选择
@@ -135,8 +137,7 @@ OpenCV DNN / FaceDetectorYN 不能直接加载 `.engine`。OBS 后续由 TensorR
 复测命令：
 
 ```powershell
-./tests/FaceOptimizerTests.ps1 -Configuration Release
-./tests/FaceOptimizerTests.ps1 -Configuration Debug
+./scripts/run_face_optimizer.ps1 -Configuration Release --self-test
 ./scripts/run_face_optimizer.ps1 -Configuration Release --smoke
 ./scripts/run_face_optimizer.ps1 -Configuration Release --smoke --sparse
 ```
