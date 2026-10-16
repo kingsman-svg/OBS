@@ -44,6 +44,7 @@ python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 | client.audio | 六组人工音频测试；重采样/抗混叠、声道布局、时间戳与跳变、双路对齐、补零、音量/静音、削波、有界缓存与停止排空；不打开设备 |
 | client.media_sync | 共同原点、两路PTS、120ms总等待、静态复用、6000次合成闪光/脉冲、有界追赶、停止/退出与重启 |
 | client.encode | AAC/MP4软件解码验收：左右声道、缺口补零、尾长、单调DTS、中文路径、文件不覆盖、失败/abort/重启、迟到输入和有界队列；WARP验证编码GPU输出，不打开有效采集源 |
+| client.publish_control | WARP人工媒体队列数量/时间/峰值、阻塞握手期间参数/统计响应、最新请求合并、停止拒绝/重启清零、纯音频、文件IO统计与手动码率UI；不打开有效采集源 |
 | client.playback | 合成MP4/M4A，B帧尾部、BGRA上传、44.1kHz重采样/声道/尾长、纯音频/视频、背压、HTTP和读包取消、实际Player按钮/独立窗口/重启/退出；默认关闭声音 |
 | client.face | SCRFD anchor、NMS、逆缩放、错误张量、缺失引擎、停止等待首帧、重启与清空邮箱；不打开有效采集源 |
 | client.beauty | WARP人工纹理的人脸区域磨皮/提亮、背景/眼睛保护、透传、原纹理只读、独立结果/尺寸变化、共享状态恢复、取消与小窗口控件；不打开有效采集源 |
@@ -76,3 +77,5 @@ Player现优先D3D11VA硬解与GPU转换，不新增SDK。`python scripts/run_de
 本地美颜：`python scripts/run_beauty_checks.py`与默认`client.beauty`同范围；`--gpu`显式使用已有`cpp/out/scrfd_final_smoke.engine`和示例图，只采集测试自建图像窗口，验证TensorRT、美颜、时间线、预览及NVENC MP4/GPU解码。可用`--engine`、`--image`指定素材。现有Windows业务服务和OBS-SRS启动后，`python SRS/check.py --beauty`验证美颜RTMP与观众GPU解码，不涉及Mac研究项目。详见[第014步](014-local-beauty.md)。
 
 独立SRS与直播集成：`./SRS/manage.ps1 start`，确认OBS业务服务已运行，再执行`python SRS/check.py`。构建新增`OBSStreamingTests`目标，验证生成GPU画面/合成PCM经NVENC和SRS到Player，WASAPI音量0；该测试依赖外部容器与NVIDIA，独立于默认CTest。部署/源码版本集中在[SRS目录](../SRS/README.md)，FFmpeg生命周期见[第012步](012-srs-live.md)。
+
+推流观测/手动码率：`python scripts/run_publish_checks.py`验证默认范围，`--gpu`显式生成270张限幅噪声帧，验证单会话内3000→400→2000kbps目标、独立重读MP4包字节/PTS/DTS/关键帧。临时媒体自动清理，截图为`out/推流控制验证/手动码率页面.png`；`QT_SCALE_FACTOR=2`额外保存中文二倍缩放截图。现有`python SRS/check.py`增加运行中调节、真实Publisher初始值/应用按钮和发送统计检查，`--beauty`同时覆盖美颜。详见[第015步](015-publish-control.md)。

@@ -7,6 +7,8 @@ struct AVCodecContext;
 struct AVPacket;
 
 namespace csn {
+inline constexpr int MinimumVideoBitrate = 100000; // 首期视频目标范围100kbps～50Mbps，UI与线程入口共用。
+inline constexpr int MaximumVideoBitrate = 50000000;
 struct RecordingSettings {
     QString path;             // 本地.mp4路径或RTMP地址；协议由live明确选择。
     bool live = false;        // true用FLV/RTMP，false保留临时MP4安全封存。
@@ -25,6 +27,25 @@ struct EncodingStats {
     quint64 bytes = 0;         // 编码包字节，不含MP4/FLV容器或网络开销。
     quint64 droppedVideo = 0;  // 线程输入队列溢出丢掉的视频帧。
     quint64 droppedAudio = 0;  // 线程输入队列溢出丢掉的音频包。
+    int requestedVideoBitrate = 0; // 用户最新请求，等待工作线程提交时可与编码器目标不同。
+    int encoderVideoBitrate = 0;   // 已随视频帧提交的编码器目标，不冒充驱动确认或实际带宽。
+    quint64 videoPayloadBitrate = 0; // 最近最多1秒媒体PTS内的视频压缩包码率，不含音频/封装。
+    qint64 videoRateWindowMs = 0;  // 视频码率的媒体统计窗口，首帧不足1秒时明确显示。
+    quint64 outputBitrate = 0;     // 最近1秒墙钟内RTMP交给底层IO的码率，不等于接收端吞吐或可用带宽。
+    quint64 outputBytes = 0;       // RTMP媒体写出字节（含封装），不含连接/文件头。
+    quint64 writeCalls = 0;        // 媒体包交织写出+显式flush的调用次数。
+    quint64 writeFailures = 0;     // 上述调用抛错次数；失败前也保留耗时与部分字节。
+    qint64 lastWriteUs = 0;        // 最近一次完整写出耗时，微秒。
+    qint64 maxWriteUs = 0;         // 本轮最长写出耗时。
+    qint64 totalWriteUs = 0;       // 本轮写出耗时累计，可计算平均值。
+    qint64 currentWriteUs = 0;     // 当前未返回写出已经等待多久，stats读取时即时计算。
+    bool writing = false;         // 工作线程处于媒体写出调用中。
+    qint64 lastVideoEncodeUs = 0;  // 最近视频GPU绘制/编码调用耗时，已扣除本次封装/IO写出。
+    qint64 totalVideoEncodeUs = 0; // 本轮视频GPU绘制/编码累计耗时，不包含网络阻塞。
+    quint64 queuedVideo = 0, queuedAudio = 0; // 当前待编码/发送的原始媒体队列长度。
+    quint64 peakQueuedVideo = 0, peakQueuedAudio = 0; // 本轮队列峰值。
+    qint64 videoQueueSpanMs = 0, audioQueueSpanMs = 0; // 队头到队尾的媒体时间跨度，包含最后一帧/包。
+    qint64 oldestVideoWaitMs = 0, oldestAudioWaitMs = 0; // 队头在应用队列等待的墙钟时间，不含上游处理。
 };
 // 普通编码类，无线程；由 MediaPublisher::run 独占，图像保持GPU输入，音频使用CPU PCM。
 class MediaEncoder final {
@@ -35,6 +56,7 @@ public:
     void open(const RecordingSettings &settings, ID3D11Device *device, bool globalHeader, PacketSink sink); // 工作线程初始化。
     void pushVideo(const TimedVideoFrame &frame); // GPU绘制到硬件AVFrame，保留1/30的PTS。
     void pushAudio(const TimedAudioPacket &packet); // 10ms交错PCM转平面FIFO，按AAC帧长聚合。
+    void setVideoBitrate(int bitsPerSecond); // 仅编码线程调用；下张视频帧触发FFmpeg/NVENC动态重配置。
     void finish();                        // FIFO尾部 → send(nullptr) → receive至EOF；幂等。
     const AVCodecContext *videoContext() const; // 封装层读取参数，不拥有上下文。
     const AVCodecContext *audioContext() const; // 未启用时返回nullptr。

@@ -12,10 +12,13 @@ extern "C" {
 #include <QUrl>
 #include <winrt/base.h>
 #include <optional>
+#include <algorithm>
+#include <chrono>
 #include <stdexcept>
 
 namespace csn {
 namespace {
+qint64 nowUs() { return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 void check(int result, const char *operation)
 {
     if (result >= 0) return;
@@ -70,6 +73,8 @@ bool MediaPublisher::begin(const RecordingSettings &settings)
     QMutexLocker lock(&m_mutex);
     if (isRunning()) return false;
     m_settings = settings; m_video.clear(); m_audio.clear(); m_stats = {};
+    m_outputSamples.clear(); m_pendingVideoBitrate = 0; m_writeStartedUs = 0;
+    m_stats.requestedVideoBitrate = settings.video ? settings.videoBitrate : 0;
     m_accepting = true; m_finishing = false; m_aborted = false; m_cancelIo.store(false);
     start(); return true; // 2. QThread建立工作线程，随后在该线程调用run。
 }
@@ -78,33 +83,74 @@ void MediaPublisher::pushVideo(const TimedVideoFrame &frame)
     QMutexLocker lock(&m_mutex);
     if (!m_accepting || !m_settings.video) return;
     if (m_video.size() == 16) { m_video.pop_front(); ++m_stats.droppedVideo; }
-    m_video.push_back(frame); m_ready.wakeOne();
+    m_video.push_back({frame, nowUs()}); m_stats.peakQueuedVideo = std::max(m_stats.peakQueuedVideo, quint64(m_video.size()));
+    m_ready.wakeOne();
 }
 void MediaPublisher::pushAudio(const TimedAudioPacket &packet)
 {
     QMutexLocker lock(&m_mutex);
     if (!m_accepting || !m_settings.audio) return;
     if (m_audio.size() == 50) { m_audio.pop_front(); ++m_stats.droppedAudio; }
-    m_audio.push_back(packet); m_ready.wakeOne();
+    m_audio.push_back({packet, nowUs()}); m_stats.peakQueuedAudio = std::max(m_stats.peakQueuedAudio, quint64(m_audio.size()));
+    m_ready.wakeOne();
+}
+bool MediaPublisher::requestVideoBitrate(int bitsPerSecond)
+{
+    // 2a. 与stop共用锁；运行中只合并最新请求，不在GUI访问AVCodecContext或等待网络写出。
+    if (bitsPerSecond < MinimumVideoBitrate || bitsPerSecond > MaximumVideoBitrate) return false;
+    QMutexLocker lock(&m_mutex);
+    if (!m_accepting || !m_settings.video) return false;
+    m_pendingVideoBitrate = bitsPerSecond; m_stats.requestedVideoBitrate = bitsPerSecond;
+    m_ready.wakeOne(); return true;
 }
 void MediaPublisher::stop()
 {
     QMutexLocker lock(&m_mutex);
     m_accepting = false; m_finishing = true;
+    m_pendingVideoBitrate = 0; // 停止后不再将未消费的界面请求应用到排空尾部。
     if (m_settings.live) m_cancelIo.store(true); // 网络停止优先退出，MP4仍正常排空。
     m_ready.wakeOne();
 }
 void MediaPublisher::abort()
 {
     QMutexLocker lock(&m_mutex);
-    m_accepting = false; m_aborted = true; m_cancelIo.store(true); m_video.clear(); m_audio.clear(); m_ready.wakeOne();
+    m_accepting = false; m_aborted = true; m_cancelIo.store(true); m_video.clear(); m_audio.clear(); m_pendingVideoBitrate = 0; m_ready.wakeOne();
 }
-EncodingStats MediaPublisher::stats() const { QMutexLocker lock(&m_mutex); return m_stats; }
+EncodingStats MediaPublisher::stats() const
+{
+    // 2b. 队列等待/正在写出均用当前单调时间计算；网络阻塞也不会卡住GUI取统计。
+    QMutexLocker lock(&m_mutex); auto result = m_stats; const auto now = nowUs();
+    result.queuedVideo = m_video.size(); result.queuedAudio = m_audio.size();
+    if (!m_video.empty()) {
+        result.oldestVideoWaitMs = std::max<qint64>(0, now - m_video.front().enteredUs) / 1000;
+        result.videoQueueSpanMs = std::max<qint64>(0, m_video.back().value.pts - m_video.front().value.pts + 1) * 1000 / MediaTimeline::VideoRate;
+    }
+    if (!m_audio.empty()) {
+        result.oldestAudioWaitMs = std::max<qint64>(0, now - m_audio.front().enteredUs) / 1000;
+        result.audioQueueSpanMs = std::max<qint64>(0, m_audio.back().value.pts + m_audio.back().value.source.pcm.size() / 8 - m_audio.front().value.pts) * 1000 / MediaTimeline::AudioRate;
+    }
+    result.writing = m_writeStartedUs != 0; result.currentWriteUs = result.writing ? now - m_writeStartedUs : 0;
+    quint64 bytes = 0; for (const auto &sample : m_outputSamples) if (sample.endedUs > now - 1000000) bytes += sample.bytes;
+    result.outputBitrate = bytes * 8; return result; // 固定1秒墙钟窗口，空闲后自然降到0。
+}
 void MediaPublisher::publishStats(const EncodingStats &value)
 {
     QMutexLocker lock(&m_mutex);
-    const auto videoDrops = m_stats.droppedVideo, audioDrops = m_stats.droppedAudio;
-    m_stats = value; m_stats.droppedVideo = videoDrops; m_stats.droppedAudio = audioDrops;
+    // 编码器只拥有这些字段；逐项合并，不能覆盖GUI同时提交的目标、队列/IO统计。
+    m_stats.videoFrames = value.videoFrames; m_stats.audioSamples = value.audioSamples; m_stats.silentSamples = value.silentSamples;
+    m_stats.packets = value.packets; m_stats.bytes = value.bytes; m_stats.encoderVideoBitrate = value.encoderVideoBitrate;
+    m_stats.videoPayloadBitrate = value.videoPayloadBitrate; m_stats.videoRateWindowMs = value.videoRateWindowMs;
+}
+void MediaPublisher::finishWrite(qint64 startedUs, quint64 bytes, bool failed)
+{
+    const auto ended = nowUs(), duration = ended - startedUs;
+    QMutexLocker lock(&m_mutex); m_writeStartedUs = 0; ++m_stats.writeCalls;
+    m_stats.lastWriteUs = duration; m_stats.maxWriteUs = std::max(m_stats.maxWriteUs, duration); m_stats.totalWriteUs += duration;
+    if (failed) ++m_stats.writeFailures;
+    if (m_settings.live) {
+        m_stats.outputBytes += bytes; m_outputSamples.push_back({ended, bytes});
+        while (!m_outputSamples.empty() && m_outputSamples.front().endedUs <= ended - 1000000) m_outputSamples.pop_front();
+    }
 }
 
 void MediaPublisher::run()
@@ -121,8 +167,8 @@ void MediaPublisher::run()
                 if (elapsed.elapsed() >= 5000) throw std::runtime_error("录制等待首个视频帧超时，采集预览仍可继续");
                 m_ready.wait(&m_mutex, 50);
             }
-            if (!m_video.empty() && m_video.front().source.video.texture)
-                m_video.front().source.video.texture->GetDevice(&device);
+            if (!m_video.empty() && m_video.front().value.source.video.texture)
+                m_video.front().value.source.video.texture->GetDevice(&device);
         }
         bool proceed;
         { QMutexLocker lock(&m_mutex); proceed = !m_aborted && (!settings.video || device); }
@@ -173,13 +219,18 @@ void MediaPublisher::run()
                     av_packet_rescale_ts(packet, codec->time_base, stream->time_base);
                     packet->stream_index = stream->index;
                     network.renew();
-                    check(av_interleaved_write_frame(mux.format, packet), "write media packet");
-                    if (settings.live) {
-                        avio_flush(mux.format->pb); check(mux.format->pb->error, "flush RTMP");
-                        if (!transmitted && mux.format->pb->bytes_written > headerBytes) {
-                            transmitted = true; emit transmitting();
+                    const auto started = nowUs(), before = mux.format->pb->bytes_written;
+                    { QMutexLocker lock(&m_mutex); m_writeStartedUs = started; }
+                    try {
+                        check(av_interleaved_write_frame(mux.format, packet), "write media packet");
+                        if (settings.live) {
+                            avio_flush(mux.format->pb); check(mux.format->pb->error, "flush RTMP");
+                            if (!transmitted && mux.format->pb->bytes_written > headerBytes) {
+                                transmitted = true; emit transmitting();
+                            }
                         }
-                    }
+                    } catch (...) { finishWrite(started, quint64(std::max<int64_t>(0, mux.format->pb->bytes_written - before)), true); throw; }
+                    finishWrite(started, quint64(std::max<int64_t>(0, mux.format->pb->bytes_written - before)), false);
                 });
             auto addStream = [&](const AVCodecContext *codec) -> AVStream * {
                 if (!codec) return nullptr;
@@ -200,16 +251,28 @@ void MediaPublisher::run()
             for (;;) {
                 std::optional<TimedVideoFrame> frame;
                 std::optional<TimedAudioPacket> packet;
+                int bitrate = 0;
                 {
                     QMutexLocker lock(&m_mutex);
                     while (m_video.empty() && m_audio.empty() && !m_finishing && !m_aborted) m_ready.wait(&m_mutex);
                     if (m_aborted || (settings.live && m_cancelIo.load()) || (m_finishing && m_video.empty() && m_audio.empty())) break;
                     const bool takeVideo = !m_video.empty() && (m_audio.empty()
-                        || av_compare_ts(m_video.front().pts, {1, 30}, m_audio.front().pts, {1, 48000}) <= 0);
-                    if (takeVideo) { frame = std::move(m_video.front()); m_video.pop_front(); }
-                    else { packet = std::move(m_audio.front()); m_audio.pop_front(); }
+                        || av_compare_ts(m_video.front().value.pts, {1, 30}, m_audio.front().value.pts, {1, 48000}) <= 0);
+                    if (takeVideo) {
+                        frame = std::move(m_video.front().value); m_video.pop_front();
+                        bitrate = m_pendingVideoBitrate; m_pendingVideoBitrate = 0;
+                    } else { packet = std::move(m_audio.front().value); m_audio.pop_front(); }
                 }
+                // 5a. 最新参数只在下一张视频前应用；网络写出返回后仍由此线程处理，GUI不会等待。
+                if (bitrate) encoder.setVideoBitrate(bitrate);
+                const auto started = nowUs(); qint64 writeBefore;
+                { QMutexLocker lock(&m_mutex); writeBefore = m_stats.totalWriteUs; }
                 if (frame) encoder.pushVideo(*frame); else encoder.pushAudio(*packet);
+                if (frame) {
+                    QMutexLocker lock(&m_mutex);
+                    m_stats.lastVideoEncodeUs = std::max<qint64>(0, nowUs() - started - (m_stats.totalWriteUs - writeBefore));
+                    m_stats.totalVideoEncodeUs += m_stats.lastVideoEncodeUs;
+                }
                 publishStats(encoder.stats());
             }
             bool abandoned;

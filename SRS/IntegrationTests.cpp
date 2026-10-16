@@ -15,6 +15,7 @@
 #include <QElapsedTimer>
 #include <QFontDatabase>
 #include <QLabel>
+#include <QScrollArea>
 #include <QLineEdit>
 #include <QImage>
 #include <QPixmap>
@@ -121,7 +122,7 @@ bool integration()
         QSignalSpy transmitted(&publisher, &MediaPublisher::transmitting), errors(&publisher, &MediaPublisher::failed);
         QSignalSpy playErrors(player, &MediaPlayer::failed);
         CHECK(publisher.begin(settings));
-        QElapsedTimer timer; timer.start(); int video = 0, samples = 0; bool announced = false;
+        QElapsedTimer timer; timer.start(); int video = 0, samples = 0; bool announced = false, lowered = false, raised = false;
         const int before = displayed;
         while (timer.elapsed() < 4500) {
             if (timer.elapsed() * 30 >= video * 1000) {
@@ -129,6 +130,8 @@ bool integration()
                 publisher.pushVideo({frame, video++});
             }
             while (samples * 10 <= timer.elapsed()) publisher.pushAudio(audio(samples++ * 480));
+            if (!lowered && timer.elapsed() >= 1500) { CHECK(publisher.requestVideoBitrate(500000)); lowered = true; }
+            if (!raised && timer.elapsed() >= 3000) { CHECK(publisher.requestVideoBitrate(1200000)); raised = true; }
             QTest::qWait(2);
             if (!announced && !transmitted.isEmpty()) {
                 CHECK(request(publisherSignal, "live.start", {}, response)); announced = true;
@@ -145,6 +148,12 @@ bool integration()
         const auto stats = player->stats(); CHECK(stats.audioSamples > 48000 && stats.positionUs > 1000000);
         CHECK(stats.gpuVideo == stats.decodedVideo && stats.gpuVideo > 0 && stats.readbackVideo == 0 && stats.softwareVideo == 0);
         CHECK(view.findChild<PreviewWindow *>()->isVisible());
+        const auto sending = publisher.stats();
+        CHECK(sending.requestedVideoBitrate == 1200000 && sending.encoderVideoBitrate == 1200000);
+        CHECK(sending.writeCalls > 0 && sending.writeFailures == 0 && sending.outputBytes > 0 && sending.outputBitrate > 0);
+        CHECK(sending.totalWriteUs >= sending.maxWriteUs && sending.totalVideoEncodeUs > 0 && sending.peakQueuedVideo <= 16 && sending.peakQueuedAudio <= 50);
+        qInfo("PASS RTMP control: target=%d localIO=%llu kbps maxWrite=%.2fms peakQueue=%llu/%llu", sending.encoderVideoBitrate,
+            sending.outputBitrate / 1000, sending.maxWriteUs / 1000.0, sending.peakQueuedVideo, sending.peakQueuedAudio);
         qInfo("PASS live round %d: decoded=%llu GPU=%llu displayed=%d audioSamples=%llu clock=%.3fs underruns=%llu",
             round + 1, stats.decodedVideo, stats.gpuVideo, displayed - before, stats.audioSamples, stats.positionUs / 1000000.0, stats.audioUnderruns);
         if (round == 0) {
@@ -189,6 +198,7 @@ bool integration()
     CHECK(until([&] { return publisherSession.ready() && publisherView.findChild<QPushButton *>("startCaptureButton")->isEnabled(); }));
     publisherView.setCaptureSources({{CaptureSource::Kind::Window, "generated", QStringLiteral("窗口 · 直播验证生成窗口"), quintptr(target.winId())}});
     publisherView.findChild<QComboBox *>("videoSourceCombo")->setCurrentIndex(1);
+    publisherView.findChild<QSpinBox *>("liveVideoBitrateSpin")->setValue(800);
     int beautified = 0;
     if (beauty) {
         publisherView.findChild<QCheckBox *>("beautyCheck")->setChecked(true);
@@ -206,6 +216,17 @@ bool integration()
     CHECK(until([&] { return displayed >= prior + 30; }));
     CHECK(player->stats().positionUs > 500000);
     if (beauty) CHECK(beautified >= 20 && player->stats().gpuVideo > 20);
+    MediaPublisher *liveOutput = nullptr;
+    for (auto *output : publisherController.findChildren<MediaPublisher *>()) if (output->isRunning()) liveOutput = output;
+    CHECK(liveOutput && liveOutput->stats().requestedVideoBitrate == 800000);
+    publisherView.findChild<QSpinBox *>("liveVideoBitrateSpin")->setValue(600);
+    publisherView.findChild<QPushButton *>("applyLiveBitrateButton")->click();
+    CHECK(until([&] { return liveOutput->stats().encoderVideoBitrate == 600000; }));
+    CHECK(until([&] { return publisherView.findChild<QLabel *>("liveOutputStatusLabel")->text().contains(QStringLiteral("编码器目标 600 kbps")); }));
+    publisherView.resize(720, 800); publisherView.show(); QTest::qWait(40);
+    auto *scroll = publisherView.findChild<QScrollArea *>("workspaceScroll"); CHECK(scroll);
+    scroll->ensureWidgetVisible(publisherView.findChild<QPushButton *>("applyLiveBitrateButton")); QTest::qWait(30);
+    QDir().mkpath("out/推流控制验证"); CHECK(publisherView.grab().save(QStringLiteral("out/推流控制验证/真实直播统计页面.png")));
     // 直接关闭直播中的房间，验证停止媒体/leave串行和观众清理，不只验证单独stop按钮。
     QTest::mouseClick(publisherView.findChild<QPushButton *>("leaveRoomButton"), Qt::LeftButton);
     CHECK(until([&] { return session.room().isEmpty() && publisherSession.room().isEmpty() && !player->isRunning()

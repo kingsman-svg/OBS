@@ -55,7 +55,8 @@ public:
     void showPlaybackPreview(const csn::VideoFrame &frame); // Player独立窗口消费到期GPU帧，空帧清理。
     QList<csn::CaptureSource> selectedCaptureSources() const; // 采集/直播按钮共用本轮源选择。
     bool playbackAudioEnabled() const;                // 点播与直播共用声音选择。
-    void applyLiveOutputState(bool canStart, bool active, const QString &message); // 只展示直播启停状态。
+    int liveVideoBitrate() const;                     // 用户输入kbps转换成bit/s，开播时读取作为初始目标。
+    void applyLiveOutputState(bool canStart, bool active, const QString &message, bool canAdjustBitrate = true); // 状态与参数入口；停止中/纯音频不提交视频请求。
 signals:
     void loginRequested(const QUrl &endpoint, const QString &account, const QString &password);
     void cancelRequested();
@@ -75,6 +76,7 @@ signals:
     void playbackVolumeChanged(float volume);         // 实时音量0～1，静音也保留播放时钟。
     void playbackRenderFailed(const QString &message); // 显示失败时Controller停止音频和解码。
     void startLiveRequested();                         // 主播开始采集并推流；Controller取得房间地址后执行。
+    void liveVideoBitrateRequested(int bitsPerSecond); // 应用按钮提交运行时目标，GUI不访问编码上下文。
     void stopLiveRequested();                          // 主播停止采集/媒体后通知信令。
     void playLiveRequested();                          // 观众重试当前直播地址，不新增播放MVC。
 protected:
@@ -144,6 +146,8 @@ private:
     bool m_roomStreaming = false;                      // 当前房间业务状态，媒体状态由Controller独立展示。
     QPushButton *m_startLive = nullptr;                // 主播开始直播，创建房间/选好源后启用。
     QPushButton *m_stopLive = nullptr;                 // 主播异步停播。
+    QSpinBox *m_liveBitrate = nullptr;                 // 100～50000kbps，默认4000，运行中可编辑。
+    QPushButton *m_applyLiveBitrate = nullptr;         // 明确点击才提交，避免输入每个数字都触发IDR。
     QLabel *m_liveOutputStatus = nullptr;              // 网络输出统计/错误，长文本自动换行。
     QPushButton *m_playLive = nullptr;                 // 观众失败后手动重试。
     QPushButton *m_stopLivePlayback = nullptr;         // 观众停止媒体，可继续留在房间。

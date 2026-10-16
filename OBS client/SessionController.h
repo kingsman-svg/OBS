@@ -7,6 +7,7 @@
 #include <QObject>
 #include <QTimer>
 #include <QSet>
+#include <QElapsedTimer>
 class QThread;
 class MainWindow;
 namespace csn {
@@ -69,7 +70,7 @@ private:
     void refreshPlaybackView();               // 独立播放状态/时长/统计，不依赖信令连接成功。
     void setupLiveOutput();                  // 独立RTMP输出线程，与本地录制共用同步帧入口。
     void startLive();                        // GUI验证房间/源，先开启媒体入口再启动采集。
-    void refreshLiveView();                  // GUI显示输出状态与统计，不显示包含流标识的地址。
+    void refreshLiveView(bool force = true); // 状态事件立即刷新，媒体交付触发的诊断文本最多5Hz。
     void updateLiveNotice();                 // 媒体首次写出/停止后发送live.start/stop，单请求串行。
     void startLivePlayback();                // 当前房间开播后自动begin，失败可手动重试。
     MainWindow *m_view;        // 非拥有 View，控制器仅调用其展示接口。
@@ -114,6 +115,7 @@ private:
     MediaPublisher *m_livePublisher = nullptr; // 独立RTMP编码/输出线程；录制失败不影响直播。
     QString m_liveUrl;                        // 创建房间响应给主播的地址，仅本轮房间内使用。
     QString m_liveMessage;                    // 等待、推流、停止、失败文本。
+    QElapsedTimer m_liveStatsRefresh;          // 只在GUI使用，限制多行诊断布局开销，不影响媒体交付频率。
     bool m_livePending = false;               // begin到GUI处理finished期间不重启采集/直播。
     bool m_liveMediaSent = false;             // 已写出媒体字节；信令业务状态另由Model保存。
     bool m_playbackLive = false;              // 当前Player线程是直播还是点播。

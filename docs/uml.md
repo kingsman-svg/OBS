@@ -167,6 +167,7 @@ ClientRole 是区分两个入口的枚举，不含手写类。MainWindow、Login
 
 ## FFmpeg 编码与封存
 
+推流统计/手动码率：[源码](uml/publish-control.mmd)、[PNG](uml/推流统计与码率调节时序图.png)、[SVG](uml/推流统计与码率调节时序图.svg)，见[第015步](015-publish-control.md)。
 Player硬件解码：[流程源码](uml/gpu-decode.mmd)、[PNG](uml/GPU硬件解码时序图.png)、[SVG](uml/GPU硬件解码时序图.svg)，与[第013步](013-gpu-decode.md)对应。
 
 SRS直播流程：[推流源码](uml/live-publish.mmd)、[PNG](uml/直播推流接入时序图.png)、[SVG](uml/直播推流接入时序图.svg)；[拉流源码](uml/live-play.mmd)、[PNG](uml/直播拉流播放时序图.png)、[SVG](uml/直播拉流播放时序图.svg)；[停止源码](uml/live-stop.mmd)、[PNG](uml/直播停止清理时序图.png)、[SVG](uml/直播停止清理时序图.svg)。部署和上游二开单独列在[SRS副项目](../SRS/README.md)。

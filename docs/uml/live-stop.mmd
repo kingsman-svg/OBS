@@ -7,7 +7,7 @@ participant S as SignalServer
 participant V as 观众Controller
 participant D as MediaPlayer与WASAPI
 U->>C: 主播停止直播
-C->>P: stop，撤销入口并设置IO取消
+C->>P: stop，撤销入口/清参数邮箱/设置IO取消
 C->>C: 停止采集，MP4录制继续排空封存
 alt live.start请求在途
 C->>C: 保留停止意图

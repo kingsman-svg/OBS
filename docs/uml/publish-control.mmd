@@ -1,0 +1,42 @@
+sequenceDiagram
+actor U as 主播
+participant V as MainWindow
+participant C as Controller/GUI
+participant P as MediaPublisher邮箱/队列
+participant W as 推流工作线程
+participant E as MediaEncoder/NVENC
+participant R as RTMP IO
+U->>V: 设置初始码率并开播
+V-->>C: startLive意图
+C->>P: begin(settings)，清状态并start
+P->>W: QThread调用run，创建独占编码/网络资源
+C->>P: push同步原始帧/PCM，记录入队时间与峰值
+U->>V: 输入新码率并点击应用
+V-->>C: liveVideoBitrateRequested(bit/s)
+C->>P: requestVideoBitrate，只存最新请求
+alt 停止/纯音频/未运行/非法范围
+P-->>C: false，不修改当前目标
+else 接受请求
+P-->>C: true，统计显示等待下一帧提交
+W->>P: 下一张视频出队，同时取走最新参数
+W->>E: setVideoBitrate，修改公开码率字段
+W->>E: pushVideo，保留原PTS
+E->>E: send_frame内NVENC重配置/IDR
+E->>R: 同步sink交织写出并flush，IO期间不持队列锁
+C->>P: stats，观察队头年龄/跨度、当前写出等待
+P-->>C: 短锁统计副本，GUI保持响应
+R-->>E: 返回或抛出IO错误，记录耗时/字节
+E-->>W: 视频压缩包统计与提交目标
+W->>P: 合并统计，保留并发新请求与入口丢弃
+C->>V: 诊断最多5Hz刷新，参数/状态事件立即更新
+end
+alt 用户停止
+C->>P: stop，关入口并清未消费请求
+P->>R: 取消网络等待
+W->>W: 清理资源，丢队列
+W-->>C: completed/finished，才允许重启
+else 编码/IO失败
+W->>W: 释放本轮资源
+W-->>C: failed/finished，保留错误
+end
+Note over E,R: 编码目标不是驱动确认，实际包码率/IO吞吐也不是可用带宽

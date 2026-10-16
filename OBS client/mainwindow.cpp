@@ -2,6 +2,7 @@
 #include <QProgressBar>
 #include <QGridLayout>
 #include "PreviewWindow.h"
+#include "ffmpeg/MediaEncoder.h"
 #include <QCheckBox>
 #include <QScrollArea>
 #include <QScreen>
@@ -165,6 +166,18 @@ QWidget *MainWindow::buildWorkspace()
         m_stopLive = new QPushButton(tr("停止直播"), room); m_stopLive->setObjectName(QStringLiteral("stopLiveButton"));
         m_startLive->setEnabled(false); m_stopLive->setEnabled(false);
         liveActions->addWidget(m_startLive); liveActions->addWidget(m_stopLive); liveActions->addStretch(); roomLayout->addLayout(liveActions);
+        // 手动码率作为独立一行，长文本/高缩放时可换行，运行中明确点应用才提交。
+        auto *bitrateForm = new QFormLayout; bitrateForm->setRowWrapPolicy(QFormLayout::WrapLongRows);
+        auto *bitrateRow = new QHBoxLayout;
+        m_liveBitrate = new QSpinBox(room); m_liveBitrate->setObjectName(QStringLiteral("liveVideoBitrateSpin"));
+        m_liveBitrate->setRange(csn::MinimumVideoBitrate / 1000, csn::MaximumVideoBitrate / 1000);
+        m_liveBitrate->setSingleStep(100); m_liveBitrate->setValue(4000); m_liveBitrate->setSuffix(QStringLiteral(" kbps"));
+        m_liveBitrate->setMinimumWidth(120);
+        m_applyLiveBitrate = new QPushButton(tr("应用码率"), room); m_applyLiveBitrate->setObjectName(QStringLiteral("applyLiveBitrateButton"));
+        m_applyLiveBitrate->setEnabled(false);
+        bitrateRow->addWidget(m_liveBitrate, 1); bitrateRow->addWidget(m_applyLiveBitrate);
+        bitrateForm->addRow(tr("视频目标码率"), bitrateRow); roomLayout->addLayout(bitrateForm);
+        connect(m_applyLiveBitrate, &QPushButton::clicked, this, [this] { emit liveVideoBitrateRequested(liveVideoBitrate()); });
         m_liveOutputStatus = new QLabel(tr("创建房间、选择采集源后开始直播；可同时录制MP4。"), room);
         m_liveOutputStatus->setObjectName(QStringLiteral("liveOutputStatusLabel"));
         m_liveOutputStatus->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Minimum); m_liveOutputStatus->setWordWrap(true);
@@ -685,8 +698,10 @@ QList<csn::CaptureSource> MainWindow::selectedCaptureSources() const
     return selected;
 }
 bool MainWindow::playbackAudioEnabled() const { return m_playAudio && m_playAudio->isChecked(); }
-void MainWindow::applyLiveOutputState(bool canStart, bool active, const QString &message)
+int MainWindow::liveVideoBitrate() const { return m_liveBitrate ? m_liveBitrate->value() * 1000 : 4000000; }
+void MainWindow::applyLiveOutputState(bool canStart, bool active, const QString &message, bool canAdjustBitrate)
 {
     if (!m_startLive) return;
     m_startLive->setEnabled(canStart); m_stopLive->setEnabled(active); m_liveOutputStatus->setText(message);
+    m_liveBitrate->setEnabled(m_loggedIn); m_applyLiveBitrate->setEnabled(active && m_loggedIn && canAdjustBitrate);
 }

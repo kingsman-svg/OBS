@@ -11,6 +11,7 @@ S-->>C: 房间未开播、创建者pushUrl
 U->>C: 选择源并开始直播
 C->>T: 混音与同步begin，共同QPC原点
 C->>P: begin保存参数，QThread start
+C->>P: 初始视频目标来自用户设置
 C->>T: 启动采集与检测线程
 T-->>C: GUI取最新帧/音频并同步PTS
 C->>P: pushVideo/pushAudio快速有界入队
@@ -25,5 +26,6 @@ P-->>C: transmitting一次
 C->>S: live.start
 S-->>C: 开播响应与live.changed
 C->>U: 显示推流状态与统计
+C->>P: 可选运行时码率请求，下一帧前由工作线程应用
 end
 Note over C,P: 本地录制用另一输出线程，共用同步输入；GUI不编码或等待网络

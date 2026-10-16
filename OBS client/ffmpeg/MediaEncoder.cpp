@@ -14,6 +14,7 @@ extern "C" {
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <deque>
 #include <stdexcept>
 
 namespace csn {
@@ -36,7 +37,7 @@ Frame frame()
 }
 
 struct MediaEncoder::Resources {
-    RecordingSettings settings;              // 本轮固定编码参数，运行中不修改。
+    RecordingSettings settings;              // 固定尺寸/时基；目标码率可在本编码线程变更。
     AVCodecContext *video = nullptr;          // NVENC H.264，硬件D3D11帧输入。
     AVCodecContext *audio = nullptr;          // AAC，48kHz平面Float32输入。
     AVBufferRef *device = nullptr;            // FFmpeg设备引用，持有采集D3D11设备的AddRef。
@@ -49,6 +50,9 @@ struct MediaEncoder::Resources {
     qint64 audioInputEnd = -1;                // 下一个输入样本位置，用于缺口补零和重叠校验。
     qint64 audioCursor = 0;                   // FIFO头部对应的样本PTS。
     bool finished = false;                   // finish之后拒绝新输入，重复finish不输出。
+    struct VideoSample { qint64 pts; quint64 bytes; }; // 只保留最近1秒媒体时间内的压缩视频样本。
+    std::deque<VideoSample> videoSamples;    // 最近1秒已交付视频包，按原始编码PTS裁剪。
+    qint64 firstVideoPts = -1;               // 短窗口起点；PTS跳变时仍保留真实时间间隔。
 
     ~Resources()
     {
@@ -67,8 +71,19 @@ struct MediaEncoder::Resources {
             // FFmpeg 7.1 NVENC可能不回传AVFrame.duration；固定30fps必须补上最后一帧的时长。
             if (codec->codec_type == AVMEDIA_TYPE_VIDEO && packet->duration <= 0) packet->duration = 1;
             const auto size = quint64(packet->size);
+            const auto pts = packet->pts; // sink会改写包时基并清包，先保存原编码时间与字节数。
             sink(packet.get(), codec); // 封装层可能清空packet，所以先保存字节数。
-            ++stats.packets; stats.bytes += size; av_packet_unref(packet.get());
+            ++stats.packets; stats.bytes += size;
+            if (codec == video && pts >= 0 && pts != AV_NOPTS_VALUE) {
+                if (firstVideoPts < 0) firstVideoPts = pts;
+                const qint64 end = pts + 1, start = std::max(firstVideoPts, end - MediaTimeline::VideoRate);
+                videoSamples.push_back({pts, size});
+                while (!videoSamples.empty() && videoSamples.front().pts < start) videoSamples.pop_front();
+                quint64 bytes = 0; for (const auto &sample : videoSamples) bytes += sample.bytes;
+                stats.videoPayloadBitrate = bytes * 8 * MediaTimeline::VideoRate / quint64(end - start);
+                stats.videoRateWindowMs = (end - start) * 1000 / MediaTimeline::VideoRate;
+            }
+            av_packet_unref(packet.get());
         }
     }
     void send(AVCodecContext *codec, AVFrame *input)
@@ -111,7 +126,7 @@ void MediaEncoder::open(const RecordingSettings &settings, ID3D11Device *sourceD
     if (m_resources) throw std::logic_error("编码器已初始化");
     if ((!settings.video && !settings.audio) || !sink || settings.width < 64 || settings.height < 64
         || settings.width > 3840 || settings.height > 2160 || settings.width % 2 || settings.height % 2
-        || settings.videoBitrate < 100000 || settings.audioBitrate < 32000)
+        || settings.videoBitrate < MinimumVideoBitrate || settings.videoBitrate > MaximumVideoBitrate || settings.audioBitrate < 32000)
         throw std::invalid_argument("编码参数无效");
     auto resources = std::make_unique<Resources>(); resources->settings = settings; resources->sink = std::move(sink);
     if (settings.video) {
@@ -188,6 +203,23 @@ void MediaEncoder::pushVideo(const TimedVideoFrame &timed)
     // 跳过帧后请求关键帧；PTS仍保留原间隔，不把视频时间压短。
     if (timed.discontinuity) input->pict_type = AV_PICTURE_TYPE_I;
     r.send(r.video, input.get()); r.lastVideoPts = timed.pts; ++r.stats.videoFrames;
+    r.stats.encoderVideoBitrate = int(r.video->bit_rate); // 请求已随帧提交，真实效果由压缩码率统计/验收确认。
+}
+
+void MediaEncoder::setVideoBitrate(int bitsPerSecond)
+{
+    // 5a. Publisher::run消费参数邮箱后调用；禁止GUI直接访问上下文，也不重建GPU帧池或改变PTS。
+    if (bitsPerSecond < MinimumVideoBitrate || bitsPerSecond > MaximumVideoBitrate)
+        throw std::invalid_argument("视频目标码率需在100～50000 kbps之间");
+    if (!m_resources || m_resources->finished || !m_resources->video) throw std::logic_error("视频编码器未运行");
+    auto &r = *m_resources;
+    if (r.settings.videoBitrate == bitsPerSecond) return; // 相同目标不重复触发IDR或重配置。
+    r.video->bit_rate = bitsPerSecond;
+    r.video->rc_max_rate = bitsPerSecond;
+    // FFmpeg7.1在下一次send_frame内比较这三个公开字段，调用NVENC重配置并请求IDR。
+    // 内部驱动失败可能仅输出日志，因此此处不把写字段称为“驱动已确认生效”。
+    r.video->rc_buffer_size = bitsPerSecond * 2; // 与初版默认两秒VBV一致；低延迟VBV调优单独验收。
+    r.settings.videoBitrate = bitsPerSecond;
 }
 
 void MediaEncoder::pushAudio(const TimedAudioPacket &timed)
