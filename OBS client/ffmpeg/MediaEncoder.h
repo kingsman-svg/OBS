@@ -18,6 +18,8 @@ struct RecordingSettings {
     int height = 720;         // 偶数尺寸，默认720p。
     int videoBitrate = 4000000; // H.264目标码率，bit/s。
     int audioBitrate = 128000;  // AAC目标码率，bit/s。
+    int liveQueueLimitMs = 300; // 直播队列高水位：媒体跨度或入队等待超过它时追赶；不代表端到端延迟。
+    int liveQueueTargetMs = 100; // 触发后保留的时间窗口，必须小于高水位；本地录制不使用。
 };
 struct EncodingStats {
     quint64 videoFrames = 0;   // 已送入视频编码器的同步帧数。
@@ -25,8 +27,12 @@ struct EncodingStats {
     quint64 silentSamples = 0; // 时间缺口内补入的静音采样帧数。
     quint64 packets = 0;       // 编码器输出并由封装层接受的包数。
     quint64 bytes = 0;         // 编码包字节，不含MP4/FLV容器或网络开销。
-    quint64 droppedVideo = 0;  // 线程输入队列溢出丢掉的视频帧。
-    quint64 droppedAudio = 0;  // 线程输入队列溢出丢掉的音频包。
+    quint64 droppedVideo = 0;  // 线程输入队列容量/过期丢掉的视频帧总数。
+    quint64 droppedAudio = 0;  // 线程输入队列容量/过期丢掉的音频包总数。
+    quint64 expiredVideo = 0, expiredAudio = 0; // 上述丢弃中过期/落后于追赶截止点的数量。
+    quint64 liveCatchups = 0;  // 高水位触发的队列裁剪次数，一次可同时处理音视频。
+    quint64 audioResyncs = 0;  // 编码线程实际执行的主动音频追赶次数，普通缺口仍补零。
+    quint64 skippedAudioSamples = 0; // 主动跳过的音频时间缺口及未编码FIFO样本，不计为补静音。
     int requestedVideoBitrate = 0; // 用户最新请求，等待工作线程提交时可与编码器目标不同。
     int encoderVideoBitrate = 0;   // 已随视频帧提交的编码器目标，不冒充驱动确认或实际带宽。
     quint64 videoPayloadBitrate = 0; // 最近最多1秒媒体PTS内的视频压缩包码率，不含音频/封装。
@@ -55,7 +61,7 @@ public:
     ~MediaEncoder();                      // 释放上下文/显存；正常尾部由finish显式处理。
     void open(const RecordingSettings &settings, ID3D11Device *device, bool globalHeader, PacketSink sink); // 工作线程初始化。
     void pushVideo(const TimedVideoFrame &frame); // GPU绘制到硬件AVFrame，保留1/30的PTS。
-    void pushAudio(const TimedAudioPacket &packet); // 10ms交错PCM转平面FIFO，按AAC帧长聚合。
+    void pushAudio(const TimedAudioPacket &packet, bool liveCatchup = false); // 主动直播追赶跳过缺口/FIFO；普通10ms包仍补零。
     void setVideoBitrate(int bitsPerSecond); // 仅编码线程调用；下张视频帧触发FFmpeg/NVENC动态重配置。
     void finish();                        // FIFO尾部 → send(nullptr) → receive至EOF；幂等。
     const AVCodecContext *videoContext() const; // 封装层读取参数，不拥有上下文。

@@ -135,6 +135,7 @@ if(BUILD_TESTING)
     add_executable(OBSPlaybackTests ../tests/PlaybackTests.cpp)
     add_executable(OBSPublishControlTests ../tests/PublishControlTests.cpp)
     target_link_libraries(OBSPublishControlTests PRIVATE OBSClientUi Qt6::Test)
+    target_compile_definitions(OBSPublishControlTests PRIVATE OBS_TEST_FFMPEG="${OBS_FFMPEG_ROOT}/bin/ffmpeg.exe")
     add_test(NAME client.publish_control COMMAND OBSPublishControlTests)
     set_tests_properties(client.publish_control PROPERTIES TIMEOUT 30 ENVIRONMENT "QT_QPA_PLATFORM=windows")
     # 显式硬件解码验收使用生成素材；不加入默认CTest，避免把无GPU环境误计为通过。

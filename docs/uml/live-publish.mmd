@@ -15,12 +15,14 @@ C->>P: 初始视频目标来自用户设置
 C->>T: 启动采集与检测线程
 T-->>C: GUI取最新帧/音频并同步PTS
 C->>P: pushVideo/pushAudio快速有界入队
+P->>P: 直播按媒体跨度/等待年龄裁剪，保留追赶标记
 P->>P: run等首帧设备，初始化NVENC/AAC与FLV
 P->>R: RTMP连接并写头
 alt 连接/编码失败
 P-->>C: failed，资源回收后finished
 C->>U: 显示错误，采集预览可继续
 else 媒体写出
+P->>P: 出队前检查过期；保留PTS，音频主动追赶不补回大段静音
 P->>R: 编码媒体包，刷新网络IO
 P-->>C: transmitting一次
 C->>S: live.start

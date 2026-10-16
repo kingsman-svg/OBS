@@ -782,12 +782,13 @@ void SessionController::refreshLiveView(bool force)
     const QString pending = stats.requestedVideoBitrate != stats.encoderVideoBitrate
         ? (m_livePending && !m_stoppingCapture ? tr("（等待下一帧提交）") : tr("（未提交）")) : QString();
     m_view->applyLiveOutputState(canStart, m_livePending,
-        tr("%1\n视频 %2 帧 · 音频 %3 秒 · 编码 %4 KB\n请求 %5 kbps · 编码器目标 %6%7\n视频压缩码率 %8 kbps（窗口 %9 ms）· 本机发送 %10 kbps（1秒）\n队列 视频 %11 / 音频 %12 · 跨度 %13 / %14 ms · 队头等待 %15 / %16 ms\n视频处理 %17 ms（不含写出）· 写出 最近 %18 / 最长 %19 / 正在等待 %20 ms")
+        tr("%1\n视频 %2 帧 · 音频 %3 秒 · 编码 %4 KB\n请求 %5 kbps · 编码器目标 %6%7\n视频压缩码率 %8 kbps（窗口 %9 ms）· 本机发送 %10 kbps（1秒）\n队列 视频 %11 / 音频 %12 · 跨度 %13 / %14 ms · 队头等待 %15 / %16 ms\n视频处理 %17 ms（不含写出）· 写出 最近 %18 / 最长 %19 / 正在等待 %20 ms\n过期丢弃 视频 %21 / 音频 %22 · 队列追赶 %23 次 · 音频跳过 %24 次 / %25 秒")
         .arg(m_liveMessage).arg(stats.videoFrames).arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.bytes / 1024)
         .arg(stats.requestedVideoBitrate / 1000).arg(target).arg(pending).arg(stats.videoPayloadBitrate / 1000).arg(stats.videoRateWindowMs)
         .arg(stats.outputBitrate / 1000).arg(stats.queuedVideo).arg(stats.queuedAudio).arg(stats.videoQueueSpanMs).arg(stats.audioQueueSpanMs)
         .arg(stats.oldestVideoWaitMs).arg(stats.oldestAudioWaitMs).arg(stats.lastVideoEncodeUs / 1000.0, 0, 'f', 2)
-        .arg(stats.lastWriteUs / 1000.0, 0, 'f', 2).arg(stats.maxWriteUs / 1000.0, 0, 'f', 2).arg(stats.currentWriteUs / 1000.0, 0, 'f', 2),
+        .arg(stats.lastWriteUs / 1000.0, 0, 'f', 2).arg(stats.maxWriteUs / 1000.0, 0, 'f', 2).arg(stats.currentWriteUs / 1000.0, 0, 'f', 2)
+        .arg(stats.expiredVideo).arg(stats.expiredAudio).arg(stats.liveCatchups).arg(stats.audioResyncs).arg(stats.skippedAudioSamples / 48000.0, 0, 'f', 3),
         !m_stoppingCapture && m_pendingCapture.contains(m_video));
 }
 void SessionController::startLivePlayback()

@@ -2,6 +2,8 @@
 
 本步完成[弱网计划](weak-network.md)的统计和手动参数入口。发送队列仍采用原有数量上限；自适应算法、按帧龄丢弃、重连恢复和新的低延迟缓冲策略尚未接入。本步不新增工作线程、MVC或类图。
 
+后续状态：第016步已增加[直播队列时效与积压恢复](016-live-queue.md)。下面保留第015步当时的范围和验收记录。
+
 ## 对象和线程
 
 GUI的`SessionController`分别持有本地录制和直播的`MediaPublisher`。每个Publisher是一个QThread，`run`局部独占普通`MediaEncoder`及FFmpeg封装/网络IO资源。实时参数和原始媒体分别进入有界邮箱与队列；GUI不直接修改AVCodecContext，不等待编码/GPU/网络。

@@ -11,6 +11,7 @@ V-->>C: startLive意图
 C->>P: begin(settings)，清状态并start
 P->>W: QThread调用run，创建独占编码/网络资源
 C->>P: push同步原始帧/PCM，记录入队时间与峰值
+P->>P: 直播高低水位裁剪过期原始媒体，音频推进共同截止点
 U->>V: 输入新码率并点击应用
 V-->>C: liveVideoBitrateRequested(bit/s)
 C->>P: requestVideoBitrate，只存最新请求
@@ -18,6 +19,7 @@ alt 停止/纯音频/未运行/非法范围
 P-->>C: false，不修改当前目标
 else 接受请求
 P-->>C: true，统计显示等待下一帧提交
+W->>P: 出队前再检查年龄，整批过期则等新输入
 W->>P: 下一张视频出队，同时取走最新参数
 W->>E: setVideoBitrate，修改公开码率字段
 W->>E: pushVideo，保留原PTS

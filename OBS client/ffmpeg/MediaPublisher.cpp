@@ -3,6 +3,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libavutil/error.h>
+#include <libavutil/mathematics.h>
 }
 #include <QDir>
 #include <QElapsedTimer>
@@ -19,6 +20,22 @@ extern "C" {
 namespace csn {
 namespace {
 qint64 nowUs() { return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+qint64 mediaUs(qint64 pts, int rate) { return av_rescale_q(pts, {1, rate}, {1, 1000000}); }
+template<class Queue>
+qint64 catchupCutoff(const Queue &queue, int rate, int duration, qint64 now, qint64 limit, qint64 target)
+{
+    if (queue.empty()) return -1;
+    const auto end = [&](const auto &entry) { return mediaUs(entry.value.pts + duration, rate); };
+    const auto span = end(queue.back()) - mediaUs(queue.front().value.pts, rate);
+    if (span <= limit && now - queue.front().enteredUs <= limit) return -1;
+    // 1a. 时间跨度处理突发交付，单调时钟处理网络等待；整批都老时允许清空，绝不发送最后一张过期帧。
+    qint64 cutoff = std::max<qint64>(0, end(queue.back()) - target);
+    for (const auto &entry : queue) {
+        if (now - entry.enteredUs <= target) break;
+        cutoff = std::max(cutoff, end(entry));
+    }
+    return cutoff;
+}
 void check(int result, const char *operation)
 {
     if (result >= 0) return;
@@ -72,8 +89,11 @@ bool MediaPublisher::begin(const RecordingSettings &settings)
     // 1. begin在GUI调用；Controller必须等上轮finished回到GUI后才能重新调用。
     QMutexLocker lock(&m_mutex);
     if (isRunning()) return false;
+    if (settings.live && (settings.liveQueueTargetMs < 10 || settings.liveQueueLimitMs > 5000
+        || settings.liveQueueTargetMs >= settings.liveQueueLimitMs)) return false;
     m_settings = settings; m_video.clear(); m_audio.clear(); m_stats = {};
     m_outputSamples.clear(); m_pendingVideoBitrate = 0; m_writeStartedUs = 0;
+    m_videoCutoffUs = m_audioCutoffUs = 0; m_videoGap = m_audioGap = false;
     m_stats.requestedVideoBitrate = settings.video ? settings.videoBitrate : 0;
     m_accepting = true; m_finishing = false; m_aborted = false; m_cancelIo.store(false);
     start(); return true; // 2. QThread建立工作线程，随后在该线程调用run。
@@ -82,21 +102,50 @@ void MediaPublisher::pushVideo(const TimedVideoFrame &frame)
 {
     QMutexLocker lock(&m_mutex);
     if (!m_accepting || !m_settings.video) return;
-    if (m_video.size() == 16) { m_video.pop_front(); ++m_stats.droppedVideo; }
-    m_video.push_back({frame, nowUs()}); m_stats.peakQueuedVideo = std::max(m_stats.peakQueuedVideo, quint64(m_video.size()));
+    if (m_settings.live && frame.pts >= 0 && mediaUs(frame.pts, 30) < m_videoCutoffUs) {
+        ++m_stats.droppedVideo; ++m_stats.expiredVideo; return; // 已越过的时间不接受迟到数据。
+    }
+    const auto now = nowUs(); m_video.push_back({frame, now}); trimLiveQueues(now);
+    if (m_video.size() > 16) { m_video.pop_front(); ++m_stats.droppedVideo; m_videoGap = m_settings.live; }
+    m_stats.peakQueuedVideo = std::max(m_stats.peakQueuedVideo, quint64(m_video.size()));
     m_ready.wakeOne();
 }
 void MediaPublisher::pushAudio(const TimedAudioPacket &packet)
 {
     QMutexLocker lock(&m_mutex);
     if (!m_accepting || !m_settings.audio) return;
-    if (m_audio.size() == 50) { m_audio.pop_front(); ++m_stats.droppedAudio; }
-    m_audio.push_back({packet, nowUs()}); m_stats.peakQueuedAudio = std::max(m_stats.peakQueuedAudio, quint64(m_audio.size()));
+    if (m_settings.live && packet.pts >= 0 && mediaUs(packet.pts, 48000) < m_audioCutoffUs) {
+        ++m_stats.droppedAudio; ++m_stats.expiredAudio; return;
+    }
+    const auto now = nowUs(); m_audio.push_back({packet, now}); trimLiveQueues(now);
+    if (m_audio.size() > 50) { m_audio.pop_front(); ++m_stats.droppedAudio; m_audioGap = m_settings.live; }
+    m_stats.peakQueuedAudio = std::max(m_stats.peakQueuedAudio, quint64(m_audio.size()));
     m_ready.wakeOne();
+}
+void MediaPublisher::trimLiveQueues(qint64 now)
+{
+    // 2a. 本地MP4保持原策略；仅在锁内裁剪有界原始媒体，不触碰编码器/AVIO/TCP中的数据。
+    if (!m_settings.live) return;
+    const qint64 limit = qint64(m_settings.liveQueueLimitMs) * 1000, target = qint64(m_settings.liveQueueTargetMs) * 1000;
+    const auto audio = catchupCutoff(m_audio, 48000, 480, now, limit, target);
+    const auto video = catchupCutoff(m_video, 30, 1, now, limit, target);
+    if (audio >= 0) {
+        m_audioCutoffUs = std::max(m_audioCutoffUs, audio);
+        m_videoCutoffUs = std::max(m_videoCutoffUs, m_audioCutoffUs); // 声音也过期时，画面不能留在旧区间。
+    }
+    if (video >= 0) m_videoCutoffUs = std::max(m_videoCutoffUs, video); // 仅视频积压不主动丢连续音频。
+    const auto before = m_stats.expiredVideo + m_stats.expiredAudio;
+    while (!m_video.empty() && mediaUs(m_video.front().value.pts, 30) < m_videoCutoffUs) {
+        m_video.pop_front(); ++m_stats.droppedVideo; ++m_stats.expiredVideo; m_videoGap = true;
+    }
+    while (!m_audio.empty() && mediaUs(m_audio.front().value.pts, 48000) < m_audioCutoffUs) {
+        m_audio.pop_front(); ++m_stats.droppedAudio; ++m_stats.expiredAudio; m_audioGap = true;
+    }
+    if (m_stats.expiredVideo + m_stats.expiredAudio != before) ++m_stats.liveCatchups;
 }
 bool MediaPublisher::requestVideoBitrate(int bitsPerSecond)
 {
-    // 2a. 与stop共用锁；运行中只合并最新请求，不在GUI访问AVCodecContext或等待网络写出。
+    // 2b. 与stop共用锁；运行中只合并最新请求，不在GUI访问AVCodecContext或等待网络写出。
     if (bitsPerSecond < MinimumVideoBitrate || bitsPerSecond > MaximumVideoBitrate) return false;
     QMutexLocker lock(&m_mutex);
     if (!m_accepting || !m_settings.video) return false;
@@ -118,7 +167,7 @@ void MediaPublisher::abort()
 }
 EncodingStats MediaPublisher::stats() const
 {
-    // 2b. 队列等待/正在写出均用当前单调时间计算；网络阻塞也不会卡住GUI取统计。
+    // 2c. 队列等待/正在写出均用当前单调时间计算；网络阻塞也不会卡住GUI取统计。
     QMutexLocker lock(&m_mutex); auto result = m_stats; const auto now = nowUs();
     result.queuedVideo = m_video.size(); result.queuedAudio = m_audio.size();
     if (!m_video.empty()) {
@@ -139,6 +188,7 @@ void MediaPublisher::publishStats(const EncodingStats &value)
     // 编码器只拥有这些字段；逐项合并，不能覆盖GUI同时提交的目标、队列/IO统计。
     m_stats.videoFrames = value.videoFrames; m_stats.audioSamples = value.audioSamples; m_stats.silentSamples = value.silentSamples;
     m_stats.packets = value.packets; m_stats.bytes = value.bytes; m_stats.encoderVideoBitrate = value.encoderVideoBitrate;
+    m_stats.audioResyncs = value.audioResyncs; m_stats.skippedAudioSamples = value.skippedAudioSamples;
     m_stats.videoPayloadBitrate = value.videoPayloadBitrate; m_stats.videoRateWindowMs = value.videoRateWindowMs;
 }
 void MediaPublisher::finishWrite(qint64 startedUs, quint64 bytes, bool failed)
@@ -251,23 +301,33 @@ void MediaPublisher::run()
             for (;;) {
                 std::optional<TimedVideoFrame> frame;
                 std::optional<TimedAudioPacket> packet;
+                bool audioCatchup = false;
                 int bitrate = 0;
                 {
                     QMutexLocker lock(&m_mutex);
-                    while (m_video.empty() && m_audio.empty() && !m_finishing && !m_aborted) m_ready.wait(&m_mutex);
+                    // 5a. IO可能刚阻塞过；必须先剔除过期数据，清空后等待新输入，不能空转或编码旧队头。
+                    for (;;) {
+                        trimLiveQueues(nowUs());
+                        if (!m_video.empty() || !m_audio.empty() || m_finishing || m_aborted) break;
+                        m_ready.wait(&m_mutex);
+                    }
                     if (m_aborted || (settings.live && m_cancelIo.load()) || (m_finishing && m_video.empty() && m_audio.empty())) break;
                     const bool takeVideo = !m_video.empty() && (m_audio.empty()
                         || av_compare_ts(m_video.front().value.pts, {1, 30}, m_audio.front().value.pts, {1, 48000}) <= 0);
                     if (takeVideo) {
                         frame = std::move(m_video.front().value); m_video.pop_front();
+                        frame->discontinuity = frame->discontinuity || m_videoGap; m_videoGap = false;
                         bitrate = m_pendingVideoBitrate; m_pendingVideoBitrate = 0;
-                    } else { packet = std::move(m_audio.front().value); m_audio.pop_front(); }
+                    } else {
+                        packet = std::move(m_audio.front().value); m_audio.pop_front();
+                        audioCatchup = m_audioGap; m_audioGap = false;
+                    }
                 }
-                // 5a. 最新参数只在下一张视频前应用；网络写出返回后仍由此线程处理，GUI不会等待。
+                // 5b. 最新参数只在下一张视频前应用；网络写出返回后仍由此线程处理，GUI不会等待。
                 if (bitrate) encoder.setVideoBitrate(bitrate);
                 const auto started = nowUs(); qint64 writeBefore;
                 { QMutexLocker lock(&m_mutex); writeBefore = m_stats.totalWriteUs; }
-                if (frame) encoder.pushVideo(*frame); else encoder.pushAudio(*packet);
+                if (frame) encoder.pushVideo(*frame); else encoder.pushAudio(*packet, audioCatchup);
                 if (frame) {
                     QMutexLocker lock(&m_mutex);
                     m_stats.lastVideoEncodeUs = std::max<qint64>(0, nowUs() - started - (m_stats.totalWriteUs - writeBefore));

@@ -168,6 +168,7 @@ void MediaEncoder::open(const RecordingSettings &settings, ID3D11Device *sourceD
         check(av_opt_set_int(video->priv_data, "rc-lookahead", 0, 0), "NVENC lookahead");
         check(av_opt_set_int(video->priv_data, "zerolatency", 1, 0), "NVENC reorder");
         check(av_opt_set_int(video->priv_data, "delay", 0, 0), "NVENC output delay");
+        if (settings.live) check(av_opt_set_int(video->priv_data, "forced-idr", 1, 0), "NVENC recovery IDR");
         check(avcodec_open2(video, codec, nullptr), "open NVENC");
     }
     if (settings.audio) {
@@ -222,7 +223,7 @@ void MediaEncoder::setVideoBitrate(int bitsPerSecond)
     r.settings.videoBitrate = bitsPerSecond;
 }
 
-void MediaEncoder::pushAudio(const TimedAudioPacket &timed)
+void MediaEncoder::pushAudio(const TimedAudioPacket &timed, bool liveCatchup)
 {
     // 6. 音频按PTS连续写FIFO，时间缺口补静音；过大的缺口明确失败，避免无界追赶。
     if (!m_resources || m_resources->finished || !m_resources->audio) throw std::logic_error("音频编码器未运行");
@@ -232,6 +233,16 @@ void MediaEncoder::pushAudio(const TimedAudioPacket &timed)
         throw std::invalid_argument("AAC输入必须是同步的48kHz立体声10ms包");
     if (r.audioInputEnd < 0) r.audioCursor = r.audioInputEnd = timed.pts;
     if (timed.pts < r.audioInputEnd) throw std::invalid_argument("AAC输入PTS重叠/倒序");
+    if (liveCatchup) {
+        // 6a. 只有Publisher明确通知的直播追赶才跳过；普通采集discontinuity不能绕过缺口补零。
+        if (!r.settings.live) throw std::logic_error("本地录制不允许主动跳过音频时间");
+        const auto skipped = timed.pts - r.audioInputEnd + av_audio_fifo_size(r.fifo);
+        if (skipped > 0) {
+            av_audio_fifo_reset(r.fifo); // 只丢未编码PCM，不冒充清除了AAC内部延迟或TCP中的旧包。
+            r.audioCursor = r.audioInputEnd = timed.pts;
+            r.stats.skippedAudioSamples += quint64(skipped); ++r.stats.audioResyncs;
+        }
+    }
     qint64 gap = timed.pts - r.audioInputEnd;
     if (gap > 48000 * 2) throw std::runtime_error("音频时间缺口超过2秒，请停止后重新开始录制");
     std::array<float, 1024> zero{};

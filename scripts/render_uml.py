@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'live-queue': '直播队列积压恢复时序图',
     'publish-control': '推流统计与码率调节时序图',
     'gpu-decode': 'GPU硬件解码时序图',
     'gpu-beauty': '本地GPU美颜时序图',

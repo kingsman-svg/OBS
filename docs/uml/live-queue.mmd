@@ -1,0 +1,41 @@
+sequenceDiagram
+participant C as Controller/GUI
+participant P as Publisher队列/锁
+participant W as 现有推流工作线程
+participant E as MediaEncoder
+participant N as RTMP网络IO
+C->>P: begin，验证预算/清截止点与标记/start
+alt 非法预算或旧线程未退出
+P-->>C: false，不启动新线程
+else 正常运行
+C->>P: push同步GPU帧/PCM，记录入队时间
+P->>P: 检查等待年龄和媒体跨度，高水位触发
+alt 只有视频积压
+P->>P: 跳过旧视频到目标窗口，保留连续音频
+else 音频也过期
+P->>P: 共同截止点裁剪两路，保留音频追赶标记
+end
+P-->>C: 立即返回，迟到旧数据不再入队
+W->>P: 出队前再次检查时效
+alt 阻塞期间整批过期且无新输入
+W->>P: 清旧数据并等待新媒体，不强留旧帧
+else 存在可处理媒体
+W->>P: 按PTS取媒体，取走对应追赶标记并解锁
+W->>E: 视频保留PTS，恢复时请求IDR
+W->>E: pushAudio，明确liveCatchup
+alt 主动直播追赶
+E->>E: 丢未编码FIFO，推进游标，不补回跳过区间
+else 普通采集缺口
+E->>E: 原规则检查重叠并补有限静音
+end
+E->>N: 编码包交织写出，网络等待不持队列锁
+C->>P: 阻塞时仍可入队/读统计/提交手动码率
+N-->>E: 写出返回或错误/取消
+W->>P: 合并编码统计，下轮重新检查时效
+end
+end
+C->>P: stop，关入口并取消直播IO
+W->>W: 释放编码/网络资源
+W-->>C: completed或failed，随后finished
+C->>P: 下一轮begin清所有截止点与标记
+Note over P,N: 仅裁剪编码前原始媒体，不能撤回AAC内部缓存或TCP旧字节
