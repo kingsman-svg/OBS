@@ -62,6 +62,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [需求与待定事项](docs/requirements.md)
 - [现有技术栈初查](docs/technical-baseline.md)
 - [分阶段实施路线](docs/roadmap.md)
+- [弱网与RTMP低延迟优化计划（暂定）](docs/weak-network.md)
 - [首期网络与登录设计](docs/network-login.md)
 - [HTTP 登录接口契约](docs/auth-login.md)
 - [UML 图索引](docs/uml.md)

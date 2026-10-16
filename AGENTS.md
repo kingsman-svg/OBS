@@ -24,6 +24,7 @@
 - 用户最新明确：SRS、MediaMTX、OpenH264的三个研究/二开项目都在Mac独立开展，与Windows OBS、CourseStudio不联调；OBS现有媒体服务接入继续保留，不依赖Mac二开成果。
 - Player当前推进D3D11VA硬件解码与GPU颜色转换，输出独立BGRA快照，复用MediaPlayer的线程/同步/启停；软件回退和硬件回读应在统计中如实区分。
 - 本地AI美颜复用SCRFD检测线程和普通GpuBeauty：同帧框/五点驱动GPU磨皮、提亮，输出独立纹理交给时间线、预览与录制/推流；诊断框点开关独立，不新增线程或MVC，不接远程API。
+- 2026-10-16用户暂定弱网优化范围：发送队列优化、自适应码率、用户可调节码率、RTMP低延迟，优先于Agent。先补统计和运行时调码率，再调队列/自适应策略并做隔离弱网验收；WebRTC与Mac三个研究项目不并入本步。
 - 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。
 - 服务端协议放 `code/protocol/`，登录/调度/信令放 `code/services/`；共用同一网络库与 CMake 工程，配置不得保存签名密钥或真实密码。
 - 容器 `/repo` 挂载完整 CourseStudioNext 仓库，用于 Git 和全工程浏览；`/workspace` 保留服务端目录别名和原构建路径。两者为同一份本地文件。
