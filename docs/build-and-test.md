@@ -47,7 +47,7 @@ python scripts/run_checks.py --qt-root C:/software/Qt/6.11.2/msvc2022_64
 | client.audio | 六组人工音频测试；重采样/抗混叠、声道布局、时间戳与跳变、双路对齐、补零、音量/静音、削波、有界缓存与停止排空；不打开设备 |
 | client.media_sync | 共同原点、两路PTS、120ms总等待、静态复用、6000次合成闪光/脉冲、有界追赶、停止/退出与重启 |
 | client.encode | AAC/MP4软件解码验收：左右声道、缺口补零、尾长、单调DTS、中文路径、文件不覆盖、失败/abort/重启、迟到输入和有界队列；WARP验证编码GPU输出，不打开有效采集源 |
-| client.publish_control | 队列数量/时间、阻塞期间参数响应、手动码率、过期裁剪/共同截止点、AAC主动追赶、停止/重启与界面；不打开有效采集源 |
+| client.publish_control | 队列数量/时间、阻塞期间完整参数响应、手动/自动范围、ABR人工时钟策略、过期裁剪/共同截止点、AAC主动追赶、停止/重启与界面；不打开有效采集源 |
 | client.playback | 合成MP4/M4A，B帧尾部、BGRA上传、44.1kHz重采样/声道/尾长、纯音频/视频、背压、HTTP和读包取消、实际Player按钮/独立窗口/重启/退出；默认关闭声音 |
 | client.live_services | 可选；Windows Qt → Docker 调度/登录/信令；两个角色与关闭/断线/过期清理 |
 
@@ -75,4 +75,4 @@ python scripts/render_uml.py
 
 推流观测/手动码率：`python scripts/run_publish_checks.py`验证默认范围，`--gpu`显式生成270张限幅噪声帧，验证单会话内3000→400→2000kbps目标、独立重读MP4包字节/PTS/DTS/关键帧。临时媒体自动清理，截图为`out/推流控制验证/手动码率页面.png`；`QT_SCALE_FACTOR=2`额外保存中文二倍缩放截图。现有`python SRS/check.py`增加运行中调节、真实Publisher初始值/应用按钮和发送统计检查，`--beauty`同时覆盖美颜。详见[第015步](015-publish-control.md)。
 
-`python scripts/run_publish_checks.py --weak-network`保留独立本机TCP代理/RTMP收流的真实受阻恢复检查，使用生成纹理/静音PCM，不依赖Docker，要求NVIDIA；检查主动追赶、收到的FLV时间戳与GPU解码，见[第016步](016-live-queue.md)。模型优化工具保留内建`--self-test`和`--smoke`。
+`python scripts/run_publish_checks.py --gpu --weak-network`在同一现有程序内验证真实NVENC动态码流，以及本机TCP代理/RTMP收流的受阻恢复、ABR自动下降/稳定回升/手动接管、AAC追赶、收到的FLV时间戳与GPU解码。使用生成纹理/静音PCM，不依赖Docker，要求NVIDIA；见[第016步](016-live-queue.md)和[第017步](017-abr.md)。默认回归增加策略与界面检查，SRS集成增加实际按钮的完整配置切换；不恢复已删除阶段测试文件。模型优化工具保留内建`--self-test`和`--smoke`。

@@ -6,21 +6,23 @@ participant P as MediaPublisher邮箱/队列
 participant W as 推流工作线程
 participant E as MediaEncoder/NVENC
 participant R as RTMP IO
-U->>V: 设置初始码率并开播
+U->>V: 设置手动/自动及码率范围，开播
 V-->>C: startLive意图
 C->>P: begin(settings)，清状态并start
 P->>W: QThread调用run，创建独占编码/网络资源
 C->>P: push同步原始帧/PCM，记录入队时间与峰值
 P->>P: 直播高低水位裁剪过期原始媒体，音频推进共同截止点
-U->>V: 输入新码率并点击应用
-V-->>C: liveVideoBitrateRequested(bit/s)
-C->>P: requestVideoBitrate，只存最新请求
-alt 停止/纯音频/未运行/非法范围
+U->>V: 修改模式/范围并点击应用设置
+V-->>C: liveBitrateControlRequested(模式/下限/上限)
+C->>P: requestBitrateControl，只存最新整份配置
+alt 停止/纯音频/未运行/非法范围/MP4自动
 P-->>C: false，不修改当前目标
 else 接受请求
-P-->>C: true，统计显示等待下一帧提交
+P-->>C: true，统计显示新设置待接收
 W->>P: 出队前再检查年龄，整批过期则等新输入
-W->>P: 下一张视频出队，同时取走最新参数
+W->>P: 接收配置；自动保留当前目标并裁到新范围
+W->>W: 自动每500ms评估发送压力，较快下降/稳定慢升
+W->>P: 下一张视频出队，比较计划目标与提交目标
 W->>E: setVideoBitrate，修改公开码率字段
 W->>E: pushVideo，保留原PTS
 E->>E: send_frame内NVENC重配置/IDR

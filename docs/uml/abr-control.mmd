@@ -1,0 +1,44 @@
+sequenceDiagram
+actor U as 主播
+participant V as MainWindow
+participant C as Controller/GUI
+participant P as Publisher邮箱/队列
+participant A as 线程内ABR策略
+participant E as MediaEncoder/NVENC
+participant N as RTMP媒体IO
+U->>V: 选择手动/自动、下限/上限并开播
+V-->>C: 开播意图
+C->>P: begin验证设置，清状态并start
+P->>E: run内初始化编码及RTMP，复用原GPU设备/PTS
+P->>A: 创建策略，建立累计反馈基线
+U->>V: 修改范围/模式，点击应用设置
+V-->>C: 一次提交完整配置
+C->>P: requestBitrateControl，只保存最新请求
+alt 非法范围/停止/纯音频/MP4自动
+P-->>C: false，原设置不变
+else 接受请求
+P-->>C: true，显示待接收
+P->>P: 写出返回后，接收配置并裁剪过期队列
+P->>A: configure，清旧采样/冷却；裁范围或切手动
+end
+P->>A: update，每500ms提供累计反馈及本期最长写出
+alt 真实长写阻塞或持续发送压力
+A->>A: 较快下降，受下限及1.5秒冷却约束
+else 处理慢/空闲/低负载
+A->>A: 保持目标，说明原因，不盲目上探
+else 持续健康且有媒体负载
+A->>A: 连续稳定5秒，每3秒至多小步回升一次
+end
+A-->>P: 计划目标、策略原因与升降次数
+P->>P: 取下一视频，保留音视频原PTS
+P->>E: 目标改变时setVideoBitrate，再提交该帧
+E->>N: 交织写出与flush，期间不占队列锁
+C->>P: 阻塞时仍可入队/提交设置/读统计
+N-->>P: 返回/超时，记录耗时与真实字节
+P->>P: 更新计划/提交目标/实际压缩码率及升降计数
+C->>V: 最多5Hz显示策略原因及目标差异
+U->>C: 停止直播
+C->>P: stop，清配置邮箱并取消IO
+P->>A: run结束，策略及编码/网络资源析构
+P-->>C: completed或failed，随后finished解锁重启
+Note over P,N: ABR是应用层反馈，不能撤回TCP旧字节或把本机IO码率当可用带宽

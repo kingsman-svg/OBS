@@ -7,6 +7,7 @@ extern "C" {
 #include <libavutil/channel_layout.h>
 }
 #include <QApplication>
+#include <QCheckBox>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFontDatabase>
@@ -67,6 +68,7 @@ TimedAudioPacket audio(qint64 pts)
 bool telemetryChecks()
 {
     MediaPublisher publisher; CHECK(!publisher.requestVideoBitrate(500000));
+    CHECK(!publisher.requestBitrateControl({true, 400000, 4000000}));
     QTcpServer stalled; CHECK(stalled.listen(QHostAddress::LocalHost));
     QObject::connect(&stalled, &QTcpServer::newConnection, &stalled, [&] {
         while (stalled.hasPendingConnections()) {
@@ -81,6 +83,7 @@ bool telemetryChecks()
     for (int round = 0; round < 2; ++round) {
         CHECK(publisher.begin(settings)); CHECK(publisher.stats().writeCalls == 0 && publisher.stats().peakQueuedVideo == 0);
         CHECK(!publisher.requestVideoBitrate(99999) && !publisher.requestVideoBitrate(50000001));
+        CHECK(!publisher.requestBitrateControl({true, 5000000, 4000000}));
         for (int i = 0; i < 30; ++i) { auto frame = source; frame.pts = i; publisher.pushVideo(frame); }
         for (int i = 0; i < 60; ++i) publisher.pushAudio(audio(i * 480));
         CHECK(publisher.requestVideoBitrate(900000) && publisher.requestVideoBitrate(700000));
@@ -97,6 +100,7 @@ bool telemetryChecks()
     }
     QTemporaryDir temp("out/publish-audio-XXXXXX"); CHECK(temp.isValid()); settings.live = false; settings.video = false;
     settings.path = temp.filePath(QStringLiteral("统计音频.mp4")); CHECK(publisher.begin(settings)); CHECK(!publisher.requestVideoBitrate(500000));
+    CHECK(!publisher.requestBitrateControl({true, 400000, 4000000}));
     for (int i = 0; i < 30; ++i) publisher.pushAudio(audio(i * 480)); publisher.stop(); CHECK(publisher.wait(3000));
     const auto finished = publisher.stats(); CHECK(finished.audioSamples == 14400 && finished.writeCalls > 0 && finished.writeFailures == 0);
     CHECK(finished.totalWriteUs >= finished.maxWriteUs && finished.outputBytes == 0 && finished.outputBitrate == 0);
@@ -190,15 +194,71 @@ bool audioCatchupChecks()
         stats.skippedAudioSamples, packets.values.size(), samples, largestGap);
     return true;
 }
+bool adaptivePolicyChecks()
+{
+    // 人工单调时钟验证算法边界，不为本阶段增加独立测试程序，也不等待真实冷却秒数。
+    AdaptiveBitrate policy; BitrateFeedback feedback; qint64 now = 0;
+    auto tick = [&](double load = .01, qint64 peak = 2000, qint64 processPerFrame = 2000, int expired = 0, qint64 wait = 0, bool active = true, bool utilized = true) {
+        now += 500000;
+        if (active) {
+            feedback.videoFrames += 15; feedback.outputBytes += 100000;
+            feedback.writeUs += qint64(load * 500000); feedback.videoProcessUs += processPerFrame * 15;
+        }
+        feedback.expired += quint64(expired); feedback.peakWriteUs = peak; feedback.queueWaitMs = wait;
+        feedback.videoBitrate = utilized ? quint64(policy.target()) : 1000;
+        return policy.update(now, feedback);
+    };
+    CHECK(!AdaptiveBitrate::valid({true, 5000000, 4000000}) && !AdaptiveBitrate::valid({true, 99999, 4000000}));
+    policy.begin({false, 400000, 4000000}, 4000000, now, feedback);
+    for (int i = 0; i < 8; ++i) tick(.9, 400000, 2000, 3, 250);
+    CHECK(policy.target() == 4000000 && policy.reductions() == 0 && policy.state() == BitrateState::Manual);
+    policy.configure({true, 400000, 4000000}, policy.target(), now, feedback);
+    tick(.8, 400000, 2000, 3, 200); CHECK(policy.target() == 3000000 && policy.reductions() == 1);
+    tick(.8, 400000); tick(.8, 400000); CHECK(policy.target() == 3000000); // 1.5秒冷却内不重复下降。
+    tick(.8, 400000); CHECK(policy.target() == 2250000 && policy.reductions() == 2);
+    const auto lower = policy.target();
+    for (int i = 0; i < 24; ++i) tick();
+    CHECK(policy.target() > lower && policy.target() <= 4000000 && policy.increases() > 0);
+    policy.configure({true, 400000, 4000000}, 1000000, now, feedback);
+    for (int i = 0; i < 14; ++i) tick(.35, 50000);
+    CHECK(policy.target() > 1000000); // 实际有发送工作且队列稳定时仍可探测，不要求链路近乎空闲。
+    policy.configure({true, 400000, 4000000}, 1000000, now, feedback);
+    for (int i = 0; i < 16; ++i) tick(.01, 2000, 50000, 3, 200);
+    CHECK(policy.target() == 1000000 && policy.state() == BitrateState::ProcessingLimited);
+    for (int i = 0; i < 16; ++i) tick(.01, 2000, 2000, 3, 200);
+    CHECK(policy.target() == 1000000); // 仅应用队列压力、没有写出压力，不冒充网络拥塞。
+    for (int i = 0; i < 20; ++i) tick(.01, 2000, 2000, 0, 0, true, false);
+    CHECK(policy.target() == 1000000); // 静态低负载不是带宽恢复探测。
+    for (int i = 0; i < 20; ++i) tick(0, 0, 0, 0, 0, false);
+    CHECK(policy.target() == 1000000 && policy.state() == BitrateState::Idle);
+    policy.configure({true, 800000, 900000}, policy.target(), now, feedback); CHECK(policy.target() == 900000);
+    for (int i = 0; i < 10; ++i) tick(.8, 400000);
+    CHECK(policy.target() == 800000 && policy.state() == BitrateState::AtMinimum);
+    policy.configure({false, 100000, 3000000}, policy.target(), now, feedback); CHECK(policy.target() == 3000000);
+    policy.configure({true, 400000, 4000000}, 4000000, now, feedback);
+    tick(.7, 30000); CHECK(policy.target() == 4000000);
+    tick(.7, 30000); CHECK(policy.target() == 3200000); // 中等压力连续两窗才下降20%。
+    policy.begin({true, 100000, 50000000}, 50000000, now, feedback); tick(.8, 400000);
+    CHECK(policy.target() == 37500000 && policy.reductions() == 1 && policy.increases() == 0); // 覆盖整数范围和重启清零。
+    qInfo("PASS ABR policy: manual isolation / severe decline / cooldown / slow recovery / processing pressure / expiry-only / low-load and idle / bounds / reconfigure / restart / 50Mbps arithmetic");
+    return true;
+}
 bool uiChecks()
 {
     MainWindow view(ClientRole::Publisher); view.applyLoginState("root", false, true); view.resize(640, 480); view.show();
     auto *spin = view.findChild<QSpinBox *>("liveVideoBitrateSpin");
     auto *button = view.findChild<QPushButton *>("applyLiveBitrateButton");
-    CHECK(spin && button && view.liveVideoBitrate() == 4000000); QSignalSpy requests(&view, &MainWindow::liveVideoBitrateRequested);
+    auto *automatic = view.findChild<QCheckBox *>("liveAutomaticBitrateCheck");
+    auto *minimum = view.findChild<QSpinBox *>("liveMinimumBitrateSpin");
+    CHECK(spin && button && automatic && minimum && view.liveVideoBitrate() == 4000000 && !view.liveAutomaticBitrate());
+    QSignalSpy requests(&view, &MainWindow::liveBitrateControlRequested);
     view.applyLiveOutputState(false, true, QStringLiteral("正在推流\n视频120帧，音频4秒\n请求600kbps，编码器目标600kbps\n视频压缩码率590kbps，本机发送650kbps\n队列视频3/音频10，跨度100/100ms，队头等待20/30ms\n视频处理3ms，写出最近2ms/最长986ms/正在等待0ms\n过期丢弃视频51/音频168，队列追赶8次，音频跳过4次/1.685秒"));
     spin->setValue(750); CHECK(requests.isEmpty()); button->click();
-    CHECK(requests.size() == 1 && requests.first().first().toInt() == 750000 && view.liveVideoBitrate() == 750000);
+    CHECK(requests.size() == 1 && !requests.first()[0].toBool() && requests.first()[2].toInt() == 750000 && view.liveVideoBitrate() == 750000);
+    automatic->setChecked(true); minimum->setValue(250); CHECK(requests.size() == 1 && minimum->isEnabled()); button->click();
+    CHECK(requests.size() == 2 && requests.last()[0].toBool() && requests.last()[1].toInt() == 250000 && requests.last()[2].toInt() == 750000);
+    spin->setValue(100); CHECK(minimum->value() == 100 && requests.size() == 2);
+    spin->setValue(750); minimum->setValue(250); // 截图展示自动配置，后续停止仍锁定应用。
     auto *scroll = view.findChild<QScrollArea *>("workspaceScroll"); CHECK(scroll); QTest::qWait(60);
     scroll->ensureWidgetVisible(button); QTest::qWait(40);
     CHECK(scroll->viewport()->rect().contains(QRect(spin->mapTo(scroll->viewport(), QPoint()), spin->size())));
@@ -210,7 +270,7 @@ bool uiChecks()
     CHECK(scroll->viewport()->rect().contains(QRect(status->mapTo(scroll->viewport(), QPoint()), status->size())));
     QDir().mkpath("out/队列恢复验证"); CHECK(view.grab().save(QStringLiteral("out/队列恢复验证/直播追赶统计页面%1.png").arg(suffix)));
     view.applyLiveOutputState(false, false, "stopped"); CHECK(!button->isEnabled());
-    qInfo("PASS manual bitrate UI: kbps->bit/s / explicit apply / no per-digit request / compact layout / stop lock"); return true;
+    qInfo("PASS bitrate UI: kbps->bit/s / atomic manual-automatic range / explicit apply / no per-digit request / compact layout / stop lock"); return true;
 }
 struct Input {
     AVFormatContext *format = nullptr; ~Input() { avformat_close_input(&format); }
@@ -222,6 +282,7 @@ bool hardwareChecks()
     settings.path = temp.filePath(QStringLiteral("动态码率.mp4")); settings.width = 640; settings.height = 360; settings.audio = false; settings.videoBitrate = 3000000;
     QSignalSpy errors(&publisher, &MediaPublisher::failed), opened(&publisher, &MediaPublisher::opened);
     CHECK(publisher.begin(settings)); std::array<quint64, 3> windows{};
+    CHECK(!publisher.requestBitrateControl({true, 400000, 3000000})); // MP4录制不接受自动策略。
     const std::array<int, 3> targets{3000000, 400000, 2000000};
     for (int i = 0; i < 270; ++i) {
         if (i == 90 || i == 180) {
@@ -279,24 +340,36 @@ bool blockedWriteChecks()
     CHECK(receiver.waitForStarted(2000)); QTest::qWait(400);
     QTcpServer relay; CHECK(relay.listen(QHostAddress::LocalHost));
     QTcpSocket upstream; QTcpSocket *downstream = nullptr; bool paused = false;
-    auto forward = [&] {
+    std::function<void()> forward;
+    forward = [&] {
         if (!downstream && relay.hasPendingConnections()) {
             downstream = relay.nextPendingConnection(); upstream.connectToHost(QHostAddress::LocalHost, port);
+            downstream->setSocketOption(QAbstractSocket::LowDelayOption, 1);
+            QObject::connect(downstream, &QTcpSocket::readyRead, &relay, [&] { forward(); });
         }
         if (!downstream) return;
-        if (!paused && upstream.state() == QAbstractSocket::ConnectedState && upstream.bytesToWrite() < 65536) {
-            const auto count = std::min<qint64>(65536 - upstream.bytesToWrite(), downstream->bytesAvailable());
+        if (!paused && upstream.state() == QAbstractSocket::ConnectedState && upstream.bytesToWrite() < 262144) {
+            const auto count = std::min<qint64>(262144 - upstream.bytesToWrite(), downstream->bytesAvailable());
             if (count > 0) upstream.write(downstream->read(count));
         }
         if (upstream.bytesAvailable()) downstream->write(upstream.readAll());
     };
+    QObject::connect(&upstream, &QTcpSocket::readyRead, &relay, [&] { forward(); });
+    QObject::connect(&upstream, &QTcpSocket::bytesWritten, &relay, [&] { forward(); });
+    QObject::connect(&upstream, &QTcpSocket::connected, &relay, [&] {
+        upstream.setSocketOption(QAbstractSocket::LowDelayOption, 1); // 恢复后代理本身不引入Nagle小包等待。
+        forward();
+    });
     MediaPublisher publisher; RecordingSettings settings; settings.live = true;
     settings.path = QString("rtmp://127.0.0.1:%1/live/queue").arg(relay.serverPort());
-    settings.width = 1280; settings.height = 720; settings.videoBitrate = 50000000;
+    settings.width = 640; settings.height = 360; settings.videoBitrate = 8000000; // 留出处理余量，避免GPU饱和干扰网络恢复验收。
+    settings.adaptiveBitrate = true; settings.minimumVideoBitrate = 400000;
     auto d3d = device(true);
-    std::array<TimedVideoFrame, 12> stressFrames;
-    for (int i = 0; i < int(stressFrames.size()); ++i) stressFrames[i] = video(d3d.Get(), i, false, true);
-    const auto recoveredFrame = video(d3d.Get(), 0, true);
+    std::array<TimedVideoFrame, 12> stressFrames, recoveredFrames;
+    for (int i = 0; i < int(stressFrames.size()); ++i) {
+        stressFrames[i] = video(d3d.Get(), i, false, true);
+        recoveredFrames[i] = video(d3d.Get(), i, true); // 恢复后仍是变化画面，保留实际负载供小步上探。
+    }
     QSignalSpy errors(&publisher, &MediaPublisher::failed), opened(&publisher, &MediaPublisher::opened);
     QElapsedTimer timer; timer.start(); paused = true;
     CHECK(publisher.begin(settings)); publisher.pushVideo(stressFrames[0]); publisher.pushAudio(audio(0));
@@ -309,29 +382,50 @@ bool blockedWriteChecks()
     CHECK(publisher.stats().expiredVideo == 1 && publisher.stats().expiredAudio == 1); // 无新入队，出队检查仍剔除整批旧数据。
     int videos = int(timer.elapsed() * 30 / 1000) + 1, audios = int(timer.elapsed() / 10) + 1;
     qint64 pausedAt = -1, resumedAt = -1;
-    bool blocked = false; quint64 beforeRecovery = 0;
-    while (timer.elapsed() < 10000 && (resumedAt < 0 || timer.elapsed() - resumedAt < 1800)) {
+    bool blocked = false, automaticDecrease = false, automaticIncrease = false;
+    quint64 beforeRecovery = 0, priorReductions = 0; qint64 manualAt = -1, diagnosticAt = 0; int lastTarget = settings.videoBitrate;
+    while (timer.elapsed() < 25000 && (manualAt < 0 || timer.elapsed() - manualAt < 800)) {
         forward();
         const auto time = timer.elapsed();
         if (time * 30 >= videos * 1000) {
             // 预生成纹理，避免CPU造噪声本身挤占GUI时间，使注入主要作用于网络写出。
-            auto frame = resumedAt >= 0 ? recoveredFrame : stressFrames[size_t(videos) % stressFrames.size()];
+            auto frame = resumedAt >= 0 ? recoveredFrames[size_t(videos) % recoveredFrames.size()] : stressFrames[size_t(videos) % stressFrames.size()];
             frame.pts = videos; frame.source.video.sequence = quint64(++videos); publisher.pushVideo(frame);
         }
         while (audios * 10 <= time) publisher.pushAudio(audio(audios++ * 480));
         const auto stats = publisher.stats();
+        if (stats.targetVideoBitrate != lastTarget) {
+            qInfo("ABR target: %d->%d kbps actual=%llu kbps down/up=%llu/%llu writeLoad=%.1f%% state=%d IO=%llu kbps lastWrite=%.1fms process=%.1fms relayPending=%lld",
+                lastTarget / 1000, stats.targetVideoBitrate / 1000, stats.videoPayloadBitrate / 1000,
+                stats.bitrateReductions, stats.bitrateIncreases, stats.bitrateWriteLoad * 100, int(stats.bitrateState),
+                stats.outputBitrate / 1000, stats.lastWriteUs / 1000.0, stats.lastVideoEncodeUs / 1000.0, upstream.bytesToWrite());
+            lastTarget = stats.targetVideoBitrate;
+        }
         if (pausedAt < 0 && time > 1200 && stats.videoFrames >= 10 && downstream) {
             paused = true; pausedAt = time;
-            downstream->setReadBufferSize(4096); downstream->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, 4096);
+            priorReductions = stats.bitrateReductions;
+            downstream->setReadBufferSize(4096); // 仅限应用读取，保留系统TCP自动调节，恢复时不遗留小接收窗口。
         }
         if (paused) {
             if (stats.writing && stats.currentWriteUs > 350000) blocked = true;
             if ((blocked && time - pausedAt >= 900) || time - pausedAt >= 3000) {
                 paused = false; resumedAt = time; beforeRecovery = stats.videoFrames;
-                downstream->setReadBufferSize(0); downstream->setSocketOption(QAbstractSocket::ReceiveBufferSizeSocketOption, 262144);
-                CHECK(publisher.requestVideoBitrate(5000000));
+                downstream->setReadBufferSize(0);
                 qInfo("RTMP proxy resume: paused=%lldms blocked=%d queues=%llu/%llu expiry=%llu/%llu currentWrite=%.1fms",
                     resumedAt - pausedAt, blocked, stats.queuedVideo, stats.queuedAudio, stats.expiredVideo, stats.expiredAudio, stats.currentWriteUs / 1000.0);
+            }
+        }
+        if (resumedAt >= 0) {
+            automaticDecrease = automaticDecrease || (stats.bitrateReductions > priorReductions && stats.encoderVideoBitrate == stats.targetVideoBitrate);
+            automaticIncrease = automaticIncrease || (stats.bitrateIncreases > 0 && stats.encoderVideoBitrate == stats.targetVideoBitrate);
+            if (time - diagnosticAt >= 2000) {
+                qInfo("ABR observe: t=%lldms target=%d actual=%llu kbps writeLoad=%.1f%% lastWrite=%.1fms process=%.1fms age=%lld/%lldms state=%d",
+                    time, stats.targetVideoBitrate / 1000, stats.videoPayloadBitrate / 1000, stats.bitrateWriteLoad * 100,
+                    stats.lastWriteUs / 1000.0, stats.lastVideoEncodeUs / 1000.0, stats.oldestVideoWaitMs, stats.oldestAudioWaitMs, int(stats.bitrateState));
+                diagnosticAt = time;
+            }
+            if (automaticDecrease && automaticIncrease && manualAt < 0) {
+                CHECK(publisher.requestVideoBitrate(5000000)); manualAt = time; // 直接手动请求明确关闭自动控制。
             }
         }
         QTest::qWait(3);
@@ -348,6 +442,7 @@ bool blockedWriteChecks()
     CHECK(blocked && stats.maxWriteUs >= 350000 && stats.videoFrames > beforeRecovery + 10 && opened.size() == 1);
     CHECK(stats.expiredVideo > 0 && stats.expiredAudio > 0 && stats.audioResyncs > 0 && stats.skippedAudioSamples > 0 && stats.silentSamples == 0);
     CHECK(stats.oldestVideoWaitMs <= 300 && stats.oldestAudioWaitMs <= 300 && stats.encoderVideoBitrate == 5000000);
+    CHECK(automaticDecrease && automaticIncrease && !stats.automaticBitrate && stats.requestedVideoBitrate == 5000000);
     QElapsedTimer stopping; stopping.start(); publisher.stop(); CHECK(publisher.wait(2000));
     const auto stopMs = stopping.elapsed();
     QElapsedTimer draining; draining.start();
@@ -375,7 +470,7 @@ bool blockedWriteChecks()
     qInfo("RTMP received: GPU=%d lastVideo=%.3fs audioEnd=%.3fs largestAudioGap=%.1fms tailSkew=%.1fms stop=%lldms",
         decoded, lastVideo / 1000000.0, audioEnd / 48000.0, largestAudioGap / 48.0, skew / 1000.0, stopMs);
     CHECK(valid && decoded >= 20 && largestAudioGap > 9600 && skew < 200000);
-    qInfo("PASS real blocked RTMP write / bounded fresh queues / shared audio recovery without silence refill / GPU decoding and timestamps / single session / stop");
+    qInfo("PASS real blocked RTMP write / automatic decline and stable recovery / manual override / bounded queues and AAC catchup / GPU decode timestamps / single session / stop");
     return true;
 }
 }
@@ -386,7 +481,7 @@ int main(int argc, char **argv)
     });
     QApplication app(argc, argv); QDir().mkpath("out"); const int font = QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyh.ttc");
     if (font >= 0) app.setFont(QFont(QFontDatabase::applicationFontFamilies(font).constFirst(), 10));
-    try { return telemetryChecks() && queueExpiryChecks() && audioCatchupChecks() && uiChecks()
+    try { return telemetryChecks() && queueExpiryChecks() && audioCatchupChecks() && adaptivePolicyChecks() && uiChecks()
         && (!app.arguments().contains("--gpu") || hardwareChecks())
         && (!app.arguments().contains("--weak-network") || blockedWriteChecks()) ? 0 : 1; }
     catch (const winrt::hresult_error &error) { qCritical().noquote() << QString::fromStdWString(error.message().c_str()); }

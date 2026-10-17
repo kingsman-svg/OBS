@@ -342,6 +342,8 @@ void SessionController::startCapture(const QList<CaptureSource> &selection)
         // 2a. 与同步原点一起建立RTMP入口；本轮PTS从零开始，不从中途录制时间线起推。
         RecordingSettings settings; settings.path = m_liveUrl; settings.live = true;
         settings.videoBitrate = m_view->liveVideoBitrate();
+        settings.adaptiveBitrate = videoSelected && m_view->liveAutomaticBitrate();
+        settings.minimumVideoBitrate = m_view->liveMinimumVideoBitrate();
         settings.video = videoSelected; settings.audio = microphone || system;
         if (!m_livePublisher->begin(settings)) { m_livePending = false; m_liveMessage = tr("推流线程尚未退出"); }
     }
@@ -718,9 +720,9 @@ void SessionController::setupLiveOutput()
     // 1. Controller拥有第二个输出线程；录制/直播独立封装，复用同一批同步GPU帧和PCM。
     m_livePublisher = new MediaPublisher(this);
     // 参数入口只投递到工作线程邮箱；停止中/纯音频/非法参数明确拒绝，不覆盖当前目标。
-    connect(m_view, &MainWindow::liveVideoBitrateRequested, this, [this](int bitsPerSecond) {
+    connect(m_view, &MainWindow::liveBitrateControlRequested, this, [this](bool automatic, int minimum, int maximum) {
         if (!m_loggedIn || !m_livePending || m_stoppingCapture) return;
-        if (!m_livePublisher->requestVideoBitrate(bitsPerSecond)) m_liveMessage = tr("码率请求未接受：视频输出未运行或数值超出范围");
+        if (!m_livePublisher->requestBitrateControl({automatic, minimum, maximum})) m_liveMessage = tr("码率设置未接受：视频未运行或上下限无效");
         refreshLiveView();
     });
     connect(this, &SessionController::synchronizedVideoReady, m_livePublisher, &MediaPublisher::pushVideo);
@@ -779,16 +781,30 @@ void SessionController::refreshLiveView(bool force)
     const bool canStart = m_loggedIn && m_model->ready() && !m_model->busy() && !m_model->room().isEmpty()
         && !m_liveUrl.isEmpty() && !m_livePending && !m_recordingPending && m_pendingCapture.isEmpty() && !m_enumerator && !m_stoppingCapture;
     const QString target = stats.encoderVideoBitrate ? QString::number(stats.encoderVideoBitrate / 1000) + tr(" kbps") : tr("等待视频帧");
-    const QString pending = stats.requestedVideoBitrate != stats.encoderVideoBitrate
+    const QString pending = stats.targetVideoBitrate != stats.encoderVideoBitrate
         ? (m_livePending && !m_stoppingCapture ? tr("（等待下一帧提交）") : tr("（未提交）")) : QString();
+    QString state;
+    switch (stats.bitrateState) {
+    case BitrateState::Manual: state = tr("手动固定目标"); break;
+    case BitrateState::Observing: state = tr("观察反馈"); break;
+    case BitrateState::Decreasing: state = tr("发送压力，降码率/冷却"); break;
+    case BitrateState::AtMinimum: state = tr("已达最低码率，仍有发送压力"); break;
+    case BitrateState::Recovering: state = tr("稳定后小步回升"); break;
+    case BitrateState::ProcessingLimited: state = tr("处理耗时偏高，暂不判为网络拥塞"); break;
+    case BitrateState::Idle: state = tr("媒体不足，暂停上探"); break;
+    }
+    const auto abr = tr("%1 · 计划目标 %2 kbps · 自动降/升 %3/%4 次 · 写出占时 %5% · %6%7")
+        .arg(stats.automaticBitrate ? tr("自动码率") : tr("手动码率")).arg(stats.targetVideoBitrate / 1000)
+        .arg(stats.bitrateReductions).arg(stats.bitrateIncreases).arg(stats.bitrateWriteLoad * 100, 0, 'f', 1).arg(state)
+        .arg(stats.bitrateControlPending ? tr("（新设置待接收）") : QString());
     m_view->applyLiveOutputState(canStart, m_livePending,
-        tr("%1\n视频 %2 帧 · 音频 %3 秒 · 编码 %4 KB\n请求 %5 kbps · 编码器目标 %6%7\n视频压缩码率 %8 kbps（窗口 %9 ms）· 本机发送 %10 kbps（1秒）\n队列 视频 %11 / 音频 %12 · 跨度 %13 / %14 ms · 队头等待 %15 / %16 ms\n视频处理 %17 ms（不含写出）· 写出 最近 %18 / 最长 %19 / 正在等待 %20 ms\n过期丢弃 视频 %21 / 音频 %22 · 队列追赶 %23 次 · 音频跳过 %24 次 / %25 秒")
+        tr("%1\n视频 %2 帧 · 音频 %3 秒 · 编码 %4 KB\n用户目标/上限 %5 kbps · 编码器目标 %6%7\n视频压缩码率 %8 kbps（窗口 %9 ms）· 本机发送 %10 kbps（1秒）\n队列 视频 %11 / 音频 %12 · 跨度 %13 / %14 ms · 队头等待 %15 / %16 ms\n视频处理 %17 ms（不含写出）· 写出 最近 %18 / 最长 %19 / 正在等待 %20 ms\n过期丢弃 视频 %21 / 音频 %22 · 队列追赶 %23 次 · 音频跳过 %24 次 / %25 秒\n%26")
         .arg(m_liveMessage).arg(stats.videoFrames).arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.bytes / 1024)
         .arg(stats.requestedVideoBitrate / 1000).arg(target).arg(pending).arg(stats.videoPayloadBitrate / 1000).arg(stats.videoRateWindowMs)
         .arg(stats.outputBitrate / 1000).arg(stats.queuedVideo).arg(stats.queuedAudio).arg(stats.videoQueueSpanMs).arg(stats.audioQueueSpanMs)
         .arg(stats.oldestVideoWaitMs).arg(stats.oldestAudioWaitMs).arg(stats.lastVideoEncodeUs / 1000.0, 0, 'f', 2)
         .arg(stats.lastWriteUs / 1000.0, 0, 'f', 2).arg(stats.maxWriteUs / 1000.0, 0, 'f', 2).arg(stats.currentWriteUs / 1000.0, 0, 'f', 2)
-        .arg(stats.expiredVideo).arg(stats.expiredAudio).arg(stats.liveCatchups).arg(stats.audioResyncs).arg(stats.skippedAudioSamples / 48000.0, 0, 'f', 3),
+        .arg(stats.expiredVideo).arg(stats.expiredAudio).arg(stats.liveCatchups).arg(stats.audioResyncs).arg(stats.skippedAudioSamples / 48000.0, 0, 'f', 3).arg(abr),
         !m_stoppingCapture && m_pendingCapture.contains(m_video));
 }
 void SessionController::startLivePlayback()

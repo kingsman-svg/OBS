@@ -11,23 +11,25 @@ S-->>C: 房间未开播、创建者pushUrl
 U->>C: 选择源并开始直播
 C->>T: 混音与同步begin，共同QPC原点
 C->>P: begin保存参数，QThread start
-C->>P: 初始视频目标来自用户设置
+C->>P: 初始目标、手动/自动及上下限来自用户设置
 C->>T: 启动采集与检测线程
 T-->>C: GUI取最新帧/音频并同步PTS
 C->>P: pushVideo/pushAudio快速有界入队
 P->>P: 直播按媒体跨度/等待年龄裁剪，保留追赶标记
 P->>P: run等首帧设备，初始化NVENC/AAC与FLV
 P->>R: RTMP连接并写头
+P->>P: 初始化本轮ABR反馈基线，复用输出线程
 alt 连接/编码失败
 P-->>C: failed，资源回收后finished
 C->>U: 显示错误，采集预览可继续
 else 媒体写出
-P->>P: 出队前检查过期；保留PTS，音频主动追赶不补回大段静音
+P->>P: 出队前裁剪过期；自动模式评估写出/队列压力
+P->>P: 改目标则下一视频前提交；保留PTS及主动音频追赶
 P->>R: 编码媒体包，刷新网络IO
 P-->>C: transmitting一次
 C->>S: live.start
 S-->>C: 开播响应与live.changed
 C->>U: 显示推流状态与统计
-C->>P: 可选运行时码率请求，下一帧前由工作线程应用
+C->>P: 可选运行时完整配置请求，下一帧前由工作线程应用
 end
 Note over C,P: 本地录制用另一输出线程，共用同步输入；GUI不编码或等待网络

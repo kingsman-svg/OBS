@@ -2,6 +2,8 @@
 
 本步实现编码前原始媒体队列的时效控制，接续[第015步](015-publish-control.md)的统计和运行时码率入口。只作用于直播；本地MP4继续原有数量上限、缺口补静音和尾部封存。自动码率、自动重连与新的RTMP缓冲调优仍是后续增量。
 
+后续状态：第017步已接入[自动码率与模式切换](017-abr.md)，下文保留第016步当时的范围与验收记录。
+
 ## 对象、线程与资源
 
 `SessionController`在GUI持有录制/直播两个`MediaPublisher`。`pushVideo/pushAudio/stats/stop`只短暂加队列锁；`run`独占普通`MediaEncoder`、GPU帧池、AAC FIFO、封装与网络资源。本步不增加工作线程或MVC，不操作已编码参考包或已交给TCP的字节。

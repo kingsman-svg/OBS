@@ -5,6 +5,7 @@
 #include <QWaitCondition>
 #include <deque>
 #include <atomic>
+#include <optional>
 
 namespace csn {
 // Controller拥有的编码/封装线程；GUI只调用begin/push/stop，FFmpeg资源只在run存在。
@@ -16,7 +17,8 @@ public:
     bool begin(const RecordingSettings &settings);      // GUI保存本轮参数、清空队列，再start线程。
     void pushVideo(const TimedVideoFrame &frame);        // 快速复制纹理引用，直播按数量/时间裁剪旧帧。
     void pushAudio(const TimedAudioPacket &packet);      // 快速复制PCM；直播过期跳过，录制缺口仍补零。
-    bool requestVideoBitrate(int bitsPerSecond);         // GUI/策略只更新单值参数邮箱；未运行/停播/非法值返回false。
+    bool requestVideoBitrate(int bitsPerSecond);         // 兼容手动入口：投递完整配置并退出自动模式；失败不改变原配置。
+    bool requestBitrateControl(const BitrateControl &control); // 原子提交模式/上下限，自动不支持MP4或纯音频。
     void stop();                                        // MP4排空封存；直播取消网络IO并退出，不阻塞调用者。
     void abort();                                       // 放弃本轮文件，唤醒线程；用于明确取消/测试。
     EncodingStats stats() const;                        // 加锁复制统计，不暴露工作线程上下文。
@@ -31,6 +33,8 @@ private:
     void publishStats(const EncodingStats &stats);        // 合并工作线程编码统计与入口丢弃计数。
     void finishWrite(qint64 startedUs, quint64 bytes, bool failed); // 写出结束/抛错均记录耗时，IO期间不持锁。
     void trimLiveQueues(qint64 nowUs);                  // 调用方持锁；入队/出队前检查，音频追赶同步推进视频截止点。
+    BitrateFeedback bitrateFeedback(qint64 nowUs) const; // 调用方持锁，构造当前累计反馈；不调用另一个加锁接口。
+    void publishBitrateState(const AdaptiveBitrate &policy); // 调用方持锁，只更新工作线程拥有的策略字段。
     struct QueuedVideo { TimedVideoFrame value; qint64 enteredUs; }; // 一帧及进入应用队列的单调时间。
     struct QueuedAudio { TimedAudioPacket value; qint64 enteredUs; }; // 一包PCM及其入队时间。
     struct OutputSample { qint64 endedUs; quint64 bytes; };          // 最近1秒RTMP本地IO写出样本。
@@ -41,7 +45,8 @@ private:
     std::deque<QueuedAudio> m_audio;                      // 最多50个10ms包，附带可观测入队时间。
     std::deque<OutputSample> m_outputSamples;             // 写出时裁掉1秒之前的样本，GUI只复制聚合值。
     EncodingStats m_stats;                               // GUI可读快照，包括队列溢出计数。
-    int m_pendingVideoBitrate = 0;                       // 最新未消费请求；0表示空，参数不形成无界队列。
+    std::optional<BitrateControl> m_pendingBitrateControl; // 最新完整配置覆盖旧请求，切模式与上下限不可拆开。
+    qint64 m_bitratePeakWriteUs = 0;                    // 自策略上次取样以来最长写出，采样后清零，避免历史峰值反复降码率。
     qint64 m_writeStartedUs = 0;                         // 写出开始时间；stats可在IO阻塞时观察已等待时间。
     qint64 m_videoCutoffUs = 0, m_audioCutoffUs = 0;      // 本轮单调前进的媒体截止点，拒绝迟到旧数据；单位微秒。
     bool m_videoGap = false, m_audioGap = false;         // 裁剪后交给下一张视频/下一包音频，不能在队列暂空时丢失。

@@ -3,6 +3,7 @@ add_library(OBSFFmpegCore STATIC
     GpuVideoOutput.cpp GpuVideoOutput.h
     GpuVideoConverter.cpp GpuVideoConverter.h
     MediaEncoder.cpp MediaEncoder.h
+    AdaptiveBitrate.cpp AdaptiveBitrate.h
     MediaPublisher.cpp MediaPublisher.h
     MediaDecoder.cpp MediaDecoder.h MediaPlayer.cpp MediaPlayer.h)
 target_include_directories(OBSFFmpegCore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

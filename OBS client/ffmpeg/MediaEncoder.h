@@ -1,5 +1,6 @@
 #pragma once
 #include "MediaTimeline.h"
+#include "AdaptiveBitrate.h"
 #include <QString>
 #include <functional>
 #include <memory>
@@ -7,8 +8,6 @@ struct AVCodecContext;
 struct AVPacket;
 
 namespace csn {
-inline constexpr int MinimumVideoBitrate = 100000; // 首期视频目标范围100kbps～50Mbps，UI与线程入口共用。
-inline constexpr int MaximumVideoBitrate = 50000000;
 struct RecordingSettings {
     QString path;             // 本地.mp4路径或RTMP地址；协议由live明确选择。
     bool live = false;        // true用FLV/RTMP，false保留临时MP4安全封存。
@@ -17,6 +16,8 @@ struct RecordingSettings {
     int width = 1280;         // 编码尺寸固定，源尺寸变化只影响GPU缩放。
     int height = 720;         // 偶数尺寸，默认720p。
     int videoBitrate = 4000000; // H.264目标码率，bit/s。
+    bool adaptiveBitrate = false; // 仅直播视频支持；开启后videoBitrate作为初始值与上限。
+    int minimumVideoBitrate = 400000; // 自动下限，手动模式不使用。
     int audioBitrate = 128000;  // AAC目标码率，bit/s。
     int liveQueueLimitMs = 300; // 直播队列高水位：媒体跨度或入队等待超过它时追赶；不代表端到端延迟。
     int liveQueueTargetMs = 100; // 触发后保留的时间窗口，必须小于高水位；本地录制不使用。
@@ -34,6 +35,12 @@ struct EncodingStats {
     quint64 audioResyncs = 0;  // 编码线程实际执行的主动音频追赶次数，普通缺口仍补零。
     quint64 skippedAudioSamples = 0; // 主动跳过的音频时间缺口及未编码FIFO样本，不计为补静音。
     int requestedVideoBitrate = 0; // 用户最新请求，等待工作线程提交时可与编码器目标不同。
+    int targetVideoBitrate = 0;    // 工作线程策略/手动生成的计划目标，下一视频帧才提交。
+    bool automaticBitrate = false; // 本轮已接收的模式；GUI待处理请求另有pending标志。
+    bool bitrateControlPending = false; // 最新整份配置仍在参数邮箱中，IO阻塞时不冒充已接收。
+    quint64 bitrateReductions = 0, bitrateIncreases = 0; // 本轮自动下降/回升次数。
+    BitrateState bitrateState = BitrateState::Manual; // 策略原因，界面解释保持或调整。
+    double bitrateWriteLoad = 0;   // EWMA写出占时，非网络带宽利用率。
     int encoderVideoBitrate = 0;   // 已随视频帧提交的编码器目标，不冒充驱动确认或实际带宽。
     quint64 videoPayloadBitrate = 0; // 最近最多1秒媒体PTS内的视频压缩包码率，不含音频/封装。
     qint64 videoRateWindowMs = 0;  // 视频码率的媒体统计窗口，首帧不足1秒时明确显示。

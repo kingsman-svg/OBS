@@ -91,10 +91,15 @@ bool MediaPublisher::begin(const RecordingSettings &settings)
     if (isRunning()) return false;
     if (settings.live && (settings.liveQueueTargetMs < 10 || settings.liveQueueLimitMs > 5000
         || settings.liveQueueTargetMs >= settings.liveQueueLimitMs)) return false;
+    const BitrateControl control{settings.adaptiveBitrate, settings.adaptiveBitrate ? settings.minimumVideoBitrate : MinimumVideoBitrate, settings.videoBitrate};
+    if ((settings.adaptiveBitrate && (!settings.live || !settings.video)) || !AdaptiveBitrate::valid(control)) return false;
     m_settings = settings; m_video.clear(); m_audio.clear(); m_stats = {};
-    m_outputSamples.clear(); m_pendingVideoBitrate = 0; m_writeStartedUs = 0;
+    m_outputSamples.clear(); m_pendingBitrateControl.reset(); m_writeStartedUs = m_bitratePeakWriteUs = 0;
     m_videoCutoffUs = m_audioCutoffUs = 0; m_videoGap = m_audioGap = false;
     m_stats.requestedVideoBitrate = settings.video ? settings.videoBitrate : 0;
+    m_stats.targetVideoBitrate = m_stats.requestedVideoBitrate;
+    m_stats.automaticBitrate = settings.adaptiveBitrate;
+    m_stats.bitrateState = settings.adaptiveBitrate ? BitrateState::Observing : BitrateState::Manual;
     m_accepting = true; m_finishing = false; m_aborted = false; m_cancelIo.store(false);
     start(); return true; // 2. QThread建立工作线程，随后在该线程调用run。
 }
@@ -145,30 +150,54 @@ void MediaPublisher::trimLiveQueues(qint64 now)
 }
 bool MediaPublisher::requestVideoBitrate(int bitsPerSecond)
 {
-    // 2b. 与stop共用锁；运行中只合并最新请求，不在GUI访问AVCodecContext或等待网络写出。
-    if (bitsPerSecond < MinimumVideoBitrate || bitsPerSecond > MaximumVideoBitrate) return false;
+    // 2b. 兼容原手动入口，明确切回固定目标；GUI与策略共享同一条工作线程提交路径。
+    return requestBitrateControl({false, MinimumVideoBitrate, bitsPerSecond});
+}
+bool MediaPublisher::requestBitrateControl(const BitrateControl &control)
+{
+    if (!AdaptiveBitrate::valid(control)) return false;
     QMutexLocker lock(&m_mutex);
-    if (!m_accepting || !m_settings.video) return false;
-    m_pendingVideoBitrate = bitsPerSecond; m_stats.requestedVideoBitrate = bitsPerSecond;
+    if (!m_accepting || !m_settings.video || (control.automatic && !m_settings.live)) return false;
+    m_pendingBitrateControl = control; m_stats.requestedVideoBitrate = control.maximum;
     m_ready.wakeOne(); return true;
+}
+BitrateFeedback MediaPublisher::bitrateFeedback(qint64 now) const
+{
+    BitrateFeedback result;
+    result.videoFrames = m_stats.videoFrames; result.outputBytes = m_stats.outputBytes;
+    result.expired = m_stats.expiredVideo + m_stats.expiredAudio;
+    result.writeUs = m_stats.totalWriteUs; result.videoProcessUs = m_stats.totalVideoEncodeUs;
+    result.peakWriteUs = m_bitratePeakWriteUs; result.videoBitrate = m_stats.videoPayloadBitrate;
+    if (!m_video.empty()) result.queueWaitMs = std::max<qint64>(0, now - m_video.front().enteredUs) / 1000;
+    if (!m_audio.empty()) result.queueWaitMs = std::max(result.queueWaitMs, std::max<qint64>(0, now - m_audio.front().enteredUs) / 1000);
+    return result;
+}
+void MediaPublisher::publishBitrateState(const AdaptiveBitrate &policy)
+{
+    // 不覆盖GUI并发提交的用户上限；计划目标/模式与编码器实际提交目标分别展示。
+    m_stats.targetVideoBitrate = m_settings.video ? policy.target() : 0;
+    m_stats.automaticBitrate = policy.automatic(); m_stats.bitrateState = policy.state();
+    m_stats.bitrateReductions = policy.reductions(); m_stats.bitrateIncreases = policy.increases();
+    m_stats.bitrateWriteLoad = policy.writeLoad();
 }
 void MediaPublisher::stop()
 {
     QMutexLocker lock(&m_mutex);
     m_accepting = false; m_finishing = true;
-    m_pendingVideoBitrate = 0; // 停止后不再将未消费的界面请求应用到排空尾部。
+    m_pendingBitrateControl.reset(); // 停止后不再将未消费的界面请求应用到排空尾部。
     if (m_settings.live) m_cancelIo.store(true); // 网络停止优先退出，MP4仍正常排空。
     m_ready.wakeOne();
 }
 void MediaPublisher::abort()
 {
     QMutexLocker lock(&m_mutex);
-    m_accepting = false; m_aborted = true; m_cancelIo.store(true); m_video.clear(); m_audio.clear(); m_pendingVideoBitrate = 0; m_ready.wakeOne();
+    m_accepting = false; m_aborted = true; m_cancelIo.store(true); m_video.clear(); m_audio.clear(); m_pendingBitrateControl.reset(); m_ready.wakeOne();
 }
 EncodingStats MediaPublisher::stats() const
 {
     // 2c. 队列等待/正在写出均用当前单调时间计算；网络阻塞也不会卡住GUI取统计。
     QMutexLocker lock(&m_mutex); auto result = m_stats; const auto now = nowUs();
+    result.bitrateControlPending = m_pendingBitrateControl.has_value();
     result.queuedVideo = m_video.size(); result.queuedAudio = m_audio.size();
     if (!m_video.empty()) {
         result.oldestVideoWaitMs = std::max<qint64>(0, now - m_video.front().enteredUs) / 1000;
@@ -196,6 +225,7 @@ void MediaPublisher::finishWrite(qint64 startedUs, quint64 bytes, bool failed)
     const auto ended = nowUs(), duration = ended - startedUs;
     QMutexLocker lock(&m_mutex); m_writeStartedUs = 0; ++m_stats.writeCalls;
     m_stats.lastWriteUs = duration; m_stats.maxWriteUs = std::max(m_stats.maxWriteUs, duration); m_stats.totalWriteUs += duration;
+    m_bitratePeakWriteUs = std::max(m_bitratePeakWriteUs, duration);
     if (failed) ++m_stats.writeFailures;
     if (m_settings.live) {
         m_stats.outputBytes += bytes; m_outputSamples.push_back({ended, bytes});
@@ -244,6 +274,7 @@ void MediaPublisher::run()
                 mux.format->flags |= AVFMT_FLAG_FLUSH_PACKETS;
                 AVDictionary *options = nullptr;
                 av_dict_set(&options, "rw_timeout", "5000000", 0);
+                av_dict_set(&options, "tcp_nodelay", "1", 0); // 直播小包及时交付，减少Nagle等待对发送反馈的干扰。
                 av_dict_set(&options, "protocol_whitelist", "rtmp,tcp", 0);
                 const auto address = url.toEncoded();
                 const int result = avio_open2(&mux.format->pb, address.constData(), AVIO_FLAG_WRITE,
@@ -296,6 +327,13 @@ void MediaPublisher::run()
             av_dict_free(&muxOptions); check(headerResult, "write media header");
             if (settings.live) { avio_flush(mux.format->pb); check(mux.format->pb->error, "flush RTMP header"); }
             headerBytes = mux.format->pb->bytes_written;
+            AdaptiveBitrate policy; int submittedBitrate = settings.videoBitrate;
+            {
+                QMutexLocker lock(&m_mutex); const auto now = nowUs();
+                policy.begin({settings.adaptiveBitrate, settings.adaptiveBitrate ? settings.minimumVideoBitrate : MinimumVideoBitrate, settings.videoBitrate},
+                    submittedBitrate, now, bitrateFeedback(now));
+                m_bitratePeakWriteUs = 0; publishBitrateState(policy);
+            }
             emit opened();
             // 5. 只取队列头的引用后解锁；编码/GPU等待/文件IO都不占用GUI入口的互斥锁。
             for (;;) {
@@ -307,9 +345,16 @@ void MediaPublisher::run()
                     QMutexLocker lock(&m_mutex);
                     // 5a. IO可能刚阻塞过；必须先剔除过期数据，清空后等待新输入，不能空转或编码旧队头。
                     for (;;) {
-                        trimLiveQueues(nowUs());
+                        const auto now = nowUs(); trimLiveQueues(now);
+                        if (m_pendingBitrateControl) {
+                            policy.configure(*m_pendingBitrateControl, policy.target(), now, bitrateFeedback(now));
+                            m_pendingBitrateControl.reset(); m_bitratePeakWriteUs = 0;
+                        }
+                        if (policy.update(now, bitrateFeedback(now))) m_bitratePeakWriteUs = 0;
+                        publishBitrateState(policy);
                         if (!m_video.empty() || !m_audio.empty() || m_finishing || m_aborted) break;
-                        m_ready.wait(&m_mutex);
+                        if (policy.automatic()) m_ready.wait(&m_mutex, 100); // 空闲也形成观察窗口，不把停帧当稳定恢复。
+                        else m_ready.wait(&m_mutex); // 手动/录制沿用无数据休眠，不额外轮询。
                     }
                     if (m_aborted || (settings.live && m_cancelIo.load()) || (m_finishing && m_video.empty() && m_audio.empty())) break;
                     const bool takeVideo = !m_video.empty() && (m_audio.empty()
@@ -317,7 +362,7 @@ void MediaPublisher::run()
                     if (takeVideo) {
                         frame = std::move(m_video.front().value); m_video.pop_front();
                         frame->discontinuity = frame->discontinuity || m_videoGap; m_videoGap = false;
-                        bitrate = m_pendingVideoBitrate; m_pendingVideoBitrate = 0;
+                        if (policy.target() != submittedBitrate) bitrate = policy.target();
                     } else {
                         packet = std::move(m_audio.front().value); m_audio.pop_front();
                         audioCatchup = m_audioGap; m_audioGap = false;
@@ -328,6 +373,7 @@ void MediaPublisher::run()
                 const auto started = nowUs(); qint64 writeBefore;
                 { QMutexLocker lock(&m_mutex); writeBefore = m_stats.totalWriteUs; }
                 if (frame) encoder.pushVideo(*frame); else encoder.pushAudio(*packet, audioCatchup);
+                if (frame) submittedBitrate = policy.target();
                 if (frame) {
                     QMutexLocker lock(&m_mutex);
                     m_stats.lastVideoEncodeUs = std::max<qint64>(0, nowUs() - started - (m_stats.totalWriteUs - writeBefore));

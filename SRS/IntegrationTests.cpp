@@ -223,6 +223,19 @@ bool integration()
     publisherView.findChild<QPushButton *>("applyLiveBitrateButton")->click();
     CHECK(until([&] { return liveOutput->stats().encoderVideoBitrate == 600000; }));
     CHECK(until([&] { return publisherView.findChild<QLabel *>("liveOutputStatusLabel")->text().contains(QStringLiteral("编码器目标 600 kbps")); }));
+    auto *automatic = publisherView.findChild<QCheckBox *>("liveAutomaticBitrateCheck");
+    auto *minimum = publisherView.findChild<QSpinBox *>("liveMinimumBitrateSpin"); CHECK(automatic && minimum);
+    automatic->setChecked(true); minimum->setValue(200); CHECK(!liveOutput->stats().automaticBitrate); // 编辑不立即提交。
+    publisherView.findChild<QPushButton *>("applyLiveBitrateButton")->click();
+    CHECK(until([&] { return liveOutput->stats().automaticBitrate && !liveOutput->stats().bitrateControlPending; }));
+    automatic->setChecked(false); publisherView.findChild<QSpinBox *>("liveVideoBitrateSpin")->setValue(500);
+    publisherView.findChild<QPushButton *>("applyLiveBitrateButton")->click();
+    CHECK(until([&] { return !liveOutput->stats().automaticBitrate && liveOutput->stats().encoderVideoBitrate == 500000; }));
+    automatic->setChecked(true); publisherView.findChild<QSpinBox *>("liveVideoBitrateSpin")->setValue(600);
+    publisherView.findChild<QPushButton *>("applyLiveBitrateButton")->click();
+    CHECK(until([&] { return liveOutput->stats().automaticBitrate && !liveOutput->stats().bitrateControlPending; }));
+    CHECK(liveOutput->stats().targetVideoBitrate == 500000 && liveOutput->stats().requestedVideoBitrate == 600000); // 自动模式保留当前值。
+    qInfo("PASS Publisher ABR UI: explicit apply / automatic-manual switch / user ceiling / no jump to ceiling / one output session");
     publisherView.resize(720, 800); publisherView.show(); QTest::qWait(40);
     auto *scroll = publisherView.findChild<QScrollArea *>("workspaceScroll"); CHECK(scroll);
     scroll->ensureWidgetVisible(publisherView.findChild<QPushButton *>("applyLiveBitrateButton")); QTest::qWait(30);
