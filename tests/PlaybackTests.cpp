@@ -36,6 +36,30 @@
 using namespace csn;
 #define CHECK(condition) do { if (!(condition)) { qCritical("FAIL line %d: %s", __LINE__, #condition); return false; } } while (0)
 namespace {
+bool bufferPolicyChecks()
+{
+    PlaybackBuffer buffer; buffer.begin(0); CHECK(buffer.targetUs() == 50000);
+    buffer.underrun(100000); CHECK(buffer.targetUs() == 70000);
+    buffer.underrun(200000); CHECK(buffer.targetUs() == 70000 && buffer.increases() == 1);
+    for (qint64 now = 1100000; now <= 6100000; now += 1000000) buffer.underrun(now);
+    CHECK(buffer.targetUs() == 150000 && buffer.increases() == 5);
+    const auto raised = buffer.targetUs();
+    buffer.update(10000000, 0); CHECK(buffer.targetUs() == raised); // 没媒体不冒充稳定，不凭空降低。
+    for (qint64 now = 10010000; now <= 18000000; now += 10000) {
+        buffer.observe(now, 10000, now); buffer.update(now, 100000);
+    }
+    CHECK(buffer.targetUs() < raised && buffer.targetUs() >= PlaybackBuffer::MinimumUs && buffer.decreases() >= 1);
+    CHECK(!buffer.catchup(19000000, 300000)); CHECK(buffer.catchup(19510000, 300000));
+    CHECK(!buffer.catchup(19600000, 300000)); CHECK(!buffer.catchup(20520000, buffer.targetUs()));
+    buffer.begin(0); CHECK(buffer.increases() == 0 && buffer.decreases() == 0 && buffer.targetUs() == 50000);
+    for (qint64 pts = 0; pts < 500000; pts += 10000) buffer.observe(pts, 10000, pts);
+    buffer.observe(500000, 10000, 580000); buffer.update(580000, 10000);
+    CHECK(buffer.targetUs() > 50000 && buffer.jitterUs() > 0);
+    buffer.begin(0); buffer.observe(0, 10000, 0); buffer.observe(900000, 10000, 1000000); buffer.update(1000000, 0);
+    CHECK(buffer.targetUs() == 50000); // 媒体本身PTS跳变不误算成持续交付迟到。
+    qInfo("PASS playback buffer policy: fast increase / cooldown / bounded target / slow decrease / idle / catchup / restart / PTS jump");
+    return true;
+}
 bool until(const std::function<bool()> &condition, int timeout = 8000)
 {
     QElapsedTimer time; time.start();
@@ -165,6 +189,49 @@ bool httpChecks(const QString &path)
     CHECK(errors.isEmpty() && cancel.elapsed() < 3000);
     qInfo("PASS HTTP MP4 / cancellation during unanswered network read: %lldms", cancel.elapsed()); return true;
 }
+bool adaptiveAudioChecks()
+{
+    // 合成PCM直送真实WASAPI，隔离验证消费状态机；不改网络、不打开采集设备，音量固定0。
+    WasapiPlayback audio; audio.setVolume(0); QSignalSpy errors(&audio, &WasapiPlayback::failed);
+    qint64 next = 0, previousClock = 0;
+    const auto push = [&](int packets) {
+        for (int p = 0; p < packets; ++p) {
+            PlaybackAudio packet; packet.pts = next; packet.pcm.resize(480 * 8);
+            for (int i = 0; i < 480; ++i) {
+                const float value = float(.1 * std::sin(2 * 3.141592653589793 * 440 * (next + i) / 48000));
+                std::memcpy(packet.pcm.data() + i * 8, &value, 4); std::memcpy(packet.pcm.data() + i * 8 + 4, &value, 4);
+            }
+            if (!audio.push(packet)) return false;
+            next += 480;
+        }
+        return true;
+    };
+    CHECK(audio.begin(0, true, false)); CHECK(push(4)); QTest::qWait(80);
+    CHECK(!audio.clock().started && audio.clock().buffering && audio.clock().targetUs == 50000);
+    CHECK(push(4)); CHECK(until([&] { return audio.clock().started; }));
+    CHECK(until([&] { return audio.clock().rebuffers == 1; }));
+    const auto held = audio.clock(); CHECK(held.buffering && held.targetUs == 70000 && held.silenceSamples == 0);
+    QTest::qWait(80); CHECK(audio.clock().timeUs == held.timeUs && audio.clock().rebuffers == 1);
+    CHECK(push(3)); QTest::qWait(40); CHECK(audio.clock().buffering && audio.clock().timeUs == held.timeUs);
+    CHECK(push(12)); CHECK(until([&] { return !audio.clock().buffering && audio.clock().renderedSamples > held.renderedSamples; }));
+    // 连续生产后制造一次批量交付，检查硬上限、主动追赶、真实PCM输出及单调时钟。
+    CHECK(push(50)); CHECK(audio.clock().queuedUs <= PlaybackBuffer::CapacityUs);
+    for (int i = 0; i < 100; ++i) {
+        CHECK(push(1)); QTest::qWait(10); const auto state = audio.clock();
+        CHECK(state.timeUs >= previousClock && state.targetUs >= 50000 && state.targetUs <= 150000);
+        previousClock = state.timeUs;
+    }
+    auto state = audio.clock(); CHECK(state.droppedSamples > 0 && state.catchups > 0 && state.renderedSamples > 48000);
+    CHECK(state.silenceSamples == 0 && state.devicePaddingUs <= 30000);
+    CHECK(until([&] { return audio.clock().buffering; }));
+    QElapsedTimer stopped; stopped.start(); audio.stop(); CHECK(audio.wait(1500)); CHECK(stopped.elapsed() < 1500);
+    QCoreApplication::processEvents(); CHECK(errors.isEmpty());
+    next = 0; CHECK(audio.begin(0, true, false)); CHECK(audio.clock().rebuffers == 0 && audio.clock().targetUs == 50000);
+    CHECK(push(2)); audio.finish(); CHECK(audio.wait(2000)); // EOF不足目标仍排空，不死等50ms。
+    CHECK(audio.clock().renderedSamples == 960 && audio.clock().ended);
+    qInfo("PASS adaptive WASAPI: threshold / frozen clock / refill / real PCM / burst cap / catchup / no fake silence / stop / restart / short EOF");
+    return true;
+}
 bool mvcChecks(const QString &path)
 {
     MainWindow view(ClientRole::Player); view.show();
@@ -214,6 +281,8 @@ int main(int argc, char **argv)
     if (!directory.isValid()) return 1;
     const QString media = directory.filePath(QStringLiteral("点播 中文.mp4"));
     try {
+        if (!bufferPolicyChecks()) return 1;
+        if (app.arguments().contains("--adaptive-buffer")) return adaptiveAudioChecks() ? 0 : 1;
         const int sourceIndex = app.arguments().indexOf("--media-file");
         if (sourceIndex >= 0 && sourceIndex + 1 < app.arguments().size()) {
             const auto path = app.arguments()[sourceIndex + 1]; MediaDecoder probe;

@@ -12,6 +12,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'playback-buffer': '播放端自适应缓冲时序图',
     'rtmp-latency': '直播低延迟预算时序图',
     'abr-control': '自适应码率调节时序图',
     'live-queue': '直播队列积压恢复时序图',

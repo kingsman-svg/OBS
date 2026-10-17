@@ -124,13 +124,19 @@ bool integration()
     settings.width = 320; settings.height = 180; settings.videoBitrate = 1000000;
     // 3. 同一个输出线程和房间连续两轮启停；每轮PTS从零开始，首次媒体写出后才live.start。
     for (int round = 0; round < 2; ++round) {
+        MediaPlayer silentPlayer; bool silentStarted = false; qint64 silentClock = 0; int silentFrames = 0;
+        bool silentBuffered = false, silentFrozen = false, silentRecovered = false; qint64 frozenClock = -1;
         QSignalSpy transmitted(&publisher, &MediaPublisher::transmitting), errors(&publisher, &MediaPublisher::failed);
         QSignalSpy playErrors(player, &MediaPlayer::failed);
         CHECK(publisher.begin(settings));
         QElapsedTimer timer; timer.start(); int video = 0, samples = 0; bool announced = false, lowered = false, raised = false;
+        qint64 previousFeedMs = 0, maxFeedGapMs = 0;
         const int before = displayed;
         while (timer.elapsed() < 4500) {
-            if (timer.elapsed() * 30 >= video * 1000) {
+            maxFeedGapMs = std::max(maxFeedGapMs, timer.elapsed() - previousFeedMs); previousFeedMs = timer.elapsed();
+            // 合成视频源短停200ms，音轨继续；核对无声Player独立视频结束点与冻结/恢复，不注入网络故障。
+            if (round == 0 && timer.elapsed() >= 1900 && timer.elapsed() < 2100) video = int(timer.elapsed() * 30 / 1000);
+            else if (timer.elapsed() * 30 >= video * 1000) {
                 FaceFrame frame; frame.video.texture = texture; frame.video.sequence = quint64(video + 1);
                 publisher.pushVideo({frame, video++});
             }
@@ -140,6 +146,18 @@ bool integration()
             QTest::qWait(2);
             if (!announced && !transmitted.isEmpty()) {
                 CHECK(request(publisherSignal, "live.start", {}, response)); announced = true;
+                if (round == 0) {
+                    CHECK(silentPlayer.begin(room.value("pullUrl").toString(), false, true, VideoDecodeMode::RequireHardware));
+                    silentStarted = true;
+                }
+            }
+            if (silentStarted) {
+                if (silentPlayer.takeVideo().source.texture) ++silentFrames;
+                const auto clock = silentPlayer.clockUs(); CHECK(clock >= silentClock); silentClock = clock;
+                const auto state = silentPlayer.stats();
+                if (state.buffering && state.rebuffers > 0) {
+                    silentBuffered = true; if (frozenClock >= 0 && clock == frozenClock) silentFrozen = true; frozenClock = clock;
+                } else if (silentBuffered && clock > frozenClock) silentRecovered = true;
             }
             if (!errors.isEmpty()) qCritical().noquote() << errors.first().first().toString();
             if (!playErrors.isEmpty()) qCritical().noquote() << playErrors.first().first().toString();
@@ -149,8 +167,18 @@ bool integration()
         qInfo("live startup: announced=%d transmitting=%lld running=%d decoded=%llu GPU=%llu displayed=%d dropped=%llu samples=%llu clock=%.3fs",
             announced, transmitted.size(), player->isRunning(), liveStats.decodedVideo, liveStats.gpuVideo, displayed - before,
             liveStats.droppedVideo, liveStats.audioSamples, liveStats.positionUs / 1000000.0);
+        qInfo("live source: frames=%d audioPackets=%d maxFeedGap=%lldms open=%.1fms", video, samples, maxFeedGapMs, liveStats.openUs / 1000.0);
         CHECK(announced && transmitted.size() == 1 && displayed - before >= 40);
         const auto stats = player->stats(); CHECK(stats.audioSamples > 48000 && stats.positionUs > 1000000);
+        CHECK(stats.adaptiveBuffer && stats.bufferTargetUs >= 50000 && stats.bufferTargetUs <= 150000);
+        CHECK(stats.audioQueuedUs <= PlaybackBuffer::CapacityUs && stats.audioPaddingUs <= 30000);
+        if (silentStarted) {
+            const auto silent = silentPlayer.stats();
+            CHECK(silent.adaptiveBuffer && silentFrames > 60 && silent.gpuVideo > 60 && silent.bufferTargetUs >= 50000);
+            CHECK(silentBuffered && silentFrozen && silentRecovered && silent.rebuffers >= 1 && silent.bufferIncreases >= 1);
+            silentPlayer.stop(); CHECK(silentPlayer.wait(2000));
+            qInfo("PASS adaptive video-only clock: GPU=%llu delivered=%d target=%.0fms rebuffers=%llu", silent.gpuVideo, silentFrames, silent.bufferTargetUs / 1000.0, silent.rebuffers);
+        }
         CHECK(stats.renderedAudioSamples * 100 >= stats.audioSamples * 75); // 时钟推进不能掩盖持续补零。
         CHECK(stats.gpuVideo == stats.decodedVideo && stats.gpuVideo > 0 && stats.readbackVideo == 0 && stats.softwareVideo == 0);
         CHECK(view.findChild<PreviewWindow *>()->isVisible());
@@ -164,9 +192,16 @@ bool integration()
             sending.outputBitrate / 1000, sending.maxWriteUs / 1000.0, sending.peakQueuedVideo, sending.peakQueuedAudio);
         qInfo("PASS live round %d: decoded=%llu GPU=%llu displayed=%d audioSamples=%llu clock=%.3fs underruns=%llu",
             round + 1, stats.decodedVideo, stats.gpuVideo, displayed - before, stats.audioSamples, stats.positionUs / 1000000.0, stats.audioUnderruns);
+        qInfo("adaptive playback: target=%.0fms increases=%llu decreases=%llu rebuffers=%llu wait=%.1fms catchups=%llu PCM=%.1fms",
+            stats.bufferTargetUs / 1000.0, stats.bufferIncreases, stats.bufferDecreases, stats.rebuffers, stats.rebufferUs / 1000.0, stats.audioCatchups, stats.audioQueuedUs / 1000.0);
         if (round == 0) {
             view.resize(640, 480); view.show(); QTest::qWait(30);
             QDir().mkpath("out/直播接入"); CHECK(view.grab().save(QStringLiteral("out/直播接入/播放端直播布局.png")));
+            auto *status = view.findChild<QLabel *>("livePlaybackStatusLabel");
+            auto *scroll = view.findChild<QScrollArea *>("workspaceScroll"); CHECK(status && scroll);
+            CHECK(status->text().contains(QStringLiteral("自适应缓冲")) && status->height() >= status->heightForWidth(status->width()));
+            scroll->ensureWidgetVisible(status); QTest::qWait(30);
+            CHECK(view.grab().save(QStringLiteral("out/直播接入/播放端自适应缓冲统计.png")));
         }
         QElapsedTimer stopping; stopping.start(); publisher.stop(); CHECK(publisher.wait(2000));
         CHECK(request(publisherSignal, "live.stop", {}, response));
@@ -318,7 +353,7 @@ bool latencyRound(bool lowLatency, QJsonObject &result)
         }
         while (audios * 10 <= timer.elapsed()) publisher.pushAudio(audio(audios++ * 480));
         if (!watching && !transmitting.isEmpty()) {
-            CHECK(player.begin(settings.path, true, true, VideoDecodeMode::RequireHardware, lowLatency)); watching = true;
+            CHECK(player.begin(settings.path, true, true, VideoDecodeMode::RequireHardware, lowLatency, false)); watching = true; // 固定预算对照保持原测量语义。
         }
         const auto frame = player.takeVideo(); const auto delivered = timer.nsecsElapsed() / 1000;
         if (frame.source.texture) {

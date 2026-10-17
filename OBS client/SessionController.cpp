@@ -203,11 +203,15 @@ void SessionController::refreshPlaybackView(bool force)
         .arg(stats.queuedVideo).arg(stats.videoQueueSpanUs / 1000.0, 0, 'f', 1).arg(stats.audioQueuedUs / 1000.0, 0, 'f', 1)
         .arg(stats.audioPaddingUs / 1000.0, 0, 'f', 1).arg(stats.audioBufferUs / 1000.0, 0, 'f', 1)
         .arg(stats.renderedAudioSamples / 48000.0, 0, 'f', 2).arg(stats.insertedSilenceSamples / 48000.0, 0, 'f', 2).arg(stats.audioCatchups) : QString();
+    const auto buffer = stats.adaptiveBuffer ? tr("\n自适应缓冲：%1 · 目标 %2 ms · 交付波动 %3 ms\n目标升/降 %4/%5 次 · 重新缓冲 %6 次 / %7 ms")
+        .arg(!m_playbackPending ? tr("已停止") : stats.buffering ? tr("等待恢复") : tr("播放中")).arg(stats.bufferTargetUs / 1000.0, 0, 'f', 0)
+        .arg(stats.deliveryJitterUs / 1000.0, 0, 'f', 1).arg(stats.bufferIncreases).arg(stats.bufferDecreases)
+        .arg(stats.rebuffers).arg(stats.rebufferUs / 1000.0, 0, 'f', 0) : QString();
     m_view->applyPlaybackState(m_playbackPending, stats.positionUs, m_playbackDurationUs,
-        tr("%1\n解码 %2 帧（GPU %3 / 软件 %4 / 硬件回读 %5）\n显示 %6 帧 · 跳过 %7 帧 · 音频 %8 秒 · 补静音 %9 次%10")
+        tr("%1\n解码 %2 帧（GPU %3 / 软件 %4 / 硬件回读 %5）\n显示 %6 帧 · 跳过 %7 帧 · 音频 %8 秒 · 欠载 %9 次%10")
             .arg(m_playbackMessage).arg(stats.decodedVideo).arg(stats.gpuVideo).arg(stats.softwareVideo).arg(stats.readbackVideo)
             .arg(stats.displayedVideo).arg(stats.droppedVideo).arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.audioUnderruns)
-            .arg(stats.decoderNote.isEmpty() ? QString() : QStringLiteral("\n") + stats.decoderNote) + latency);
+            .arg(stats.decoderNote.isEmpty() ? QString() : QStringLiteral("\n") + stats.decoderNote) + latency + buffer);
 }
 
 void SessionController::scheduleExpiry()

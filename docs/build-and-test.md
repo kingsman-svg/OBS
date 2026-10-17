@@ -69,6 +69,8 @@ python scripts/render_uml.py
 
 点播新增libswscale及swscale-8.dll，CMake随其他FFmpeg DLL一起复制。默认测试用SDK/bin/ffmpeg.exe生成素材，不依赖外部视频。`python scripts/run_playback_checks.py --audio-device` 显式验证真实输出设备（音量0），包含音轨延后及长视频尾部；`--mvc-only`支持2倍缩放截图，`--media-file "out/编码验证.mp4"`验证明确选择的录制文件。详见 [第011步](011-player-vod.md)。
 
+播放自适应：默认七组中的`client.playback`扩展人工时钟策略验证；`python scripts/run_playback_checks.py --adaptive-buffer`在同一程序内用合成PCM/静音真实WASAPI检查预缓冲、欠载冻结/恢复、硬上限、PTS追赶、stop/restart和短EOF。正常`python SRS/check.py --beauty`同时回归有声及无声GPU时钟路径。未增加测试程序，综合弱网实验后续共同开展，见[第019步](019-playback-buffer.md)。
+
 本地美颜与GPU解码整链路：现有Windows业务服务和OBS-SRS启动后，执行`python SRS/check.py --beauty`，使用既有示例图/引擎和自建窗口验证WGC、TensorRT、美颜、RTMP与观众GPU解码。不涉及Mac研究项目，详见[第014步](014-local-beauty.md)。
 
 直播延迟对照：`python SRS/check.py --beauty --latency`在同一现有集成程序内增加较宽/低延迟预算两组测量，以画面像素编号识别同帧，统计入队至GUI交付的P50/P95、队列、帧交付比例和音频欠载；真实WASAPI音量0。报告保存`out/低延迟验证/RTMP延迟对照.json`，图片中文命名；不包含真实采集和显示器扫描，也不以PTS直接推算端到端延迟。详见[第018步](018-rtmp-latency.md)。

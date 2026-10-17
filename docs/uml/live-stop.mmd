@@ -20,7 +20,7 @@ P->>R: 关闭RTMP连接并释放编码器
 P-->>C: completed、finished
 S-->>V: live.changed=false
 V->>D: stop，停GUI交付、中断读取、关闭声音
-D->>D: 解码资源析构，等待输出线程归还COM
+D->>D: 唤醒预缓冲/重新缓冲，中断读包，等待输出线程归还COM
 D-->>V: finished
 V->>U: 留在房间等待下一次开播
 alt 主播关闭房间或断开信令
