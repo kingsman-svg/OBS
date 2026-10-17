@@ -189,17 +189,25 @@ void SessionController::deliverPlayback()
     if (!m_loggedIn || (!m_view->vodMode() && !m_playbackLive) || !m_playbackPending || m_playbackStopping) return;
     const auto frame = m_player->takeVideo();
     if (frame.source.texture) { emit playbackFrameReady(frame.source); m_view->showPlaybackPreview(frame.source); }
-    refreshPlaybackView();
+    refreshPlaybackView(false);
 }
-void SessionController::refreshPlaybackView()
+void SessionController::refreshPlaybackView(bool force)
 {
     if (!m_player) return;
+    if (!force && m_playbackStatsRefresh.isValid() && !m_playbackStatsRefresh.hasExpired(200)) return;
+    m_playbackStatsRefresh.restart();
     const auto stats = m_player->stats();
+    const auto latency = m_playbackLive ? tr("\n打开 %1 ms · 首张交付 %2\n视频队列 %3 帧 / %4 ms · PCM队列 %5 ms · 端点待播 %6 / 容量 %7 ms\n实际PCM提交 %8 秒 · 应用补零 %9 秒 · 音频追赶 %10 次")
+        .arg(stats.openUs / 1000.0, 0, 'f', 1)
+        .arg(stats.firstDeliveryUs ? QString::number(stats.firstDeliveryUs / 1000.0, 'f', 1) + tr(" ms") : tr("等待"))
+        .arg(stats.queuedVideo).arg(stats.videoQueueSpanUs / 1000.0, 0, 'f', 1).arg(stats.audioQueuedUs / 1000.0, 0, 'f', 1)
+        .arg(stats.audioPaddingUs / 1000.0, 0, 'f', 1).arg(stats.audioBufferUs / 1000.0, 0, 'f', 1)
+        .arg(stats.renderedAudioSamples / 48000.0, 0, 'f', 2).arg(stats.insertedSilenceSamples / 48000.0, 0, 'f', 2).arg(stats.audioCatchups) : QString();
     m_view->applyPlaybackState(m_playbackPending, stats.positionUs, m_playbackDurationUs,
         tr("%1\n解码 %2 帧（GPU %3 / 软件 %4 / 硬件回读 %5）\n显示 %6 帧 · 跳过 %7 帧 · 音频 %8 秒 · 补静音 %9 次%10")
             .arg(m_playbackMessage).arg(stats.decodedVideo).arg(stats.gpuVideo).arg(stats.softwareVideo).arg(stats.readbackVideo)
             .arg(stats.displayedVideo).arg(stats.droppedVideo).arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.audioUnderruns)
-            .arg(stats.decoderNote.isEmpty() ? QString() : QStringLiteral("\n") + stats.decoderNote));
+            .arg(stats.decoderNote.isEmpty() ? QString() : QStringLiteral("\n") + stats.decoderNote) + latency);
 }
 
 void SessionController::scheduleExpiry()
@@ -797,6 +805,10 @@ void SessionController::refreshLiveView(bool force)
         .arg(stats.automaticBitrate ? tr("自动码率") : tr("手动码率")).arg(stats.targetVideoBitrate / 1000)
         .arg(stats.bitrateReductions).arg(stats.bitrateIncreases).arg(stats.bitrateWriteLoad * 100, 0, 'f', 1).arg(state)
         .arg(stats.bitrateControlPending ? tr("（新设置待接收）") : QString());
+    const auto latency = tr("\nVBV预算 %1 ms · GOP %2 帧 · 交织阈值 %3 ms\n建连 %4 ms · 就绪 %5 ms · 首次媒体写出 %6")
+        .arg(stats.encoderVbvMs).arg(stats.encoderGopFrames).arg(stats.muxInterleaveMs)
+        .arg(stats.connectUs / 1000.0, 0, 'f', 1).arg(stats.readyUs / 1000.0, 0, 'f', 1)
+        .arg(stats.firstMediaUs ? QString::number(stats.firstMediaUs / 1000.0, 'f', 1) + tr(" ms") : tr("等待"));
     m_view->applyLiveOutputState(canStart, m_livePending,
         tr("%1\n视频 %2 帧 · 音频 %3 秒 · 编码 %4 KB\n用户目标/上限 %5 kbps · 编码器目标 %6%7\n视频压缩码率 %8 kbps（窗口 %9 ms）· 本机发送 %10 kbps（1秒）\n队列 视频 %11 / 音频 %12 · 跨度 %13 / %14 ms · 队头等待 %15 / %16 ms\n视频处理 %17 ms（不含写出）· 写出 最近 %18 / 最长 %19 / 正在等待 %20 ms\n过期丢弃 视频 %21 / 音频 %22 · 队列追赶 %23 次 · 音频跳过 %24 次 / %25 秒\n%26")
         .arg(m_liveMessage).arg(stats.videoFrames).arg(stats.audioSamples / 48000.0, 0, 'f', 2).arg(stats.bytes / 1024)
@@ -804,7 +816,7 @@ void SessionController::refreshLiveView(bool force)
         .arg(stats.outputBitrate / 1000).arg(stats.queuedVideo).arg(stats.queuedAudio).arg(stats.videoQueueSpanMs).arg(stats.audioQueueSpanMs)
         .arg(stats.oldestVideoWaitMs).arg(stats.oldestAudioWaitMs).arg(stats.lastVideoEncodeUs / 1000.0, 0, 'f', 2)
         .arg(stats.lastWriteUs / 1000.0, 0, 'f', 2).arg(stats.maxWriteUs / 1000.0, 0, 'f', 2).arg(stats.currentWriteUs / 1000.0, 0, 'f', 2)
-        .arg(stats.expiredVideo).arg(stats.expiredAudio).arg(stats.liveCatchups).arg(stats.audioResyncs).arg(stats.skippedAudioSamples / 48000.0, 0, 'f', 3).arg(abr),
+        .arg(stats.expiredVideo).arg(stats.expiredAudio).arg(stats.liveCatchups).arg(stats.audioResyncs).arg(stats.skippedAudioSamples / 48000.0, 0, 'f', 3).arg(abr) + latency,
         !m_stoppingCapture && m_pendingCapture.contains(m_video));
 }
 void SessionController::startLivePlayback()

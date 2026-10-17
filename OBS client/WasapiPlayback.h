@@ -17,6 +17,14 @@ struct PlaybackClock {
     quint64 underruns = 0;        // 运行中队列为空且尚未finish的补静音次数。
     bool started = false;        // IAudioClient::Start已成功，音频主时钟可使用。
     bool ended = false;          // 尾部padding已排空，设备已停止。
+    qint64 queuedUs = 0;         // 应用PCM队列剩余时长，不含设备padding。
+    qint64 deviceBufferUs = 0;   // GetBufferSize返回的实际端点容量，不把请求值当实测值。
+    qint64 devicePaddingUs = 0;  // 最近一次GetCurrentPadding，供观察已提交但尚未播放的数据。
+    qint64 prebufferUs = 0;      // 本轮应用预缓冲预算。
+    quint64 droppedSamples = 0; // 直播队列裁掉的未播放采样帧数。
+    quint64 catchups = 0;       // 输出线程实际跳过主动裁剪/较大PTS缺口的次数。
+    quint64 renderedSamples = 0; // 实际PCM交给端点的采样帧数，音量为0也计入，不是设备确认。
+    quint64 silenceSamples = 0;  // 应用因缺口/欠载补的采样帧数，不把源素材静音计算在内。
 };
 // MediaPlayer持有的音频输出QThread；端点接口只在run所在的MTA线程存在。
 class WasapiPlayback final : public QThread {
@@ -24,9 +32,9 @@ class WasapiPlayback final : public QThread {
 public:
     WasapiPlayback();                         // 构造不打开默认扬声器。
     ~WasapiPlayback() override;               // stop/wait，线程归还COM后再销毁。
-    bool begin(qint64 startSample = 0, bool live = false, bool waitForVideo = false); // 清状态，可等首张转换后视频就绪。
-    void videoReady();                        // 首张转换后画面就绪；视频点播200ms、直播100ms预缓冲。
-    bool push(const PlaybackAudio &packet);   // 解码线程有界入队；满1秒时等待消费，stop可唤醒。
+    bool begin(qint64 startSample = 0, bool live = false, bool waitForVideo = false, bool lowLatency = true); // 清状态及本轮直播预算。
+    void videoReady();                        // 首张转换后画面就绪；点播200ms，低延迟直播50ms预缓冲。
+    bool push(const PlaybackAudio &packet);   // 点播满1秒背压；直播按本轮预算裁旧PCM，stop可唤醒。
     void forceStart();                        // 视频队列先满时允许先播放静音，防止等待后置音轨死锁。
     void finish();                            // 解码EOF后关闭入口，排空PCM及设备padding。
     void stop();                              // 用户停止立即丢队列、请求退出，不在GUI等待。
@@ -49,7 +57,9 @@ private:
     bool m_finishing = false;                 // 正常EOF；队列空后等待端点padding清零。
     bool m_force = false;                     // 任一队列先满时允许建立时钟，避免媒体读包互相等待。
     bool m_live = false;                      // 直播溢出丢旧PCM，长时间缺口重新映射媒体时钟。
+    bool m_lowLatency = false;                // 本轮固定；直播低延迟50ms预缓冲/120ms队列，旧预算可对照。
+    bool m_audioGap = false;                  // 主动丢PCM必须通知输出线程跳过缺口，不能补零后再追逐旧时钟。
     bool m_videoReady = true;                 // 有视频时先等解码/转换初始化完成，避免启动阶段补静音。
-    qint64 m_prebufferFrames = 4800;          // 音频/直播100ms；视频点播200ms，端点预填后仍留一段余量。
+    qint64 m_prebufferFrames = 4800;          // 普通音频100ms、视频点播200ms、低延迟直播50ms。
 };
 }

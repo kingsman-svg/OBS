@@ -155,7 +155,12 @@ void MediaEncoder::open(const RecordingSettings &settings, ID3D11Device *sourceD
         video->width = settings.width; video->height = settings.height;
         video->pix_fmt = AV_PIX_FMT_D3D11; video->time_base = {1, MediaTimeline::VideoRate};
         video->framerate = {MediaTimeline::VideoRate, 1}; video->bit_rate = settings.videoBitrate;
-        video->gop_size = MediaTimeline::VideoRate * 2; video->max_b_frames = 0;
+        video->gop_size = MediaTimeline::VideoRate * (settings.live && settings.lowLatency ? 1 : 2); video->max_b_frames = 0;
+        if (settings.live) {
+            // 3a. 初始化与运行时调码率共用同一VBV时间预算；只限制率控容量，不承诺同等端到端延迟。
+            video->rc_max_rate = settings.videoBitrate;
+            video->rc_buffer_size = int(qint64(settings.videoBitrate) * (settings.lowLatency ? 200 : 2000) / 1000);
+        }
         video->sample_aspect_ratio = {1, 1}; video->color_range = AVCOL_RANGE_MPEG;
         video->colorspace = AVCOL_SPC_BT470BG; video->color_primaries = AVCOL_PRI_BT709; video->color_trc = AVCOL_TRC_BT709;
         video->hw_frames_ctx = av_buffer_ref(resources->frames);
@@ -170,6 +175,8 @@ void MediaEncoder::open(const RecordingSettings &settings, ID3D11Device *sourceD
         check(av_opt_set_int(video->priv_data, "delay", 0, 0), "NVENC output delay");
         if (settings.live) check(av_opt_set_int(video->priv_data, "forced-idr", 1, 0), "NVENC recovery IDR");
         check(avcodec_open2(video, codec, nullptr), "open NVENC");
+        resources->stats.encoderVbvMs = int(qint64(video->rc_buffer_size) * 1000 / settings.videoBitrate);
+        resources->stats.encoderGopFrames = video->gop_size;
     }
     if (settings.audio) {
         // 4. 混音已经48kHz，只将交错Float32变成AAC的平面Float32，不再次做采样率转换。
@@ -219,7 +226,9 @@ void MediaEncoder::setVideoBitrate(int bitsPerSecond)
     r.video->rc_max_rate = bitsPerSecond;
     // FFmpeg7.1在下一次send_frame内比较这三个公开字段，调用NVENC重配置并请求IDR。
     // 内部驱动失败可能仅输出日志，因此此处不把写字段称为“驱动已确认生效”。
-    r.video->rc_buffer_size = bitsPerSecond * 2; // 与初版默认两秒VBV一致；低延迟VBV调优单独验收。
+    const int vbvMs = r.settings.live && r.settings.lowLatency ? 200 : 2000;
+    r.video->rc_buffer_size = int(qint64(bitsPerSecond) * vbvMs / 1000); // 自动/手动调节不能把直播恢复为两秒VBV。
+    r.stats.encoderVbvMs = vbvMs;
     r.settings.videoBitrate = bitsPerSecond;
 }
 

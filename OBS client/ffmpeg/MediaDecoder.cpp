@@ -277,7 +277,7 @@ struct MediaDecoder::Resources {
 };
 MediaDecoder::MediaDecoder() = default;
 MediaDecoder::~MediaDecoder() = default;
-MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancelled, VideoSink videoSink, AudioSink audioSink, bool live, VideoDecodeMode mode)
+MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancelled, VideoSink videoSink, AudioSink audioSink, bool live, VideoDecodeMode mode, bool lowLatency)
 {
     // 1. 本地文件与HTTP(S)共用输入；停止/10秒操作超时通过AVIO interrupt回调打断。
     if (m_resources || !cancelled || !videoSink || !audioSink) throw std::logic_error("解码器状态/回调无效");
@@ -299,8 +299,10 @@ MediaInfo MediaDecoder::open(const QString &source, std::function<bool()> cancel
     if (http) av_dict_set(&options, "tls_verify", "1", 0); // HTTPS及HTTP重定向到HTTPS均验证服务器证书。
     if (live) {
         // 1a. 直播减少探测和RTMP客户端缓冲；仍探测编码参数，不能盲目跳过解码初始化。
-        r->format->probesize = 262144; r->format->max_analyze_duration = 300000;
-        av_dict_set(&options, "rtmp_live", "live", 0); av_dict_set(&options, "rtmp_buffer", "100", 0);
+        r->format->probesize = lowLatency ? 131072 : 262144; r->format->max_analyze_duration = lowLatency ? 100000 : 300000;
+        av_dict_set(&options, "rtmp_live", "live", 0); av_dict_set(&options, "rtmp_buffer", lowLatency ? "50" : "100", 0);
+        av_dict_set(&options, "tcp_nodelay", "1", 0);
+        // 保留探测得到的首个关键帧；不盲目加nobuffer丢掉它后再等下一个GOP。
     }
     const auto input = remote ? url.toEncoded() : QFileInfo(source).absoluteFilePath().toUtf8();
     const int opened = avformat_open_input(&r->format, input.constData(), nullptr, &options); av_dict_free(&options);

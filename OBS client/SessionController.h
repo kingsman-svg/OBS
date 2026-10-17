@@ -67,7 +67,7 @@ private:
     void startPlayback(const QString &source, bool audioOutput); // GUI检查登录/模式/finished后begin。
     void stopPlayback();                      // GUI请求退出并立即暂停交付，线程异步回收。
     void deliverPlayback();                   // 每10ms按主时钟取到期帧，避免逐帧Qt事件积压。
-    void refreshPlaybackView();               // 独立播放状态/时长/统计，不依赖信令连接成功。
+    void refreshPlaybackView(bool force = true); // 状态立即刷新，媒体诊断最多5Hz，不依赖信令连接。
     void setupLiveOutput();                  // 独立RTMP输出线程，与本地录制共用同步帧入口。
     void startLive();                        // GUI验证房间/源，先开启媒体入口再启动采集。
     void refreshLiveView(bool force = true); // 状态事件立即刷新，媒体交付触发的诊断文本最多5Hz。
@@ -107,6 +107,7 @@ private:
     QString m_recordingMessage;               // 本轮等待、录制、封存、失败或保存路径。
     MediaPlayer *m_player = nullptr;          // Player控制器拥有，内部再持有WASAPI输出线程。
     QTimer m_playbackDelivery;                // GUI播放交付定时器，正常停止立即停。
+    QElapsedTimer m_playbackStatsRefresh;     // 文本诊断节流，不降低取帧频率。
     bool m_playbackPending = false;           // begin到GUI处理finished之间锁定下一轮。
     bool m_playbackStopping = false;          // 拒绝迟到画面，退出/模式切换不会弹回窗口。
     bool m_playbackFailed = false;            // 锁存解码/声音/显示错误，finished不覆盖。

@@ -32,7 +32,8 @@ public:
     MediaDecoder();                              // 构造不打开文件或设备。
     ~MediaDecoder();                             // RAII释放格式/解码/SWR/SWS/GPU资源。
     MediaInfo open(const QString &source, std::function<bool()> cancelled, VideoSink video, AudioSink audio,
-                   bool live = false, VideoDecodeMode mode = VideoDecodeMode::Automatic); // 统一点播/RTMP输入，优先D3D11VA。
+                   bool live = false, VideoDecodeMode mode = VideoDecodeMode::Automatic,
+                   bool lowLatency = true); // 直播短探测，false保留旧预算用于对照；点播不使用。
     bool readNext();                             // 读取一个包并send/receive；false表示正常EOF。
     void finish();                               // EOF时排空两个解码器，再排空SWR尾部，幂等。
 private:

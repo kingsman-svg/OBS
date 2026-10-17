@@ -1,0 +1,43 @@
+sequenceDiagram
+actor U as 用户
+participant C as Controller/GUI
+participant P as Publisher线程
+participant E as NVENC编码器
+participant R as RTMP与SRS
+participant D as Player解码线程
+participant A as WASAPI线程
+U->>C: 开始直播
+C->>P: begin保存低延迟预算，清状态后start
+P->>R: avio_open2，测TCP/RTMP建连耗时
+P->>E: open，200ms VBV/1秒GOP/无B帧及前瞻
+alt 连接或设备初始化失败
+P->>P: RAII释放本轮资源
+P-->>C: failed，随后finished允许重启
+else 初始化成功
+P->>R: FLV头就绪，交织阈值40ms与IO刷新
+P-->>C: opened，就绪时长
+C->>P: 交付同步GPU帧与PCM
+P->>E: 手动/ABR改目标时保留200ms VBV，再编码
+E-->>P: H.264/AAC编码包
+P->>R: 交织写包与flush，记录首次媒体写出
+end
+C->>D: begin直播播放，清统计并start
+D->>R: RTMP拉流，短探测与50ms接收缓冲请求
+D->>A: begin，50ms预缓冲，等待首张视频转换完成
+R-->>D: 媒体包
+D->>D: GPU解码/转换，记录首张解码耗时
+D->>A: 交付PCM，队列最多120ms
+A->>A: 主动裁剪置缺口标记，跳到保留PTS，不用补零追逐队头
+A->>A: 请求30ms端点，读取实际容量，限制padding
+A-->>D: 实际播放主时钟与队列/追赶快照
+D->>D: 视频保留300ms未来帧窗口，按音频时钟到期交付
+C->>D: takeVideo，记录首张交付耗时
+D-->>C: 独立GPU纹理与原媒体PTS
+C->>C: 显示画面，诊断文本最多5Hz刷新
+Note over C,R: 验收将编号画入像素，解码后识别同帧；测入队至GUI交付，不含显示器扫描
+U->>C: 停止
+C->>P: stop，关闭输入并取消IO
+C->>D: stop，停止交付并取消读包/声音
+D->>A: stop/wait，归还COM资源
+P-->>C: completed或failed，随后finished
+D-->>C: completed或failed，随后finished

@@ -18,18 +18,21 @@ C->>C: 直接准备播放
 end
 C->>P: begin(source, audioOutput, live=true)
 P->>D: run内open，安装取消/超时回调
-D->>R: RTMP拉流、探测编码参数
+D->>R: RTMP拉流、短探测，接收缓冲请求50ms
 P->>A: begin，直播PCM有界队列
 P-->>C: opened
 R-->>D: H.264/AAC媒体包
 D->>D: 优先D3D11VA/GPU转BGRA，明确软件/回读回退
 D->>P: 交付独立视频纹理、媒体PTS与路径计数
-P->>P: 最多16张未来帧，超界丢旧帧
+P->>P: 300ms未来画面窗口及16帧兜底，给音频时钟留余量
 P->>A: push 48kHz立体声PCM
-A->>A: 首帧就绪及100ms预缓冲、PTS追赶、设备时钟
+A->>A: 首帧就绪及50ms预缓冲、120ms PCM队列、PTS追赶
+A->>A: 主动裁剪显式跳过缺口，统计实际PCM与应用补零
+A->>A: 请求30ms端点，读取实际容量并限制待播padding
 C->>P: 每10ms takeVideo与stats
 P-->>C: 按主时钟到期画面
 C->>V: 显示纹理
+C->>C: 最多5Hz显示首帧/队列/端点统计，不降取帧频率
 alt 断流/解码/端点失败
 P-->>C: failed，清理后finished
 C->>U: 错误锁存，允许手动重试

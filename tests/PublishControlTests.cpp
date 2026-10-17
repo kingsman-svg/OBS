@@ -443,6 +443,7 @@ bool blockedWriteChecks()
     CHECK(stats.expiredVideo > 0 && stats.expiredAudio > 0 && stats.audioResyncs > 0 && stats.skippedAudioSamples > 0 && stats.silentSamples == 0);
     CHECK(stats.oldestVideoWaitMs <= 300 && stats.oldestAudioWaitMs <= 300 && stats.encoderVideoBitrate == 5000000);
     CHECK(automaticDecrease && automaticIncrease && !stats.automaticBitrate && stats.requestedVideoBitrate == 5000000);
+    CHECK(stats.encoderVbvMs == 200 && stats.encoderGopFrames == 30 && stats.muxInterleaveMs == 40); // ABR/手动接管后预算不回退。
     QElapsedTimer stopping; stopping.start(); publisher.stop(); CHECK(publisher.wait(2000));
     const auto stopMs = stopping.elapsed();
     QElapsedTimer draining; draining.start();

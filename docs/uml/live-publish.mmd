@@ -18,13 +18,14 @@ C->>P: pushVideo/pushAudio快速有界入队
 P->>P: 直播按媒体跨度/等待年龄裁剪，保留追赶标记
 P->>P: run等首帧设备，初始化NVENC/AAC与FLV
 P->>R: RTMP连接并写头
+P->>P: 直播200ms VBV/1秒GOP/40ms交织，记录初始化分段耗时
 P->>P: 初始化本轮ABR反馈基线，复用输出线程
 alt 连接/编码失败
 P-->>C: failed，资源回收后finished
 C->>U: 显示错误，采集预览可继续
 else 媒体写出
 P->>P: 出队前裁剪过期；自动模式评估写出/队列压力
-P->>P: 改目标则下一视频前提交；保留PTS及主动音频追赶
+P->>P: 改目标则下一视频前提交并保留VBV预算；保留PTS及音频追赶
 P->>R: 编码媒体包，刷新网络IO
 P-->>C: transmitting一次
 C->>S: live.start

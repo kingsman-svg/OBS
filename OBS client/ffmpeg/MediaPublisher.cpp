@@ -100,6 +100,7 @@ bool MediaPublisher::begin(const RecordingSettings &settings)
     m_stats.targetVideoBitrate = m_stats.requestedVideoBitrate;
     m_stats.automaticBitrate = settings.adaptiveBitrate;
     m_stats.bitrateState = settings.adaptiveBitrate ? BitrateState::Observing : BitrateState::Manual;
+    m_stats.muxInterleaveMs = settings.live && settings.lowLatency ? 40 : 100;
     m_accepting = true; m_finishing = false; m_aborted = false; m_cancelIo.store(false);
     start(); return true; // 2. QThread建立工作线程，随后在该线程调用run。
 }
@@ -219,6 +220,7 @@ void MediaPublisher::publishStats(const EncodingStats &value)
     m_stats.packets = value.packets; m_stats.bytes = value.bytes; m_stats.encoderVideoBitrate = value.encoderVideoBitrate;
     m_stats.audioResyncs = value.audioResyncs; m_stats.skippedAudioSamples = value.skippedAudioSamples;
     m_stats.videoPayloadBitrate = value.videoPayloadBitrate; m_stats.videoRateWindowMs = value.videoRateWindowMs;
+    m_stats.encoderVbvMs = value.encoderVbvMs; m_stats.encoderGopFrames = value.encoderGopFrames;
 }
 void MediaPublisher::finishWrite(qint64 startedUs, quint64 bytes, bool failed)
 {
@@ -236,6 +238,7 @@ void MediaPublisher::finishWrite(qint64 startedUs, quint64 bytes, bool failed)
 void MediaPublisher::run()
 {
     QString savedPath, error;
+    const auto runStarted = nowUs(); // 只测本进程初始化阶段，不与媒体PTS相减。
     try {
         const auto settings = m_settings;
         // 3. 视频编码必须与首帧共用设备；不在构造/GUI线程提前创建另一个D3D11设备。
@@ -277,8 +280,10 @@ void MediaPublisher::run()
                 av_dict_set(&options, "tcp_nodelay", "1", 0); // 直播小包及时交付，减少Nagle等待对发送反馈的干扰。
                 av_dict_set(&options, "protocol_whitelist", "rtmp,tcp", 0);
                 const auto address = url.toEncoded();
+                const auto connecting = nowUs();
                 const int result = avio_open2(&mux.format->pb, address.constData(), AVIO_FLAG_WRITE,
                     &mux.format->interrupt_callback, &options);
+                { QMutexLocker lock(&m_mutex); m_stats.connectUs = nowUs() - connecting; }
                 av_dict_free(&options); check(result, "connect RTMP");
             } else {
                 if (!file.open()) throw std::runtime_error(file.errorString().toStdString());
@@ -289,7 +294,7 @@ void MediaPublisher::run()
                 mux.format->pb = mux.io; mux.format->flags |= AVFMT_FLAG_CUSTOM_IO;
             }
             // 限制封装交织缓存；保留各路原始PTS和AAC编码延迟，由MP4编辑列表描述。
-            mux.format->max_interleave_delta = 100000;
+            mux.format->max_interleave_delta = settings.live && settings.lowLatency ? 40000 : 100000;
             AVStream *video = nullptr, *audio = nullptr;
             int64_t headerBytes = 0; bool transmitted = false;
             MediaEncoder encoder;
@@ -307,6 +312,7 @@ void MediaPublisher::run()
                         if (settings.live) {
                             avio_flush(mux.format->pb); check(mux.format->pb->error, "flush RTMP");
                             if (!transmitted && mux.format->pb->bytes_written > headerBytes) {
+                                { QMutexLocker lock(&m_mutex); m_stats.firstMediaUs = nowUs() - runStarted; }
                                 transmitted = true; emit transmitting();
                             }
                         }
@@ -333,6 +339,7 @@ void MediaPublisher::run()
                 policy.begin({settings.adaptiveBitrate, settings.adaptiveBitrate ? settings.minimumVideoBitrate : MinimumVideoBitrate, settings.videoBitrate},
                     submittedBitrate, now, bitrateFeedback(now));
                 m_bitratePeakWriteUs = 0; publishBitrateState(policy);
+                m_stats.readyUs = nowUs() - runStarted;
             }
             emit opened();
             // 5. 只取队列头的引用后解锁；编码/GPU等待/文件IO都不占用GUI入口的互斥锁。

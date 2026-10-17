@@ -71,6 +71,8 @@ python scripts/render_uml.py
 
 本地美颜与GPU解码整链路：现有Windows业务服务和OBS-SRS启动后，执行`python SRS/check.py --beauty`，使用既有示例图/引擎和自建窗口验证WGC、TensorRT、美颜、RTMP与观众GPU解码。不涉及Mac研究项目，详见[第014步](014-local-beauty.md)。
 
+直播延迟对照：`python SRS/check.py --beauty --latency`在同一现有集成程序内增加较宽/低延迟预算两组测量，以画面像素编号识别同帧，统计入队至GUI交付的P50/P95、队列、帧交付比例和音频欠载；真实WASAPI音量0。报告保存`out/低延迟验证/RTMP延迟对照.json`，图片中文命名；不包含真实采集和显示器扫描，也不以PTS直接推算端到端延迟。详见[第018步](018-rtmp-latency.md)。
+
 独立SRS与直播集成：`./SRS/manage.ps1 start`，确认OBS业务服务已运行，再执行`python SRS/check.py`。构建新增`OBSStreamingTests`目标，验证生成GPU画面/合成PCM经NVENC和SRS到Player，WASAPI音量0；该测试依赖外部容器与NVIDIA，独立于默认CTest。部署/源码版本集中在[SRS目录](../SRS/README.md)，FFmpeg生命周期见[第012步](012-srs-live.md)。
 
 推流观测/手动码率：`python scripts/run_publish_checks.py`验证默认范围，`--gpu`显式生成270张限幅噪声帧，验证单会话内3000→400→2000kbps目标、独立重读MP4包字节/PTS/DTS/关键帧。临时媒体自动清理，截图为`out/推流控制验证/手动码率页面.png`；`QT_SCALE_FACTOR=2`额外保存中文二倍缩放截图。现有`python SRS/check.py`增加运行中调节、真实Publisher初始值/应用按钮和发送统计检查，`--beauty`同时覆盖美颜。详见[第015步](015-publish-control.md)。

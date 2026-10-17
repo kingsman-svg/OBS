@@ -19,6 +19,9 @@
 #include <QLineEdit>
 #include <QImage>
 #include <QPixmap>
+#include <QPainter>
+#include <QFile>
+#include <QJsonDocument>
 #include <QPushButton>
 #include <QSignalSpy>
 #include <QSpinBox>
@@ -31,6 +34,8 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <algorithm>
+#include <vector>
 
 using namespace csn;
 using Microsoft::WRL::ComPtr;
@@ -146,10 +151,13 @@ bool integration()
             liveStats.droppedVideo, liveStats.audioSamples, liveStats.positionUs / 1000000.0);
         CHECK(announced && transmitted.size() == 1 && displayed - before >= 40);
         const auto stats = player->stats(); CHECK(stats.audioSamples > 48000 && stats.positionUs > 1000000);
+        CHECK(stats.renderedAudioSamples * 100 >= stats.audioSamples * 75); // 时钟推进不能掩盖持续补零。
         CHECK(stats.gpuVideo == stats.decodedVideo && stats.gpuVideo > 0 && stats.readbackVideo == 0 && stats.softwareVideo == 0);
         CHECK(view.findChild<PreviewWindow *>()->isVisible());
         const auto sending = publisher.stats();
         CHECK(sending.requestedVideoBitrate == 1200000 && sending.encoderVideoBitrate == 1200000);
+        CHECK(sending.encoderVbvMs == 200 && sending.encoderGopFrames == 30 && sending.muxInterleaveMs == 40);
+        CHECK(sending.connectUs > 0 && sending.readyUs >= sending.connectUs && sending.firstMediaUs >= sending.readyUs);
         CHECK(sending.writeCalls > 0 && sending.writeFailures == 0 && sending.outputBytes > 0 && sending.outputBitrate > 0);
         CHECK(sending.totalWriteUs >= sending.maxWriteUs && sending.totalVideoEncodeUs > 0 && sending.peakQueuedVideo <= 16 && sending.peakQueuedAudio <= 50);
         qInfo("PASS RTMP control: target=%d localIO=%llu kbps maxWrite=%.2fms peakQueue=%llu/%llu", sending.encoderVideoBitrate,
@@ -240,12 +248,134 @@ bool integration()
     auto *scroll = publisherView.findChild<QScrollArea *>("workspaceScroll"); CHECK(scroll);
     scroll->ensureWidgetVisible(publisherView.findChild<QPushButton *>("applyLiveBitrateButton")); QTest::qWait(30);
     QDir().mkpath("out/推流控制验证"); CHECK(publisherView.grab().save(QStringLiteral("out/推流控制验证/真实直播统计页面.png")));
+    scroll->ensureWidgetVisible(publisherView.findChild<QLabel *>("liveOutputStatusLabel")); QTest::qWait(30);
+    CHECK(publisherView.grab().save(QStringLiteral("out/推流控制验证/真实直播延迟统计.png")));
     // 直接关闭直播中的房间，验证停止媒体/leave串行和观众清理，不只验证单独stop按钮。
     QTest::mouseClick(publisherView.findChild<QPushButton *>("leaveRoomButton"), Qt::LeftButton);
     CHECK(until([&] { return session.room().isEmpty() && publisherSession.room().isEmpty() && !player->isRunning()
         && publisherView.findChild<QPushButton *>("startCaptureButton")->isEnabled(); }));
     qInfo("PASS Publisher MVC: generated window WGC -> timeline -> NVENC -> SRS -> late viewer / close-room cleanup");
     if (beauty) qInfo("PASS local beauty -> existing RTMP -> GPU Player: beautified=%d", beautified);
+    return true;
+}
+
+// 编号直接画进像素，经真实编码/RTMP/解码后再读回；不以发送端PTS或旁路消息冒充到达时间。
+ComPtr<ID3D11Texture2D> markedVideo(ID3D11Device *device, quint16 sequence)
+{
+    QImage pixels(320, 180, QImage::Format_ARGB32); pixels.fill(QColor(195, 35, 35));
+    const quint32 marker = 0xa5000000U | (quint32((sequence & 255) ^ (sequence >> 8) ^ 0x5a) << 16) | sequence;
+    QPainter painter(&pixels);
+    for (int bit = 0; bit < 32; ++bit) painter.fillRect(16 + bit * 8, 12, 8, 24, marker & (1U << bit) ? Qt::white : Qt::black);
+    painter.setPen(Qt::white); painter.setFont(QFont(qApp->font().family(), 18));
+    painter.drawText(pixels.rect(), Qt::AlignCenter, QStringLiteral("生成帧 %1").arg(sequence)); painter.end();
+    if (sequence == 30) { QDir().mkpath("out/低延迟验证"); pixels.save(QStringLiteral("out/低延迟验证/推流编号画面.png")); }
+    D3D11_TEXTURE2D_DESC desc{}; desc.Width = 320; desc.Height = 180;
+    desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM; desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA data{pixels.constBits(), UINT(pixels.bytesPerLine()), 0};
+    ComPtr<ID3D11Texture2D> texture; winrt::check_hresult(device->CreateTexture2D(&desc, &data, &texture)); return texture;
+}
+quint16 readMarker(const VideoFrame &frame, ComPtr<ID3D11Texture2D> &staging)
+{
+    ComPtr<ID3D11Device> device; frame.texture->GetDevice(&device);
+    ComPtr<ID3D11DeviceContext> context; device->GetImmediateContext(&context);
+    if (!staging) {
+        D3D11_TEXTURE2D_DESC desc{}; frame.texture->GetDesc(&desc);
+        desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ; desc.MiscFlags = 0;
+        winrt::check_hresult(device->CreateTexture2D(&desc, nullptr, &staging));
+    }
+    context->CopyResource(staging.Get(), frame.texture.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped{}; winrt::check_hresult(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+    quint32 marker = 0;
+    for (int bit = 0; bit < 32; ++bit) {
+        const auto *pixel = static_cast<const uchar *>(mapped.pData) + 24 * mapped.RowPitch + (20 + bit * 8) * 4;
+        if (int(pixel[0]) + pixel[1] + pixel[2] > 384) marker |= 1U << bit;
+    }
+    context->Unmap(staging.Get(), 0);
+    const auto sequence = quint16(marker);
+    const auto checksum = quint8((sequence & 255) ^ (sequence >> 8) ^ 0x5a);
+    return (marker >> 24) == 0xa5 && quint8(marker >> 16) == checksum ? sequence : 0;
+}
+bool latencyRound(bool lowLatency, QJsonObject &result)
+{
+    // 1. 同一个SRS配置，独立生成流；音量为0但真实运行WASAPI，保持音频主时钟。
+    auto base = generatedVideo(); ComPtr<ID3D11Device> device; base->GetDevice(&device);
+    MediaPublisher publisher; MediaPlayer player; player.setVolume(0);
+    RecordingSettings settings; settings.live = true; settings.lowLatency = lowLatency;
+    settings.width = 320; settings.height = 180; settings.videoBitrate = 1000000;
+    settings.path = QString("rtmp://127.0.0.1:1935/live/latency_%1_%2").arg(QCoreApplication::applicationPid()).arg(lowLatency);
+    QSignalSpy outputErrors(&publisher, &MediaPublisher::failed), playErrors(&player, &MediaPlayer::failed);
+    QSignalSpy transmitting(&publisher, &MediaPublisher::transmitting);
+    QElapsedTimer timer; timer.start(); CHECK(publisher.begin(settings));
+    int videos = 0, audios = 0, invalid = 0; bool watching = false;
+    std::vector<qint64> sent(1, 0); std::vector<double> delays; ComPtr<ID3D11Texture2D> staging;
+    qint64 previousPts = -1, previousClock = -1, peakAudio = 0, peakPadding = 0, peakVideo = 0;
+    // 2. 发送与交付共用本测试进程的单调时钟；纹理生成不计入发送端入队后的耗时。
+    while (timer.elapsed() < 6500) {
+        if (timer.elapsed() * 30 >= videos * 1000) {
+            const auto id = quint16(videos + 1); FaceFrame frame; frame.video.texture = markedVideo(device.Get(), id); frame.video.sequence = id;
+            sent.push_back(timer.nsecsElapsed() / 1000); publisher.pushVideo({frame, videos++});
+        }
+        while (audios * 10 <= timer.elapsed()) publisher.pushAudio(audio(audios++ * 480));
+        if (!watching && !transmitting.isEmpty()) {
+            CHECK(player.begin(settings.path, true, true, VideoDecodeMode::RequireHardware, lowLatency)); watching = true;
+        }
+        const auto frame = player.takeVideo(); const auto delivered = timer.nsecsElapsed() / 1000;
+        if (frame.source.texture) {
+            CHECK(frame.ptsUs > previousPts); previousPts = frame.ptsUs;
+            const auto id = readMarker(frame.source, staging);
+            if (!id || id >= sent.size()) ++invalid;
+            else if (sent[id] >= 2000000) delays.push_back((delivered - sent[id]) / 1000.0); // 预热后统计稳态分布。
+        }
+        const auto stats = player.stats(); CHECK(stats.positionUs >= previousClock); previousClock = stats.positionUs;
+        peakAudio = std::max(peakAudio, stats.audioQueuedUs); peakPadding = std::max(peakPadding, stats.audioPaddingUs);
+        peakVideo = std::max(peakVideo, stats.videoQueueSpanUs);
+        CHECK(outputErrors.isEmpty() && playErrors.isEmpty()); QTest::qWait(3);
+    }
+    // 3. 验证运行时变码率仍保留当前VBV预算，不在新请求后退回旧配置。
+    CHECK(publisher.requestVideoBitrate(800000));
+    while (publisher.stats().encoderVideoBitrate != 800000 && timer.elapsed() < 7500) {
+        FaceFrame frame; frame.video.texture = base; publisher.pushVideo({frame, videos++});
+        publisher.pushAudio(audio(audios++ * 480)); player.takeVideo(); QTest::qWait(10);
+    }
+    const auto sending = publisher.stats(); const auto playing = player.stats();
+    qInfo("latency diagnostics %s: invalid=%d samples=%zu GPU=%llu decoded=%llu delivered=%llu dropped=%llu clock=%.3fs first=%.1fms audioPeak=%.1fms videoPeak=%.1fms",
+        lowLatency ? "low" : "baseline", invalid, delays.size(), playing.gpuVideo, playing.decodedVideo, playing.displayedVideo,
+        playing.droppedVideo, playing.positionUs / 1000000.0, playing.firstDeliveryUs / 1000.0, peakAudio / 1000.0, peakVideo / 1000.0);
+    CHECK(sending.encoderVideoBitrate == 800000 && sending.encoderVbvMs == (lowLatency ? 200 : 2000));
+    CHECK(sending.encoderGopFrames == (lowLatency ? 30 : 60) && sending.muxInterleaveMs == (lowLatency ? 40 : 100));
+    CHECK(watching && invalid == 0 && delays.size() >= 60 && playing.gpuVideo == playing.decodedVideo);
+    CHECK(playing.displayedVideo * 100 >= playing.decodedVideo * 80); // 不能靠大量丢帧制造低延迟结果。
+    CHECK(playing.renderedAudioSamples * 100 >= playing.audioSamples * 75);
+    CHECK(playing.firstDeliveryUs >= playing.firstDecodedUs && playing.firstDecodedUs >= playing.openUs && playing.openUs > 0);
+    CHECK(peakAudio <= (lowLatency ? 120000 : 200000));
+    if (lowLatency) CHECK(peakVideo <= 340000 && peakPadding <= 30000);
+    std::sort(delays.begin(), delays.end()); const auto p50 = delays[delays.size() / 2], p95 = delays[size_t(std::ceil((delays.size() - 1) * .95))];
+    CHECK(delays.front() >= 0 && p95 < 3000);
+    result = {{"lowLatency", lowLatency}, {"samples", int(delays.size())}, {"p50Ms", p50}, {"p95Ms", p95},
+        {"minMs", delays.front()}, {"maxMs", delays.back()}, {"openMs", playing.openUs / 1000.0}, {"firstDeliveryMs", playing.firstDeliveryUs / 1000.0},
+        {"connectMs", sending.connectUs / 1000.0}, {"peakAudioQueueMs", peakAudio / 1000.0}, {"peakDevicePaddingMs", peakPadding / 1000.0},
+        {"deviceBufferMs", playing.audioBufferUs / 1000.0}, {"peakVideoSpanMs", peakVideo / 1000.0}, {"audioUnderruns", double(playing.audioUnderruns)},
+        {"decodedVideo", double(playing.decodedVideo)}, {"deliveredVideo", double(playing.displayedVideo)}, {"droppedVideo", double(playing.droppedVideo)},
+        {"droppedAudioSamples", double(playing.droppedAudioSamples)}, {"audioCatchups", double(playing.audioCatchups)},
+        {"decodedAudioSamples", double(playing.audioSamples)}, {"renderedAudioSamples", double(playing.renderedAudioSamples)},
+        {"insertedSilenceSamples", double(playing.insertedSilenceSamples)}};
+    qInfo("RTMP latency %s: n=%zu p50=%.1fms p95=%.1fms first=%.1fms PCM/endpoint/video=%.1f/%.1f/%.1fms underruns=%llu",
+        lowLatency ? "low" : "baseline", delays.size(), p50, p95, playing.firstDeliveryUs / 1000.0,
+        peakAudio / 1000.0, peakPadding / 1000.0, peakVideo / 1000.0, playing.audioUnderruns);
+    // 4. 先停观众避免把主动结束流当成读取失败；清理后才开始下一组预算对照。
+    player.stop(); CHECK(player.wait(2000)); publisher.stop(); CHECK(publisher.wait(2000));
+    return true;
+}
+bool latencyChecks()
+{
+    QJsonObject baseline, optimized; CHECK(latencyRound(false, baseline) && latencyRound(true, optimized));
+    CHECK(optimized.value("p50Ms").toDouble() < baseline.value("p50Ms").toDouble());
+    const QJsonObject report{{"measurement", "generated frame enqueue -> GUI takeVideo; same process monotonic clock; excludes capture and display scanout"},
+        {"baseline", baseline}, {"optimized", optimized}};
+    QDir().mkpath("out/低延迟验证"); QFile file(QStringLiteral("out/低延迟验证/RTMP延迟对照.json"));
+    CHECK(file.open(QIODevice::WriteOnly)); const auto bytes = QJsonDocument(report).toJson(); CHECK(file.write(bytes) == bytes.size());
+    qInfo("PASS RTMP marked-frame latency comparison / real NVENC and D3D11VA / audio master / fixed budgets after bitrate change / queue bounds / stop");
     return true;
 }
 }
@@ -258,7 +388,7 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     const int font = QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
     if (font >= 0) app.setFont(QFont(QFontDatabase::applicationFontFamilies(font).constFirst(), 10));
-    try { return integration() ? 0 : 1; }
+    try { return integration() && (!app.arguments().contains("--latency") || latencyChecks()) ? 0 : 1; }
     catch (const winrt::hresult_error &error) { qCritical().noquote() << QString::fromStdWString(error.message().c_str()); }
     catch (const std::exception &error) { qCritical().noquote() << error.what(); }
     return 1;

@@ -11,6 +11,7 @@ namespace csn {
 struct RecordingSettings {
     QString path;             // 本地.mp4路径或RTMP地址；协议由live明确选择。
     bool live = false;        // true用FLV/RTMP，false保留临时MP4安全封存。
+    bool lowLatency = true;   // 仅直播生效：200ms VBV/1秒GOP/40ms交织；false保留旧预算供对照或回退。
     bool video = true;        // 来自本轮视频源选择。
     bool audio = true;        // 来自本轮麦克风/回环选择。
     int width = 1280;         // 编码尺寸固定，源尺寸变化只影响GPU缩放。
@@ -59,6 +60,12 @@ struct EncodingStats {
     quint64 peakQueuedVideo = 0, peakQueuedAudio = 0; // 本轮队列峰值。
     qint64 videoQueueSpanMs = 0, audioQueueSpanMs = 0; // 队头到队尾的媒体时间跨度，包含最后一帧/包。
     qint64 oldestVideoWaitMs = 0, oldestAudioWaitMs = 0; // 队头在应用队列等待的墙钟时间，不含上游处理。
+    int encoderVbvMs = 0;         // 当前编码目标对应的VBV容量预算，不是实测延迟。
+    int encoderGopFrames = 0;     // 配置的关键帧间隔上限；追赶/重配置仍可提前插入IDR。
+    int muxInterleaveMs = 0;      // 交织队列时间戳跨度阈值，不是墙钟超时。
+    qint64 connectUs = 0;         // avio_open2的TCP/RTMP建连耗时，不含编码器初始化。
+    qint64 readyUs = 0;           // run入口到编码/封装头就绪，包含等待首帧。
+    qint64 firstMediaUs = 0;      // run入口到首次媒体IO写出；0表示尚未发生。
 };
 // 普通编码类，无线程；由 MediaPublisher::run 独占，图像保持GPU输入，音频使用CPU PCM。
 class MediaEncoder final {
