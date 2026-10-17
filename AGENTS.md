@@ -1,6 +1,7 @@
 # CourseStudioNext 工作约定
 
 - 在 `OBS client/` 这个应用工程内逐步推进，使用 Git 记录完成并验证的小步骤。
+- 后续 Git 提交的标题和说明统一使用中文；类名、API 名和必要技术术语保留原文。已推送的历史提交不自动改写。
 - 用户明确要求模型优化工具独立放在 `cpp/`：原生 C++ / TensorRT、Visual Studio 工程、输出 `.engine`，模型改用 SCRFD-10G-KPS；先完成独立工程，OBS 接入后续进行。
 - 当前优先实现网络与登录；界面采用简单 MVC。
 - 首期登录重新设计 HTTP JSON 接口，不沿用 yzj 的 TCP 登录协议。
