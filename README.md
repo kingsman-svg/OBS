@@ -82,6 +82,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 017 步：直播自适应视频码率](docs/017-abr.md)
 - [第 018 步：RTMP低延迟预算与编号画面测量](docs/018-rtmp-latency.md)
 - [第 019 步：播放端自适应缓冲](docs/019-playback-buffer.md)
+- [第 020 步：混音增益平滑、联动限幅与时钟漂移补偿](docs/020-audio-dsp.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

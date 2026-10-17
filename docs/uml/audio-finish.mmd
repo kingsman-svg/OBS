@@ -4,6 +4,7 @@ participant C as SessionController
 participant W as 两路WasapiCapture
 participant M as AudioMixer
 participant R as 每路AudioResampler
+participant L as StereoLimiter
 participant T as MediaTimeline
 U->>C: 停止采集或退出登录
 C->>W: stop / requestInterruption
@@ -15,16 +16,18 @@ C->>M: push最后一批数据
 C->>C: 两路音频均finished
 C->>M: finish
 M->>R: drain
-R->>R: swr_convert(nullptr,0)，取滤波尾部并reset
+R->>R: swr_convert(nullptr,0)，取尾部，释放上下文并保留本轮统计
 R-->>M: 尾部重采样数据
 M->>M: 最多排空500ms，最后不足10ms补零
+M->>L: 最后原始混音包push，再drain
+L-->>M: 最后有效10ms包输出一次，未来零参考不增加时长
 M-->>C: 固定10ms尾部包
 C->>C: emit mixedAudioReady后标记已停止
 C->>T: pushAudio，同步尾部入队
 C->>T: 采集与检测全部退出后finish
 T-->>C: synchronizedAudioReady尾部，不重新弹出预览
 else 退出登录或登录失效
-C->>M: clear，立即丢弃缓存/滤波尾部
+C->>M: clear，丢弃缓存/滤波尾部/限幅预读及DSP历史
 C->>T: clear，立即丢弃同步队列
 W-->>C: finished及迟到包
 C->>C: 丢弃，不再发出混音输出

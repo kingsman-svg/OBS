@@ -9,13 +9,20 @@ R-->>M: 异常，控制器禁用此路并显示错误
 else 重复或倒序包
 R-->>M: 空包，不推进滤波状态
 else 合法新包
-alt 首包、格式变化或超过5ms时间跳变
+alt 首包、格式变化、显式不连续或相邻间隔跳变超过5ms
 R->>S: swr_free，撤掉旧滤波状态
 R->>S: swr_alloc_set_opts2，输出48kHz立体声
-R->>S: 单声道复制矩阵 / swr_init
+R->>S: 单声道复制矩阵，SWR_FLAG_RESAMPLE / swr_init
 R->>R: 记录本段QPC原点及不连续标记
 else 时间连续
-R->>R: 累计样本时钟，吸收小幅时间抖动
+R->>R: 相邻间隔识别跳变，累计缓慢漂移不丢包/重建
+end
+alt 可信设备QPC达到一秒估计窗口
+R->>S: swr_get_delay，计算频差及输出库存相位
+R->>R: 平滑频差，4秒相位反馈，限制修正和变化速度
+R->>S: swr_set_compensation，正delta多输出，负delta少输出
+else 估计时间或异常观测
+R->>S: 暂停补偿，下一可信段重建估计基线
 end
 R->>S: swr_get_out_samples，预留含滤波延迟的容量
 R->>S: swr_convert，输入交错Float32
@@ -23,4 +30,4 @@ S-->>R: 可变数量的立体声Float32帧
 R->>R: 按本段实际输出样本数计算QPC时间
 R-->>M: 转换包，保留不连续/估计时间标记
 end
-Note over R,S: 当前只做固定采样率转换；尚无自适应设备时钟漂移补偿
+Note over R,S: 同为48kHz也保留滤波器；实际样本时钟连续，补偿不篡改采集QPC

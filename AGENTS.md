@@ -32,6 +32,7 @@
 - 第018步直播默认lowLatency：200ms VBV/1秒GOP/40ms交织，运行时手动/ABR保持同一VBV预算；短探测、50ms音频预缓冲/120ms PCM、30ms端点待播上限及300ms未来视频窗口。配置预算不等于实测延迟，实际端点容量单独显示；MP4/点播保持旧策略。现有SRS/check.py --latency按像素编号测入队→GUI交付，不含真实采集或显示扫描；不加生产线程或独立测试文件。
 - 直播播放主动裁剪PCM必须置m_audioGap并显式跳到首个保留PTS，不能只靠缺口长度决定是否补零；启动直播同样对齐保留音频。区分实际PCM提交、主动丢弃、应用补零和端点时钟，验收须防止持续补零但时钟正常推进的假通过。
 - 第019步播放端自适应：普通PlaybackBuffer复用原线程，低延迟直播默认50～150ms目标/300ms PCM上限，设备待播仍30ms，视频500ms/16帧兜底。欠载排空端点后Stop/Reset冻结主时钟、补足恢复；目标稳定慢降并实际裁未提交PCM追赶；无音频输出复用策略控制视频QPC映射。点播不启用，begin末参数false保留固定对照。Publisher不改ABR/队列策略，综合弱网实验按用户要求最后共同进行；不增加测试程序、线程或类图。
+- 第020步混音DSP：AudioMixer按480采样帧平滑音量/静音，持有普通StereoLimiter做左右联动5ms预读/50ms指数释放；保留一包及原PTS，finish先排swr再排限幅，clear/积压跳过也清预读。AudioResampler从首包启用滤波，可信设备QPC每秒估计频差和库存相位，限幅±1000ppm/限速后swr_set_compensation；估计/异常时间不驱动校正，真跳变/格式变化才重建。原120ms总等待覆盖80ms对齐和一包预读。默认仍7组CTest，扩展现有音频及UI验证；合成漂移不等于多小时真实设备验收，不改Publisher/Player策略或新增线程/MVC/类图。
 - 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。
 - 服务端协议放 `code/protocol/`，登录/调度/信令放 `code/services/`；共用同一网络库与 CMake 工程，配置不得保存签名密钥或真实密码。
 - 容器 `/repo` 挂载完整 CourseStudioNext 仓库，用于 Git 和全工程浏览；`/workspace` 保留服务端目录别名和原构建路径。两者为同一份本地文件。

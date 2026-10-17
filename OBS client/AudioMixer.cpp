@@ -29,9 +29,11 @@ void AudioMixer::clear()
     // 1. 丢弃各路滤波及缓存；2. 重置时间/统计，音量和静音仍保留。
     for (auto &track : m_tracks) {
         track.resampler.reset(); track.packets.clear(); track.queuedFrames = 0; track.enabled = false;
+        track.currentGain = track.targetGain = track.muted ? 0 : track.gain; track.gainStep = 0; track.rampFrames = 0;
     }
     m_origin = m_cursor = 0; m_discontinuity = false; m_level = 0; m_clippedSamples = 0;
     m_originEstimated = false;
+    m_limiter.reset();
 }
 void AudioMixer::begin(bool microphone, bool system)
 {
@@ -42,13 +44,19 @@ void AudioMixer::setControl(CaptureSource::Kind kind, float gain, bool muted)
 {
     if (!std::isfinite(gain) || gain < 0 || gain > 2) throw std::runtime_error("音频增益需要在0～2之间");
     auto &track = m_tracks[index(kind)]; track.gain = gain; track.muted = muted;
+    const auto target = muted ? 0.0f : gain;
+    if (!track.enabled) { track.currentGain = track.targetGain = target; track.rampFrames = 0; track.gainStep = 0; }
+    else if (target != track.targetGain) {
+        // 3. 从当前实际增益出发，在480个采样帧内达到新目标；再次操作不会从旧目标突然起跳。
+        track.targetGain = target; track.rampFrames = FrameSamples; track.gainStep = (target - track.currentGain) / FrameSamples;
+    }
 }
 void AudioMixer::disable(CaptureSource::Kind kind)
 {
     auto &track = m_tracks[index(kind)];
     track.enabled = false; track.resampler.reset(); track.packets.clear(); track.queuedFrames = 0;
     m_discontinuity = true;
-    if (!active()) m_level = 0;
+    if (!active()) { m_level = 0; m_limiter.reset(false); }
 }
 
 void AudioMixer::push(CaptureSource::Kind kind, const AudioPacket &packet)
@@ -87,6 +95,15 @@ AudioPacket AudioMixer::mixFrame()
     bool discontinuity = m_discontinuity, estimated = m_originEstimated;
     for (auto &track : m_tracks) {
         if (!track.enabled) continue;
+        std::array<float, FrameSamples> gains{};
+        // 1a. 按采样而非包/定时器推进增益；缺包或静音仍推进过渡和消费，左右使用同一增益。
+        for (auto &gain : gains) {
+            if (track.rampFrames > 0) {
+                track.currentGain += track.gainStep;
+                if (--track.rampFrames == 0) track.currentGain = track.targetGain;
+            }
+            gain = track.currentGain;
+        }
         while (!track.packets.empty() && frameAt(track.packets.front().timestamp100ns) + frames(track.packets.front()) <= m_cursor) {
             track.queuedFrames -= frames(track.packets.front()); track.packets.pop_front();
         }
@@ -102,33 +119,31 @@ AudioPacket AudioMixer::mixFrame()
                 const int output = int(position - m_cursor);
                 if (covered[output]) continue; // 不把重复/重叠包叠加成额外音量。
                 covered[output] = true;
-                if (track.muted) continue;
+                if (gains[output] == 0) continue;
                 for (int channel = 0; channel < 2; ++channel) {
                     float value;
                     const auto offset = ((position - first) * 2 + channel) * qsizetype(sizeof(float));
                     std::memcpy(&value, packet.pcm.constData() + offset, sizeof(value));
-                    if (std::isfinite(value)) mixed[output * 2 + channel] += std::clamp(value, -1.0f, 1.0f) * track.gain;
+                    if (std::isfinite(value)) mixed[output * 2 + channel] += std::clamp(value, -1.0f, 1.0f) * gains[output];
                 }
             }
         }
         // 2. 活跃且未静音的路缺包才标记；静音也按时消费，不攒旧声音。
-        if (!track.muted && track.gain > 0 && std::find(covered.begin(), covered.end(), false) != covered.end())
+        if (std::any_of(gains.begin(), gains.end(), [](float gain) { return gain > 0; })
+            && std::find(covered.begin(), covered.end(), false) != covered.end())
             discontinuity = true;
     }
-    // 3. 相加后统一削波到 [-1,1] 并统计，再计算实际输出 RMS。
-    double energy = 0;
-    for (auto &value : mixed) {
-        if (value < -1 || value > 1) ++m_clippedSamples;
-        value = std::clamp(value, -1.0f, 1.0f); energy += double(value) * value;
-    }
-    m_level = float(std::sqrt(energy / mixed.size()));
+    // 3. 保留浮点超幅给总线限幅处理；这里仅统计限幅前超幅，不能把它叫作输出硬削波。
+    for (const auto value : mixed) if (value < -1 || value > 1) ++m_clippedSamples;
     AudioPacket output;
     output.pcm = QByteArray(reinterpret_cast<const char *>(mixed.data()), qsizetype(sizeof(mixed)));
     output.sampleRate = Rate; output.channels = 2; output.channelMask = 3;
     output.timestamp100ns = m_origin + av_rescale(m_cursor, 10000000, Rate);
     output.discontinuity = discontinuity; output.timestampEstimated = estimated;
     m_cursor += FrameSamples; m_discontinuity = false;
-    return output;
+    auto limited = m_limiter.push(std::move(output));
+    if (!limited.pcm.isEmpty()) m_level = m_limiter.level();
+    return limited;
 }
 
 QList<AudioPacket> AudioMixer::takeFrames(qint64 now100ns)
@@ -139,9 +154,10 @@ QList<AudioPacket> AudioMixer::takeFrames(qint64 now100ns)
     const qint64 ready = av_rescale_rnd(now100ns - m_origin - Wait100ns, Rate, 10000000, AV_ROUND_DOWN);
     // 2. 一次最多追赶 200ms，过大的积压跳过，防止恢复 GUI 时处理历史长队列。
     if (ready - m_cursor > FrameSamples * 20) {
+        m_limiter.reset(false); // 预读包也已过期，不能在时间跳过后又交付历史音频。
         m_cursor = (ready / FrameSamples - 20) * FrameSamples; m_discontinuity = true;
     }
-    while (m_cursor + FrameSamples <= ready) output.append(mixFrame());
+    while (m_cursor + FrameSamples <= ready) { auto packet = mixFrame(); if (!packet.pcm.isEmpty()) output.append(std::move(packet)); }
     return output;
 }
 
@@ -155,10 +171,12 @@ QList<AudioPacket> AudioMixer::finish()
         end = std::max(end, frameAt(track.packets.back().timestamp100ns) + frames(track.packets.back()));
     // 2. 停止排空也限制 500ms；最后不足 480 帧由 mixFrame 自然补零并标记。
     if (end - m_cursor > MaxBuffered) {
+        m_limiter.reset(false);
         m_cursor = ((end - MaxBuffered + FrameSamples - 1) / FrameSamples) * FrameSamples;
         m_discontinuity = true;
     }
-    while (active() && m_origin && m_cursor < end) output.append(mixFrame());
+    while (active() && m_origin && m_cursor < end) { auto packet = mixFrame(); if (!packet.pcm.isEmpty()) output.append(std::move(packet)); }
+    auto tail = m_limiter.drain(); if (!tail.pcm.isEmpty()) output.append(std::move(tail)); // 限幅最后一包必须交付且只交付一次。
     // 3. 输出已拥有字节数据，清缓存和启用状态；保留本轮统计供界面查看。
     for (auto &track : m_tracks) { track.enabled = false; track.packets.clear(); track.queuedFrames = 0; }
     m_level = 0;

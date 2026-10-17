@@ -595,9 +595,20 @@ void SessionController::refreshAudioView()
 {
     QString message;
     if (m_audioMixer.active())
-        message = m_mixedPackets ? tr("48kHz · 立体声 · 10ms\n已输出 %1 包，削波 %2 次").arg(m_mixedPackets).arg(m_audioMixer.clippedSamples())
-            : tr("48kHz · 立体声 · 10ms\n等待首包音频，缓冲80ms");
-    else message = m_mixedPackets ? tr("混音已停止，共 %1 包，削波 %2 次").arg(m_mixedPackets).arg(m_audioMixer.clippedSamples()) : tr("未启用音频混音");
+        message = m_mixedPackets ? tr("48kHz · 立体声 · 10ms\n已输出 %1 包，限幅前超幅 %2 个采样值").arg(m_mixedPackets).arg(m_audioMixer.clippedSamples())
+            : tr("48kHz · 立体声 · 10ms\n等待音频，80ms对齐及一包限幅预读");
+    else message = m_mixedPackets ? tr("混音已停止，共 %1 包，限幅前超幅 %2 个采样值").arg(m_mixedPackets).arg(m_audioMixer.clippedSamples()) : tr("未启用音频混音");
+    if (m_audioMixer.active() || m_mixedPackets) {
+        message += tr("\n联动限幅 %1 帧 · 当前增益 %2 · 输出保护 %3 次")
+            .arg(m_audioMixer.limitedFrames()).arg(m_audioMixer.limiterGain(), 0, 'f', 3).arg(m_audioMixer.safetyClips());
+        for (const auto kind : {CaptureSource::Kind::Microphone, CaptureSource::Kind::Loopback}) {
+            const auto drift = m_audioMixer.drift(kind);
+            message += tr("\n%1：时钟偏差 %2 / 修正 %3 ppm · 相位 %4 ms · 校正 %5 / 重建 %6 次%7")
+                .arg(kind == CaptureSource::Kind::Microphone ? tr("麦克风") : tr("系统声音"))
+                .arg(drift.clockPpm, 0, 'f', 1).arg(drift.correctionPpm, 0, 'f', 1).arg(drift.phaseErrorMs, 0, 'f', 3)
+                .arg(drift.adjustments).arg(drift.restarts).arg(drift.reliable ? QString() : tr("（等待可信时间）"));
+        }
+    }
     if (!m_audioError.isEmpty()) message += QStringLiteral("\n") + m_audioError;
     m_view->showMixedAudio(m_audioMixer.level(), message);
 }

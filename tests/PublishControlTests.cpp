@@ -270,6 +270,12 @@ bool uiChecks()
     CHECK(scroll->viewport()->rect().contains(QRect(status->mapTo(scroll->viewport(), QPoint()), status->size())));
     QDir().mkpath("out/队列恢复验证"); CHECK(view.grab().save(QStringLiteral("out/队列恢复验证/直播追赶统计页面%1.png").arg(suffix)));
     view.applyLiveOutputState(false, false, "stopped"); CHECK(!button->isEnabled());
+    // 仅用合成诊断文字检查原混音标签；不打开麦克风/回环，不新建UI测试程序。
+    view.showMixedAudio(.4f, QStringLiteral("48kHz · 立体声 · 10ms\n已输出12000包，限幅前超幅960个采样值\n联动限幅2400帧 · 当前增益0.817 · 输出保护0次\n麦克风：时钟偏差300.0 / 修正302.1ppm · 相位0.021ms · 校正59 / 重建0次\n系统声音：时钟偏差-300.0 / 修正-302.1ppm · 相位0.000ms · 校正59 / 重建0次"));
+    auto *mixed = view.findChild<QLabel *>("audioMixStatusLabel"); CHECK(mixed);
+    scroll->ensureWidgetVisible(mixed); QTest::qWait(50);
+    CHECK(mixed->height() >= mixed->heightForWidth(mixed->width()) && mixed->width() <= scroll->viewport()->width());
+    QDir().mkpath("out/音频DSP验证"); CHECK(view.grab().save(QStringLiteral("out/音频DSP验证/混音诊断布局%1.png").arg(suffix)));
     qInfo("PASS bitrate UI: kbps->bit/s / atomic manual-automatic range / explicit apply / no per-digit request / compact layout / stop lock"); return true;
 }
 struct Input {

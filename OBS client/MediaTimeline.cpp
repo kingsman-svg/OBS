@@ -80,7 +80,7 @@ bool MediaTimeline::pushAudio(const AudioPacket &packet)
 
 MediaBatch MediaTimeline::takeFrames(qint64 now)
 {
-    // 4. 总缓冲只计算一次：音频已在混音层等 80ms，视频也等到同一 120ms 截止线。
+    // 4. 总等待包含混音80ms对齐及一包限幅预读；视频同样使用120ms截止线，不重复叠加等待。
     if (!m_active || now < m_lastNow) return {};
     m_lastNow = now;
     if (now < m_origin || now - m_origin < Delay100ns) return {};

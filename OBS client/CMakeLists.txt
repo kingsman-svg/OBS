@@ -66,6 +66,7 @@ add_library(OBSMediaCore STATIC
     VideoRenderer.cpp VideoRenderer.h
     CaptureSource.h VideoCapture.cpp VideoCapture.h WasapiCapture.cpp WasapiCapture.h
     AudioPacket.h AudioResampler.cpp AudioResampler.h AudioMixer.cpp AudioMixer.h
+    StereoLimiter.cpp StereoLimiter.h
     MediaTimeline.cpp MediaTimeline.h
     WasapiPlayback.cpp WasapiPlayback.h PlaybackBuffer.cpp PlaybackBuffer.h
     FaceDetection.h FaceDetection.cpp GpuFaceDetector.h GpuFaceDetector.cpp

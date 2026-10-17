@@ -4,7 +4,9 @@ extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/error.h>
 #include <libavutil/mathematics.h>
+#include <libavutil/opt.h>
 }
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -29,6 +31,9 @@ void AudioResampler::reset()
     m_inputRate = m_inputChannels = 0; m_inputMask = 0;
     m_origin = m_inputFrames = m_outputFrames = m_lastTimestamp = 0;
     m_discontinuity = m_estimated = false;
+    m_lastFrames = 0; m_lastEstimated = m_clockValid = m_rateObserved = false;
+    m_rateTime = m_rateFrames = m_phaseTime = m_phaseOutput = 0;
+    m_clockPpm = m_commandPpm = 0; m_drift = {};
 }
 
 void AudioResampler::configure(const AudioPacket &input)
@@ -52,6 +57,8 @@ void AudioResampler::configure(const AudioPacket &input)
         const double duplicate[]{1, 1};
         checkAudio(swr_set_matrix(m_context, duplicate, 1));
     }
+    // 4. 同为48kHz也先建立滤波器；后续set_compensation不必重建/丢失已有滤波库存。
+    checkAudio(av_opt_set_int(m_context, "flags", SWR_FLAG_RESAMPLE, 0));
     checkAudio(swr_init(m_context));
     m_inputRate = input.sampleRate; m_inputChannels = input.channels; m_inputMask = input.channelMask;
     m_origin = input.timestamp100ns;
@@ -68,24 +75,65 @@ AudioPacket AudioResampler::convert(const AudioPacket &input)
     if (!frames) return {};
     if (frames > input.sampleRate / 2) throw std::runtime_error("单包音频超过 500ms 上限");
     const bool changed = m_inputRate != input.sampleRate || m_inputChannels != input.channels || m_inputMask != input.channelMask;
-    const qint64 expected = m_context ? m_origin + av_rescale(m_inputFrames, 10000000, m_inputRate) : input.timestamp100ns;
-    const qint64 difference = input.timestamp100ns - expected;
-    // 2. 重复/倒序包不推进滤波器；5ms 内的包时间抖动吸收到连续样本时钟。
-    if (m_context && !changed && !input.discontinuity
-        && (difference < -50000 || input.timestamp100ns <= m_lastTimestamp)) return {};
-    const bool broken = input.discontinuity || (m_context && (changed || std::abs(difference) > 50000));
+    const qint64 expected = m_context ? m_lastTimestamp + av_rescale(m_lastFrames, 10000000, m_inputRate) : input.timestamp100ns;
+    // 2. 仅比较相邻包的间隔。缓慢累计超过5ms仍交给软补偿，不能再按会话累计偏差丢包/重建。
+    if (m_context && !changed && !input.discontinuity && input.timestamp100ns <= m_lastTimestamp) { ++m_drift.rejected; return {}; }
+    const bool jump = m_context && !input.timestampEstimated && !m_lastEstimated && std::abs(input.timestamp100ns - expected) > 50000;
+    const bool broken = input.discontinuity || (m_context && (changed || jump));
     if (!m_context || changed || broken) {
+        auto statistics = m_drift;
+        if (m_context) ++statistics.restarts;
         reset();
+        m_drift = statistics;
         try { configure(input); }
         catch (...) { reset(); throw; }
         m_discontinuity = broken;
     }
     // 3. 累计输入帧数，转换后按实际输出样本数标记时间，绝不按 Qt 定时器计时。
+    compensate(input);
     m_estimated = m_estimated || input.timestampEstimated;
     auto result = resample(reinterpret_cast<const uchar *>(input.pcm.constData()), int(frames));
     m_inputFrames += frames;
     m_lastTimestamp = input.timestamp100ns;
+    m_lastFrames = int(frames); m_lastEstimated = input.timestampEstimated;
     return result;
+}
+
+void AudioResampler::compensate(const AudioPacket &input)
+{
+    // 1. 只采用设备给出的QPC首帧时间。估计时间暂停软补偿，下一可信段重新建基线而不跳输出PTS。
+    if (input.timestampEstimated) {
+        if (m_commandPpm != 0) checkAudio(swr_set_compensation(m_context, 0, 0));
+        m_clockValid = m_rateObserved = false; m_clockPpm = m_commandPpm = 0;
+        m_drift.reliable = false; m_drift.clockPpm = m_drift.correctionPpm = m_drift.phaseErrorMs = 0; return;
+    }
+    const auto inventory = m_outputFrames + swr_get_delay(m_context, OutputRate);
+    if (!m_clockValid) {
+        m_rateTime = m_phaseTime = input.timestamp100ns; m_rateFrames = m_inputFrames; m_phaseOutput = inventory;
+        m_clockValid = true; m_drift.reliable = true; return;
+    }
+    const auto nominal = av_rescale(m_inputFrames - m_rateFrames, 10000000, m_inputRate);
+    if (nominal < 10000000) return; // 一秒窗口过滤包级调度/时间戳噪声。
+    const double measured = double(input.timestamp100ns - m_rateTime - nominal) * 1000000 / nominal;
+    m_rateTime = input.timestamp100ns; m_rateFrames = m_inputFrames;
+    // 2. 超过2000ppm不作为正常晶振漂移学习；暂停校正/重建可信基线，不用极端重采样追赶坏时间。
+    if (std::abs(measured) > 2000) {
+        ++m_drift.outliers; m_clockValid = m_rateObserved = false; m_commandPpm = m_clockPpm = 0;
+        checkAudio(swr_set_compensation(m_context, 0, 0)); m_drift.reliable = false;
+        m_drift.clockPpm = m_drift.correctionPpm = m_drift.phaseErrorMs = 0; return;
+    }
+    m_clockPpm = m_rateObserved ? .8 * m_clockPpm + .2 * measured : measured; m_rateObserved = true;
+    // 3. 输出库存包含swr滤波延迟，不能把那十几帧误当成采样时钟漂移。四秒慢慢收敛相位。
+    const double wanted = double(input.timestamp100ns - m_phaseTime) * OutputRate / 10000000 + m_phaseOutput;
+    const double error = wanted - inventory;
+    const double desired = std::clamp(m_clockPpm + error * 1000000 / (OutputRate * 4.0), -1000.0, 1000.0);
+    m_commandPpm += std::clamp(desired - m_commandPpm, -100.0, 100.0);
+    constexpr int distance = OutputRate * 2; // 两秒补偿距离，每秒刷新；一个样本约10.4ppm。
+    const int delta = int(std::llround(m_commandPpm * distance / 1000000));
+    // 4. 正delta生成更多样本，适配设备偏慢；负delta相反。不丢整包、不插整段静音、不修改采集QPC。
+    checkAudio(swr_set_compensation(m_context, delta, distance));
+    m_drift.clockPpm = m_clockPpm; m_drift.correctionPpm = double(delta) * 1000000 / distance;
+    m_drift.phaseErrorMs = error * 1000 / OutputRate; m_drift.reliable = true; ++m_drift.adjustments;
 }
 
 AudioPacket AudioResampler::resample(const uchar *data, int frames)
@@ -115,7 +163,7 @@ AudioPacket AudioResampler::drain()
 {
     if (!m_context) return {};
     // 1. 输出尾部；2. 释放上下文，重复 drain 不会重复输出同一段。
-    try { auto output = resample(nullptr, 0); reset(); return output; }
+    try { auto output = resample(nullptr, 0); const auto statistics = m_drift; reset(); m_drift = statistics; return output; }
     catch (...) { reset(); throw; }
 }
 } // namespace csn

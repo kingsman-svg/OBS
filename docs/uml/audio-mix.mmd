@@ -5,6 +5,7 @@ participant C as SessionController
 participant W as 两路WasapiCapture
 participant M as AudioMixer
 participant R as 每路AudioResampler
+participant L as StereoLimiter普通对象
 participant T as MediaTimeline
 U->>V: 选择音频源，开始采集
 V-->>C: captureRequested
@@ -12,25 +13,27 @@ C->>M: begin，清缓存，启用选中的输入路
 C->>W: begin，线程独立采集原始格式
 W-->>C: 队列中的PCM、声道布局、QPC时间
 C->>M: push(kind, packet)
-M->>R: convert，统一48kHz立体声
+M->>R: convert，统一48kHz立体声并软补偿可信设备漂移
 R-->>M: 可变长重采样包
 M->>M: 首包建立QPC原点，每路最多缓存500ms
 C->>M: takeFrames(当前QPC)，留80ms对齐窗口
 M->>M: 按时间交集填480帧，缺包补零
-M->>M: 两路增益/静音，再相加、削波、计算RMS
+M->>M: 每路480采样帧平滑音量/静音，浮点相加
+M->>L: push原10ms包，5ms预读/左右共用增益
+L-->>M: 首包等待；后续交付前一有效包和实际RMS
 M-->>C: 固定10ms包与连续样本时间戳
 C->>C: emit mixedAudioReady，保留混音诊断
 C->>T: pushAudio，共同原点换算PTS
-C->>T: takeFrames，总等待120ms包含已有80ms
+C->>T: takeFrames，总等待120ms包含80ms对齐和一包预读
 T-->>C: synchronizedAudioReady，后续编码入口
-C->>V: 显示混音RMS、包数、削波统计
+C->>V: 显示RMS、限幅前超幅/联动增益和两路漂移统计
 U->>V: 改变音量或静音
 V-->>C: audioMixChanged
-C->>M: setControl，后续混音立即应用
+C->>M: setControl，从当前增益用10ms过渡到目标
 alt 一路设备或重采样失败
 C->>M: disable失败路，另一成功路继续
 C->>V: 保留失败说明
 else GUI长时间停顿或缓存溢出
-M->>M: 丢弃旧包，单次最多追赶200ms并标记不连续
+M->>M: 丢弃旧包及过期限幅预读，最多追赶200ms并标记
 end
 Note over W,M: 静音仍消费时间，恢复不重放旧包；当前不监听回采声音

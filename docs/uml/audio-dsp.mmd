@@ -1,0 +1,48 @@
+sequenceDiagram
+actor U as 用户
+participant C as SessionController GUI
+participant W as 两路WASAPI采集线程
+participant M as AudioMixer普通对象
+participant R as 每路AudioResampler
+participant L as StereoLimiter普通对象
+participant T as MediaTimeline与编码
+U->>C: 开始采集
+C->>M: begin清DSP历史，保留用户音量/静音
+C->>W: begin/start，独立run采集
+W-->>C: 有界PCM队列，首帧QPC与不连续标志
+C->>M: push每路原始包
+M->>R: convert，48kHz立体声及首包初始化滤波器
+alt 可信设备时间
+R->>R: 一秒窗口平滑频差，库存相位慢回正
+R->>R: 修正限幅1000ppm、命令限速100ppm
+R->>R: swr_set_compensation，保持输出样本时间连续
+else 估计时间或异常窗口
+R->>R: 暂停软补偿，重新建立可信基线
+end
+R-->>M: 可变长PCM、原来源时间及漂移诊断
+C->>M: takeFrames当前QPC
+M->>M: 80ms对齐，10ms固定包，缺失补零
+U->>C: 修改音量或静音
+C->>M: setControl设置新目标
+M->>M: 每采样推进10ms增益斜坡，左右共用
+M->>M: 浮点相加，记录限幅前超幅
+M->>L: push当前10ms包
+L->>L: 缓存一包，下一包前240帧提供5ms预读
+L->>L: 共同峰值、反向攻击约束、50ms指数释放
+L-->>M: 前一包原PTS与实际RMS，不补起始静音
+M-->>C: 原48kHz立体声10ms契约
+C->>T: 原120ms总等待内按共同PTS交付
+C->>C: 原标签显示增益/限幅/两路时钟统计
+alt 真实间隔跳变或格式变化
+R->>R: 重建连续段并标记，不把跳变作为晶振漂移
+else GUI积压跳过旧时间
+M->>L: 清过期预读，保留计数并标记下一包
+end
+U->>C: 普通停止
+C->>W: stop，等待finished后取尾包
+C->>M: finish
+M->>R: drain滤波尾部
+M->>L: 排空混音后drain限幅
+L-->>C: 最后有效包只交付一次
+C->>T: finish同步和编码尾部
+Note over C,L: 退出登录clear直接丢缓存；下一轮begin清DSP历史，无新生产线程或MVC

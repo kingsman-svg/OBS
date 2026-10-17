@@ -1,5 +1,7 @@
 # 第 006 步：音频重采样与双路混音
 
+后续状态：[第020步](020-audio-dsp.md)增加10ms增益过渡、左右联动预读限幅和采集设备时钟软补偿；本文的直接增益/硬削波是历史阶段实现。当前总同步预算仍为120ms，已包含80ms对齐和一包限幅预读。
+
 2026-10-16已精简独立硬件/UI阶段测试。本文保留当时的专项验收记录，当前构建及测试命令以[构建与验证](build-and-test.md)为准；旧专项源码可从Git历史恢复。
 
 在现有推流端接通 WASAPI → AudioResampler → AudioMixer → `SessionController::mixedAudioReady`。统一输出为 **48kHz、立体声、交错 Float32、每包 10ms**，供后续音频编码使用。没有新增 Demo、采集 Model 或 Controller；源码继续平铺在 `OBS client/`。
