@@ -1,0 +1,32 @@
+sequenceDiagram
+participant R as RTMP读取线程
+participant D as AAC解码器
+participant S as SWR与FIFO
+participant E as Opus编码器
+participant Q as 音视频交接队列
+participant L as 网关EventLoop
+R->>R: 探测AAC并创建普通AudioTranscoder
+R->>D: push带源PTS的AVPacket
+D-->>R: 实际格式和时间戳的解码AVFrame
+alt 首帧或格式与时间段变化
+R->>S: 建立48kHz立体声Float32转换
+R->>E: 建立20ms低延迟Opus编码
+Note over S,E: 重建时丢旧FIFO和编码历史，并标记不连续
+end
+R->>S: 按源样本时间重采样并入FIFO
+S-->>R: 每960采样帧可编码
+R->>E: send_frame保留绝对样本PTS
+E-->>R: packet PTS已包含lookahead修正
+R->>Q: 压缩Opus加PTS和epoch组成MediaUnit
+Note over R,Q: 不把转码完成时刻当采集时间，不二次添加编码延迟
+L->>Q: tick取出并按媒体PTS排序
+Q-->>L: 音视频共用32单元与300ms预算
+alt 正常EOF
+R->>D: 排空解码帧
+R->>S: 排SWR滤波尾部与FIFO
+R->>E: 编码有效尾部并finish一次
+R->>Q: 交付剩余有效包
+else stop或换流或IO超时
+R->>R: 读取线程直接销毁旧段资源
+Note over R,E: 不把旧尾包回放到新流
+end

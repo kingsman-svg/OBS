@@ -66,7 +66,7 @@ bool H264Adapter::hasIdr(const std::vector<std::byte> &bytes) {
         throw std::invalid_argument("H264 Annex B required");
     return idr;
 }
-VideoUnit H264Adapter::convert(const AVPacket &packet, std::uint64_t epoch) {
+MediaUnit H264Adapter::convert(const AVPacket &packet, std::uint64_t epoch) {
     // 3. 透传首版限定 PTS=DTS；B 帧转码、无时间戳推算后续单独实现。
     if (packet.pts == AV_NOPTS_VALUE || packet.dts == AV_NOPTS_VALUE || packet.pts != packet.dts ||
         packet.size <= 0 || packet.size > 4 * 1024 * 1024)
@@ -84,7 +84,7 @@ VideoUnit H264Adapter::convert(const AVPacket &packet, std::uint64_t epoch) {
         auto bytes = std::make_shared<std::vector<std::byte>>(
             reinterpret_cast<std::byte *>(output->data),
             reinterpret_cast<std::byte *>(output->data + output->size));
-        VideoUnit result{bytes, av_rescale_q(output->pts, m_timeBase, AVRational{1, 1000000}),
+        MediaUnit result{bytes, av_rescale_q(output->pts, m_timeBase, AVRational{1, 1000000}),
                          epoch, hasIdr(*bytes)};
         av_packet_free(&input);
         av_packet_free(&output);

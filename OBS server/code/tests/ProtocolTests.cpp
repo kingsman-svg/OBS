@@ -11,10 +11,14 @@
 #include <sys/socket.h>
 #include <thread>
 #ifdef OBS_HAVE_MEDIA
+#include "AudioTranscoder.h"
 #include "H264Adapter.h"
+#include "RtpClock.h"
 extern "C" {
+#include <libavcodec/avcodec.h>
 #include <libavutil/mem.h>
 }
+#include <cmath>
 #endif
 
 using namespace obs::protocol;
@@ -217,6 +221,196 @@ void h264Adapter() {
     av_packet_free(&packet);
     avcodec_parameters_free(&parameters);
 }
+void audioTranscoding(int rate) {
+    // 真正 AAC 编码→生产转码器→真正 Opus 解码，覆盖 44.1k mono 和 48k stereo。
+    const int channels = rate == 44100 ? 1 : 2;
+    auto *aac = avcodec_alloc_context3(avcodec_find_encoder(AV_CODEC_ID_AAC));
+    check(aac != nullptr, "AAC test encoder");
+    aac->sample_rate = rate;
+    aac->sample_fmt = AV_SAMPLE_FMT_FLTP;
+    aac->time_base = {1, rate};
+    aac->bit_rate = 96000;
+    av_channel_layout_default(&aac->ch_layout, channels);
+    check(avcodec_open2(aac, aac->codec, nullptr) == 0, "open AAC test encoder");
+    auto *parameters = avcodec_parameters_alloc();
+    check(parameters && avcodec_parameters_from_context(parameters, aac) == 0,
+          "copy AAC parameters");
+    std::vector<AVPacket *> packets;
+    auto *packet = av_packet_alloc();
+    auto collect = [&] {
+        while (avcodec_receive_packet(aac, packet) == 0) {
+            packets.push_back(av_packet_clone(packet));
+            av_packet_unref(packet);
+        }
+    };
+    for (int n = 0; n < 31; ++n) {
+        auto *input = av_frame_alloc();
+        input->format = AV_SAMPLE_FMT_FLTP;
+        input->sample_rate = rate;
+        check(av_channel_layout_copy(&input->ch_layout, &aac->ch_layout) == 0, "AAC layout");
+        input->nb_samples = aac->frame_size;
+        input->pts = rate + std::int64_t(n) * input->nb_samples;
+        check(av_frame_get_buffer(input, 0) == 0, "AAC samples");
+        for (int c = 0; c < channels; ++c)
+            for (int i = 0; i < input->nb_samples; ++i)
+                reinterpret_cast<float *>(input->data[c])[i] =
+                    .2f *
+                    std::sin(2 * 3.141592653589793 * 997 * (n * input->nb_samples + i) / rate);
+        check(avcodec_send_frame(aac, input) == 0, "send AAC test samples");
+        collect();
+        av_frame_free(&input);
+    }
+    check(avcodec_send_frame(aac, nullptr) == 0, "flush AAC test samples");
+    collect();
+    check(packets.size() >= 31, "AAC packets generated");
+    obs::media::AudioTranscoder transcoder(*parameters, AVRational{1, rate});
+    std::vector<obs::media::MediaUnit> units;
+    for (auto *input : packets) {
+        auto out = transcoder.push(*input, 9);
+        units.insert(units.end(), out.begin(), out.end());
+    }
+    auto tail = transcoder.finish(9);
+    units.insert(units.end(), tail.begin(), tail.end());
+    check(transcoder.finish(9).empty(), "audio tail is drained once");
+    const auto stats = transcoder.stats();
+    check(stats.resets == 0 && stats.inputRate == rate && stats.encoderDelaySamples > 0 &&
+              units.size() > 20,
+          "resampling should retain a continuous source clock");
+    check(std::llabs(std::int64_t(stats.resampledSamples) -
+                     av_rescale(stats.decodedSamples, 48000, rate)) <= 1,
+          "SWR drain must preserve converted sample count");
+    const auto firstSample =
+        av_rescale_q(packets.front()->pts, AVRational{1, rate}, AVRational{1, 48000}) -
+        stats.encoderDelaySamples;
+    check(std::llabs(units.front().ptsUs -
+                     av_rescale_q(firstSample, AVRational{1, 48000}, AVRational{1, 1000000})) <= 1,
+          "Opus delay is represented once by the encoder packet PTS");
+    auto *opus = avcodec_alloc_context3(avcodec_find_decoder(AV_CODEC_ID_OPUS));
+    check(opus != nullptr, "Opus test decoder");
+    opus->sample_rate = 48000;
+    av_channel_layout_default(&opus->ch_layout, 2);
+    check(avcodec_open2(opus, opus->codec, nullptr) == 0, "open Opus decoder");
+    auto *decoded = av_frame_alloc();
+    double energy = 0, stereoError = 0;
+    std::uint64_t samples = 0;
+    std::int64_t previous = -1;
+    for (const auto &unit : units) {
+        check(unit.kind == obs::media::MediaKind::Audio && unit.epoch == 9 &&
+                  unit.durationUs == 20000,
+              "Opus unit must own its timeline metadata");
+        if (previous >= 0)
+            check(unit.ptsUs - previous == 20000, "Opus timestamps step by 960 samples");
+        previous = unit.ptsUs;
+        check(av_new_packet(packet, static_cast<int>(unit.bytes->size())) == 0,
+              "Opus packet allocation");
+        std::copy(unit.bytes->begin(), unit.bytes->end(),
+                  reinterpret_cast<std::byte *>(packet->data));
+        check(avcodec_send_packet(opus, packet) == 0, "decode generated Opus");
+        av_packet_unref(packet);
+        while (avcodec_receive_frame(opus, decoded) == 0) {
+            check(decoded->sample_rate == 48000 && decoded->ch_layout.nb_channels == 2 &&
+                      decoded->format == AV_SAMPLE_FMT_FLTP,
+                  "decoded Opus is 48k stereo");
+            const auto *left = reinterpret_cast<const float *>(decoded->data[0]);
+            const auto *right = reinterpret_cast<const float *>(decoded->data[1]);
+            for (int i = 0; i < decoded->nb_samples; ++i) {
+                energy += left[i] * left[i];
+                stereoError += std::pow(left[i] - right[i], 2);
+            }
+            samples += decoded->nb_samples;
+            av_frame_unref(decoded);
+        }
+    }
+    check(samples > 30000 && energy / samples > .001 && stereoError / samples < .0004,
+          "Opus roundtrip must contain real audio and preserve duplicated stereo");
+    // 同一源制造 500ms 缺口：只重建输出段，不把缺口补为静音并重新积压。
+    obs::media::AudioTranscoder gap(*parameters, AVRational{1, rate});
+    unsigned discontinuities = 0;
+    for (std::size_t i = 0; i < packets.size(); ++i) {
+        auto *copy = av_packet_clone(packets[i]);
+        if (i >= 8) {
+            copy->pts += rate / 2;
+            copy->dts += rate / 2;
+        }
+        for (const auto &unit : gap.push(*copy, 10))
+            discontinuities += unit.discontinuity;
+        av_packet_free(&copy);
+    }
+    gap.finish(10);
+    check(gap.stats().resets == 1 && discontinuities == 1, "audio gap must mark one new segment");
+    std::cout << "audio gateway " << rate << "Hz: decoded=" << stats.decodedSamples
+              << " resampled=" << stats.resampledSamples << " packets=" << units.size()
+              << " delay=" << stats.encoderDelaySamples << " samples\n";
+    av_frame_free(&decoded);
+    avcodec_free_context(&opus);
+    avcodec_free_context(&aac);
+    avcodec_parameters_free(&parameters);
+    av_packet_free(&packet);
+    for (auto *p : packets)
+        av_packet_free(&p);
+}
+void commonRtpClock() {
+    using namespace obs::media;
+    using namespace std::chrono;
+    const auto start = RtpClock::Steady::now();
+    RtpClock clock(start, system_clock::time_point(seconds(1000)));
+    MediaUnit video;
+    video.epoch = 1;
+    video.ptsUs = 1000000;
+    video.idr = true;
+    MediaUnit audio;
+    audio.kind = MediaKind::Audio;
+    audio.epoch = 1;
+    audio.ptsUs = 1080000;
+    audio.durationUs = 20000;
+    check(!clock.map(audio, start), "audio must wait for shared IDR start");
+    const auto v = clock.map(video, start + seconds(1));
+    const auto a = clock.map(audio, start + seconds(1) + milliseconds(90));
+    check(v && a && *a - *v == 80000,
+          "source 80ms audio offset must survive unequal arrival times");
+    const auto t = start + hours(15) + microseconds(12345);
+    const auto ticks = std::uint32_t(15LL * 3600 * 90000 + 12345LL * 90000 / 1000000);
+    check(clock.rtpNow(90000, 0xfffffff0U, t) == 0xfffffff0U + ticks, "RTP clock wrap is defined");
+    clock.resync();
+    check(!clock.map(audio, start + seconds(2)), "crop must gate both tracks");
+    video.epoch = 2;
+    video.ptsUs = 0;
+    const auto next = clock.map(video, start + seconds(3));
+    check(next && *next > *a && clock.reanchors() == 2,
+          "source reset must map both tracks forward");
+    // 实际序列化两份 SR：包内假装是旧帧，SR 必须仍报告现在的共同理论钟。
+    auto shared = std::make_shared<RtpClock>(start - seconds(2), system_clock::now() - seconds(2));
+    auto vr = std::make_shared<rtc::RtpPacketizationConfig>(11, "same-cname", 96, 90000);
+    auto ar = std::make_shared<rtc::RtpPacketizationConfig>(12, "same-cname", 111, 48000);
+    vr->startTimestamp = 0xffffff00U;
+    ar->startTimestamp = 1234;
+    ClockSenderReport vs(vr, shared), as(ar, shared);
+    auto report = [](ClockSenderReport &sender, std::uint32_t ssrc) {
+        auto packet = rtc::make_message(32);
+        auto *header = reinterpret_cast<rtc::RtpHeader *>(packet->data());
+        header->preparePacket();
+        header->setSsrc(ssrc);
+        header->setTimestamp(42);
+        rtc::message_vector messages{packet};
+        rtc::message_ptr result;
+        sender.outgoing(messages, [&](auto message) { result = message; });
+        check(bool(result), "SR must be emitted with first packet");
+        return result;
+    };
+    const auto vb = report(vs, 11), ab = report(as, 12);
+    const auto *srV = reinterpret_cast<const rtc::RtcpSr *>(vb->data());
+    const auto *srA = reinterpret_cast<const rtc::RtcpSr *>(ab->data());
+    const double rtpDelta =
+        double(std::uint32_t(srA->rtpTimestamp() - ar->startTimestamp)) / 48000 -
+        double(std::uint32_t(srV->rtpTimestamp() - vr->startTimestamp)) / 90000;
+    const double ntpDelta = double(srA->ntpTimestamp() - srV->ntpTimestamp()) / 4294967296.0;
+    check(std::abs(rtpDelta - ntpDelta) < 1.0 / 48000,
+          "audio/video SR mapping differs by less than one audio sample");
+    check(srV->packetCount() == 1 && srV->octetCount() == 20 && srV->rtpTimestamp() != 42,
+          "SR counters and send-time theoretical clock");
+    std::cout << "gateway SR common-clock error=" << std::abs(rtpDelta - ntpDelta) * 1000000
+              << "us\n";
+}
 #endif
 } // namespace
 int main() {
@@ -227,6 +421,9 @@ int main() {
         deferredHttp();
 #ifdef OBS_HAVE_MEDIA
         h264Adapter();
+        audioTranscoding(44100);
+        audioTranscoding(48000);
+        commonRtpClock();
 #endif
         std::cout << "protocol/auth and deferred HTTP behavior groups passed\n";
         return 0;

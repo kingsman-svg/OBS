@@ -37,4 +37,5 @@
 - 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。
 - 2026-10-18按用户新要求启动自建RTMP→WebRTC网关：代码平铺code/media，独立OBS-MEDIA容器，首期H.264视频透传到浏览器，SRS只接收RTMP且不修改Mac研究项目。复用AuthService/只读签名密钥，HTTP异步Reply只在loop调用，FFmpeg单读取线程经32帧/8MiB/300ms队列交接，入场/裁剪后等IDR；库内ICE/DTLS/SRTP及512包NACK不是自行实现的GCC。当前自定义JSON协商尚非WHEP，AAC/Opus、音画同步、逐观众反馈/期限与原生Player接入后续推进；完成基础链路后再集中学习WebRTC信令、ICE穿透、拥塞控制。扩展现有ProtocolTests/SRS集成，不新增测试程序；综合弱网实验仍最后一起做。
 - 服务端协议放 `code/protocol/`，登录/调度/信令放 `code/services/`；共用同一网络库与 CMake 工程，配置不得保存签名密钥或真实密码。
+- 第022步网关音频/同步：MediaUnit统一视频与Opus；RtmpSource原线程持有普通AudioTranscoder（AAC decoder→SWR→Float32 stereo FIFO→libopus，48kHz/960帧/20ms/目标96kbps），编码器packet PTS已含lookahead，不能二次加减延迟。每位观众RtpClock统一源PTS映射与单调/NTP参考，ClockSenderReport配对“现在的理论RTP钟”和同一时刻NTP，双轨共享CNAME/MSID/元素；裁剪/重开共同等IDR。真实EOF排尾，取消/换流丢旧尾；RTP尾包填充不冒充全部有效样本。复用原ProtocolTests与SRS/check.py --gateway，静音WebAudio和实际视频像素比较生成包络；这是浏览器消费分支同步验证，不是物理声卡/显示器测量。纯视频仍兼容，不新增线程/MVC/测试程序/类图。
 - 容器 `/repo` 挂载完整 CourseStudioNext 仓库，用于 Git 和全工程浏览；`/workspace` 保留服务端目录别名和原构建路径。两者为同一份本地文件。

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>OBS 自建 WebRTC 视频网关</title>
+<title>OBS 自建 WebRTC 音视频网关</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#101725;color:#e7edf7;font:16px/1.6 system-ui,"Microsoft YaHei",sans-serif}
 main{max-width:1100px;margin:auto;padding:28px 20px}h1{font-size:25px;margin:0 0 8px}p{color:#aebed5;margin:8px 0 20px}
@@ -15,8 +15,8 @@ video{display:block;width:100%;aspect-ratio:16/9;background:black;border-radius:
 @media(max-width:540px){main{padding:18px 12px}.panel{padding:14px}button{width:100%}h1{font-size:21px}}
 </style>
 <main>
-<h1>OBS 自建 WebRTC 视频网关</h1>
-<p>第一阶段 · RTMP → H.264 RTP → WebRTC。当前仅播放视频；音频尚未接入。</p>
+<h1>OBS 自建 WebRTC 音视频网关</h1>
+<p>RTMP → H.264 视频与 Opus 音频 → WebRTC。两路使用共同时间基准播放。</p>
 <section class="panel"><form id="login" class="row">
 <label>账号<input id="account" value="root" autocomplete="username" required maxlength="64"></label>
 <label>密码<input id="password" type="password" autocomplete="current-password" required maxlength="128"></label>
@@ -25,6 +25,7 @@ video{display:block;width:100%;aspect-ratio:16/9;background:black;border-radius:
 <section class="panel"><form id="watch" class="row">
 <label>流名称（Publisher 推流地址的最后一段）<input id="stream" placeholder="例如 live 地址中的房间流名称" required pattern="[A-Za-z0-9_-]{1,96}" maxlength="96" autocomplete="off"></label>
 <button id="start" disabled>开始播放</button><button id="stop" class="secondary" type="button" disabled>停止播放</button>
+<button id="sound" class="secondary" type="button" disabled>开启声音</button>
 </form><div id="message" role="status" aria-live="polite">请使用现有开发账号登录。</div></section>
 <section class="panel"><video id="video" autoplay muted playsinline controls></video></section>
 <details class="panel"><summary>运行状态</summary><pre id="diagnostics">尚未连接</pre></details>
@@ -52,6 +53,7 @@ function iceComplete(pc,signal){
 async function closePlayback(){
   ++revision;controller?.abort();controller=null;peer?.close();peer=null;$('video').srcObject=null;
   const id=session;session='';$('start').disabled=!token;$('stop').disabled=true;
+  $('sound').disabled=true;$('sound').textContent='开启声音';$('video').muted=true;
   if(id)try{await api('/api/sessions/'+id,'DELETE');}catch{}
 }
 $('login').addEventListener('submit',async event=>{
@@ -75,8 +77,16 @@ $('watch').addEventListener('submit',async event=>{
     const codecs=RTCRtpReceiver.getCapabilities('video').codecs.filter(codec=>codec.mimeType.toLowerCase()==='video/h264');
     if(!codecs.length)throw Error('当前浏览器没有可用的 H.264 WebRTC 解码器。');
     transceiver.setCodecPreferences(codecs);
-    pc.ontrack=event=>{$('video').srcObject=new MediaStream([event.track]);$('video').play().catch(()=>{});};
-    pc.onconnectionstatechange=()=>{if(current===revision)message('WebRTC 连接状态：'+pc.connectionState+(pc.connectionState==='connected'?'；正在等待/播放视频。':''));};
+    if(status.audioAvailable){
+      const audio=pc.addTransceiver('audio',{direction:'recvonly'});
+      const opus=RTCRtpReceiver.getCapabilities('audio').codecs.filter(codec=>codec.mimeType.toLowerCase()==='audio/opus');
+      if(!opus.length)throw Error('当前浏览器没有可用的 Opus 解码器。');
+      audio.setCodecPreferences(opus);
+    }
+    // 两轨放入同一个 MediaStream/媒体元素，浏览器才能按 RTCP 共同参考时钟做音画调度。
+    const remote=new MediaStream();$('video').srcObject=remote;
+    pc.ontrack=event=>{remote.addTrack(event.track);if(event.track.kind==='audio')$('sound').disabled=false;$('video').play().catch(()=>{});};
+    pc.onconnectionstatechange=()=>{if(current===revision)message('WebRTC 连接状态：'+pc.connectionState+(pc.connectionState==='connected'?'；正在播放'+(status.audioAvailable?'音视频，可点击开启声音。':'视频。'):''));};
     message('正在协商视频并建立 WebRTC 连接…');
     await pc.setLocalDescription(await pc.createOffer());await iceComplete(pc,signal);
     const answer=await api('/api/sessions','POST',{sdp:pc.localDescription.sdp},signal);
@@ -85,11 +95,18 @@ $('watch').addEventListener('submit',async event=>{
   }catch(error){if(current===revision){await closePlayback();message(error.name==='AbortError'?'播放已停止。':error.message);}}
 });
 $('stop').addEventListener('click',async()=>{await closePlayback();message('播放已停止，Publisher 可以继续推流。');});
+$('sound').addEventListener('click',async()=>{
+  $('video').muted=!$('video').muted;$('sound').textContent=$('video').muted?'开启声音':'关闭声音';
+  try{await $('video').play();}catch{message('浏览器尚未允许播放声音，请再次点击。');}
+});
 window.addEventListener('pagehide',()=>{peer?.close();if(session&&token)fetch('/api/sessions/'+session,{method:'DELETE',headers:{Authorization:'Bearer '+token},keepalive:true}).catch(()=>{});});
 // 验收读取浏览器真正的解码/接收计数；不把网关提交帧数当播放成功。
 window.gatewayStats=async()=>{
-  if(!peer)return {connected:false,framesDecoded:0};const result={connected:peer.connectionState==='connected',width:$('video').videoWidth,height:$('video').videoHeight};
-  for(const report of (await peer.getStats()).values())if(report.type==='inbound-rtp'&&report.kind==='video')Object.assign(result,{framesDecoded:report.framesDecoded||0,packetsReceived:report.packetsReceived||0,framesDropped:report.framesDropped||0,bytesReceived:report.bytesReceived||0});
+  if(!peer)return {connected:false,framesDecoded:0};const result={connected:peer.connectionState==='connected',width:$('video').videoWidth,height:$('video').videoHeight,audioSamples:0,audioEnergy:0};
+  for(const report of (await peer.getStats()).values())if(report.type==='inbound-rtp'){
+    if(report.kind==='video')Object.assign(result,{framesDecoded:report.framesDecoded||0,packetsReceived:report.packetsReceived||0,framesDropped:report.framesDropped||0,bytesReceived:report.bytesReceived||0,videoPlayoutMs:report.estimatedPlayoutTimestamp});
+    if(report.kind==='audio')Object.assign(result,{audioPackets:report.packetsReceived||0,audioSamples:report.totalSamplesReceived||0,audioEnergy:report.totalAudioEnergy||0,audioDuration:report.totalSamplesDuration||0,concealedSamples:report.concealedSamples||0,audioPlayoutMs:report.estimatedPlayoutTimestamp});
+  }
   return result;
 };
 </script>

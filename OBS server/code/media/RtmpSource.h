@@ -1,4 +1,5 @@
 #pragma once
+#include "AudioTranscoder.h"
 #include "H264Adapter.h"
 #include <atomic>
 #include <condition_variable>
@@ -14,12 +15,14 @@ struct SourceStatus {
     int width = 0, height = 0; // 输入视频尺寸，尚未表示浏览器已解码。
     std::uint64_t epoch = 0; // 本进程输入重开序号；同一 RTMP 连接内重推未必改变它。
     std::uint64_t frames = 0, reconnects = 0; // 本次选择的输入计数。
+    bool hasAudio = false;     // 输入包含受支持的 AAC；视频独播仍可协商。
+    AudioTranscodeStats audio; // 读取线程更新、HTTP 只读的转码快照。
 };
 
 // 网关独占一个读取线程；HTTP loop 只发选择命令、读取状态，不等待上游网络。
 class RtmpSource final {
   public:
-    using Sink = std::function<void(VideoUnit)>;
+    using Sink = std::function<void(MediaUnit)>;
     RtmpSource(std::string baseUrl, Sink sink);
     ~RtmpSource();
     void start();                         // loop 线程调用，创建读取线程。

@@ -1,5 +1,7 @@
 # 第021步：自建 RTMP→WebRTC 视频网关
 
+本篇保留视频首阶段的设计与验收记录。当前实现已经扩展为H.264+Opus及共同RTP/RTCP时钟，最新运行行为和资源归属见[第022步](022-gateway-av-sync.md)。
+
 2026-10-18，完成第一阶段：真实 Publisher/NVENC → SRS 接收 RTMP → 我们的 Linux 网关拉流/适配 H.264 → libdatachannel → Edge 解码。SRS 的 RTC 输出没有参与这条播放链路。当前仅视频，AAC 在网关读取时忽略；后续再加入 AAC→PCM→Opus 和音画同步。
 
 这是 Windows OBS 工程内的媒体服务增量，与 Mac 上独立进行的 SRS、MediaMTX、OpenH264 研究无关。网关没有修改 SRS 上游源码。

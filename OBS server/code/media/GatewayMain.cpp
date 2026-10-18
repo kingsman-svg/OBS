@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
         {
             obs::media::MediaGateway gateway(loop, auth, std::move(config));
             gateway.start();
-            std::cout << "Media gateway ready (H264 video only).\n" << std::flush;
+            std::cout << "Media gateway ready (H264 + optional AAC/Opus audio).\n" << std::flush;
             loop.loop();
             gateway.stop(); // 4. 先停止入口，析构等待读线程；最后销毁信号通道和 loop。
         }

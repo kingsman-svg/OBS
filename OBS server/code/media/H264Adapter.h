@@ -1,4 +1,5 @@
 #pragma once
+#include "MediaUnit.h"
 extern "C" {
 #include <libavcodec/bsf.h>
 #include <libavcodec/codec_par.h>
@@ -10,14 +11,6 @@ extern "C" {
 #include <vector>
 
 namespace obs::media {
-// 一个完整 H.264 access unit；字节拥有独立生命周期，不借用 FFmpeg AVPacket。
-struct VideoUnit {
-    std::shared_ptr<const std::vector<std::byte>> bytes; // Annex B，保留压缩视频，不解码。
-    std::int64_t ptsUs = 0;                              // 原输入 PTS 换算为微秒。
-    std::uint64_t epoch = 0; // 每次上游重开递增，不能跨段续用参考帧。
-    bool idr = false;        // 由 NAL 类型 5 判断，不只相信 packet flag。
-};
-
 // 普通类，无线程；仅由 RtmpSource 的读取线程构造、转换和销毁。
 class H264Adapter final {
   public:
@@ -25,7 +18,7 @@ class H264Adapter final {
     ~H264Adapter();
     H264Adapter(const H264Adapter &) = delete;
     H264Adapter &operator=(const H264Adapter &) = delete;
-    VideoUnit convert(const AVPacket &packet, std::uint64_t epoch);
+    MediaUnit convert(const AVPacket &packet, std::uint64_t epoch);
     const std::string &profile() const noexcept {
         return m_profile;
     }

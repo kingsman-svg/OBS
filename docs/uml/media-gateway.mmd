@@ -13,14 +13,15 @@ G->>L: 监听HTTP并注册5ms定时器
 M->>L: loop
 B->>G: 登录并提交Bearer令牌及流名
 G->>R: select只更新命令并唤醒
-R->>S: FFmpeg打开RTMP并探测H264
+R->>S: FFmpeg打开RTMP并探测H264与可选AAC
 alt 上游不存在或不支持
 R-->>G: 更新去敏状态并等待可中断重试
 G-->>B: 状态与未就绪503
 else 输入就绪
 R->>R: avcC到AnnexB并保留源PTS
-R->>G: 有界队列交接完整压缩帧
-B->>G: 提交recvonly H264 offer
+R->>R: AAC解码重采样和Opus编码并保留源时间
+R->>G: 有界队列交接视频与Opus媒体单元
+B->>G: 提交recvonly H264与可选Opus offer
 G->>W: 创建独立会话并注册原子状态回调
 alt 无兼容profile或level
 W-->>G: 明确拒绝透传
@@ -33,9 +34,9 @@ G->>W: 获取answer并映射可达candidate
 G-->>B: 自定义JSON answer
 B->>W: ICE检查和DTLS握手
 L->>G: tick取出有限年龄视频帧
-G->>W: 等待IDR后push完整access unit
-W-->>B: H264 RTP与SR经SRTP传输
-B->>B: 实际解码和显示编号画面
+G->>W: 等待IDR后用共同RtpClock映射两轨
+W-->>B: H264与Opus RTP及共同参考SR经SRTP传输
+B->>B: 同一MediaStream和元素解码调度音画
 end
 end
 alt 浏览器停止或令牌过期

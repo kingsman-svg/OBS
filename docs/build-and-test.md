@@ -1,6 +1,8 @@
 # 构建与验证
 
-自建媒体网关另用可选`OBS_BUILD_MEDIA=ON`，不影响默认客户端七组/服务端四组测试数量。主机PowerShell执行`& './OBS server/media.ps1' build`和`start`，浏览器打开`http://127.0.0.1:8090/`。显式`python SRS/check.py --gateway`复用现有集成程序，用真实Publisher与Edge解码验证视频；需要隔离安装Playwright，完整步骤见[第021步](021-media-gateway.md)。
+自建媒体网关另用可选`OBS_BUILD_MEDIA=ON`，不影响默认客户端七组/服务端四组测试数量。主机PowerShell执行`& './OBS server/media.ps1' build`和`start`，浏览器打开`http://127.0.0.1:8090/`。显式`python SRS/check.py --gateway`复用现有集成程序，用真实Publisher与Edge解码验证音视频；需要隔离安装Playwright，初始环境见[第021步](021-media-gateway.md)，当前音频和同步步骤见[第022步](022-gateway-av-sync.md)。
+
+第022步加入AAC→SWR→Opus及共同RTP/SR时钟。原ProtocolTests增加44.1k/48k真实转码、音频内容/尾部/缺口和跨轨SR校验；同一`--gateway`模式增加同步包络、同一音频消费者跨重推及纯视频回退，全部为生成媒体/静音分析。浏览器默认静音，点击开启声音；最新步骤见[第022步](022-gateway-av-sync.md)。
 
 Qt Creator 打开 OBS client/CMakeLists.txt，选择 Qt 6 + MSVC 64 位 Kit。重新配置后有两个运行目标：OBS_Publisher、OBS_Player。程序连接独立 Docker 服务，启动与双端操作见 [第 003 步](003-two-clients.md)。
 

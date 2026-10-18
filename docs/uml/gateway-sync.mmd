@@ -1,0 +1,37 @@
+sequenceDiagram
+participant G as MediaGateway
+participant V as 视频Track
+participant C as 共同RtpClock
+participant A as 音频Track
+participant B as 浏览器
+G->>V: 以H264协商PT和独立SSRC创建
+G->>A: 以Opus48000和独立SSRC创建
+Note over V,A: 共用PeerConnection和MSID及CNAME
+G->>C: 两轨就绪后等待可解码IDR
+G->>C: map视频IDR的源PTS
+C->>C: 源起点映射到共同单调会话钟
+G->>C: map视频或音频源PTS
+C-->>G: 保留两轨源偏移的映射时间
+alt 视频
+G->>V: 映射时间乘90kHz并加随机原点
+V-->>B: H264 RTP包
+else 音频
+G->>A: 映射时间乘48kHz并加随机原点
+A-->>B: Opus RTP包
+end
+V->>C: 请求现在的NTP与视频理论RTP钟
+C-->>V: 同一时刻的配对
+V-->>B: 自定义SR与共同CNAME的SDES
+A->>C: 请求现在的NTP与音频理论RTP钟
+C-->>A: 同一时刻的配对
+A-->>B: 自定义SR与共同CNAME的SDES
+Note over C,B: SR使用现在的理论RTP钟，不取最后一个媒体包PTS
+B->>B: 同一MediaStream和video元素按参考钟调度
+alt 共同队列裁剪或源段变化
+G->>C: resync音视频共同等待下一IDR
+C->>C: 重建共同映射且保持输出向前
+else 观众停止
+G->>V: 关闭视频轨
+G->>A: 关闭音频轨
+G->>C: 释放本会话时钟
+end

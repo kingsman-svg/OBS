@@ -20,7 +20,7 @@ Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登�
 
 先在 OBS 容器启动 `python3 /workspace/code/run_services.py start`，再用 Qt Creator 打开 `OBS client/CMakeLists.txt`，构建并分别运行 OBS_Publisher 和 OBS_Player。两端使用开发账号 `root`、密码 `root`，默认连接本机 Docker 的 8080 调度与 9000 信令。详见 [双端运行说明](docs/003-two-clients.md)。
 
-推流端已接入 WinRT 摄像头、WGC 窗口/屏幕、WASAPI 麦克风/系统声音，提供设备选择、启停、独立非模态预览和双路音量。主窗口仅放操作面板，小窗口可滚动；首帧打开预览，关闭画面后采集继续，可用“打开画面”恢复。底层只有 VideoCapture、WasapiCapture 两个采集类，由现有工作台控制器协调，预览已改为 D3D11 Shader + 双缓冲 SwapChain，生产路径不读回 CPU；采集与渲染成员及流程有中文编号注释。详见 [采集说明](docs/004-capture.md) 与 [GPU 渲染说明](docs/005-gpu-preview.md)。播放端支持直播/点播切换，本地/HTTP(S)点播以及SRS RTMP直播共用解码和音画播放；推流端支持RTMP直播与本地MP4录制。GPU美颜与Agent继续逐步接入。LocalAuthServer仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
+推流端已接入 WinRT 摄像头、WGC 窗口/屏幕、WASAPI 麦克风/系统声音，提供设备选择、启停、独立非模态预览和双路音量。主窗口仅放操作面板，小窗口可滚动；首帧打开预览，关闭画面后采集继续，可用“打开画面”恢复。底层只有 VideoCapture、WasapiCapture 两个采集类，由现有工作台控制器协调，预览已改为 D3D11 Shader + 双缓冲 SwapChain，生产路径不读回 CPU；采集与渲染成员及流程有中文编号注释。详见 [采集说明](docs/004-capture.md) 与 [GPU 渲染说明](docs/005-gpu-preview.md)。播放端支持直播/点播切换，本地/HTTP(S)点播以及SRS RTMP直播共用解码和音画播放；推流端支持RTMP直播与本地MP4录制，已接入本地TensorRT检测和GPU磨皮、提亮。精细美颜与Agent后续推进。LocalAuthServer仅保留为测试支持；生产账号系统和中心令牌撤销尚未实现。当前不增加云助教相关功能。
 
 音频已接入 FFmpeg 7.1 libswresample，统一为 48kHz / 立体声 / Float32 / 10ms，按 QPC 对齐麦克风与系统回环，支持各路音量、静音、缺包补零和削波统计。正常停止排空尾部，退出登录丢弃迟到数据；提供混音后的媒体信号，后续接编码器。构建需配置 FFmpeg shared SDK，详见 [音频重采样与混音](docs/006-audio-mix.md)。
 
@@ -55,7 +55,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - 后续功能在已有版本上继续增加，Qt 界面随核心能力逐步完善。
 - UI 采用简单 MVC；完整流程配 UML 时序图，后续不再绘制类图。
 
-编码前同步和本地录制见[第009步](docs/009-media-sync.md)、[第010步](docs/010-ffmpeg-encode.md)，Player点播见[第011步](docs/011-player-vod.md)。RTMP直播闭环已接入，Publisher创建房间、选择源后“开始直播”，Player加入后等待/自动播放，见[第012步](docs/012-srs-live.md)。Player现默认优先D3D11VA硬件解码、GPU颜色转换和独立纹理显示，界面区分GPU/软件/硬件回读帧数，见[第013步](docs/013-gpu-decode.md)。暂停/跳转、WebRTC客户端/ICE、GPU美颜与Agent后续逐步推进。
+编码前同步和本地录制见[第009步](docs/009-media-sync.md)、[第010步](docs/010-ffmpeg-encode.md)，Player点播见[第011步](docs/011-player-vod.md)。RTMP直播闭环已接入，Publisher创建房间、选择源后“开始直播”，Player加入后等待/自动播放，见[第012步](docs/012-srs-live.md)。Player现默认优先D3D11VA硬件解码、GPU颜色转换和独立纹理显示，界面区分GPU/软件/硬件回读帧数，见[第013步](docs/013-gpu-decode.md)。自建浏览器音视频网关已完成H.264/Opus与共同RTP/SR时钟，见[第022步](docs/022-gateway-av-sync.md)；暂停/跳转、原生Player的WebRTC接入与互联网ICE/TURN验收、精细美颜和Agent后续逐步推进。
 
 ## 文档
 
@@ -84,6 +84,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [第 019 步：播放端自适应缓冲](docs/019-playback-buffer.md)
 - [第 020 步：混音增益平滑、联动限幅与时钟漂移补偿](docs/020-audio-dsp.md)
 - [第 021 步：自建 RTMP→WebRTC 视频网关](docs/021-media-gateway.md)
+- [第 022 步：网关 AAC→Opus 与音视频同步](docs/022-gateway-av-sync.md)
 - [OBS Docker 与 VS Code 连接](OBS%20server/README.md)
 - [公共网络库：结构、接口与验证](OBS%20server/code/README.md)
 - [定时器与登录、调度、信令服务](docs/server-services.md)

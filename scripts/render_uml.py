@@ -12,6 +12,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1] / 'docs' / 'uml'
 IMAGE_NAMES = {
+    'gateway-audio': '网关音频转码时序图',
+    'gateway-sync': '网关音视频同步时序图',
     'media-gateway': '自建媒体网关时序图',
     'audio-dsp': '混音DSP处理时序图',
     'playback-buffer': '播放端自适应缓冲时序图',

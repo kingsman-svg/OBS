@@ -87,6 +87,13 @@ void RtmpSource::run() {
                 throw std::runtime_error("upstream has no video");
             const auto &video = *format->streams[index];
             H264Adapter adapter(*video.codecpar, video.time_base);
+            const int audioIndex =
+                av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+            std::unique_ptr<AudioTranscoder> audio;
+            if (audioIndex >= 0) {
+                const auto &input = *format->streams[audioIndex];
+                audio = std::make_unique<AudioTranscoder>(*input.codecpar, input.time_base);
+            }
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 if (m_generation == m_readGeneration) {
@@ -95,17 +102,22 @@ void RtmpSource::run() {
                     m_status.profile = adapter.profile();
                     m_status.width = video.codecpar->width;
                     m_status.height = video.codecpar->height;
+                    m_status.hasAudio = bool(audio);
+                    m_status.audio = {};
                 }
             }
             std::int64_t lastPts = AV_NOPTS_VALUE;
+            int readResult = 0;
             while (!interrupt(this)) {
-                // 3. 上游 RTMP 已按直播节奏读入；只转视频码流，AAC 本阶段明确忽略。
+                // 3. 同一 demux 线程分发视频透传和 AAC→SWR→Opus，不为音频另建线程。
                 m_deadlineUs = av_gettime_relative() + 3000000;
-                if (av_read_frame(format, packet) < 0)
+                readResult = av_read_frame(format, packet);
+                if (readResult < 0)
                     break;
                 if (packet->stream_index == index) {
                     auto unit = adapter.convert(*packet, epoch);
-                    if (lastPts != AV_NOPTS_VALUE && unit.ptsUs <= lastPts)
+                    if (lastPts != AV_NOPTS_VALUE &&
+                        (unit.ptsUs <= lastPts || unit.ptsUs - lastPts > 1000000))
                         throw std::runtime_error("upstream timestamp discontinuity");
                     lastPts = unit.ptsUs;
                     if (!interrupt(this)) {
@@ -114,8 +126,24 @@ void RtmpSource::run() {
                         if (m_generation == m_readGeneration)
                             ++m_status.frames;
                     }
+                } else if (audio && packet->stream_index == audioIndex) {
+                    auto units = audio->push(*packet, epoch);
+                    for (auto &unit : units)
+                        if (!interrupt(this))
+                            m_sink(std::move(unit));
+                    std::lock_guard<std::mutex> lock(m_mutex);
+                    if (m_generation == m_readGeneration)
+                        m_status.audio = audio->stats();
                 }
                 av_packet_unref(packet);
+            }
+            // 正常 EOF 排尾；超时/stop/换流不把旧段尾包带到下一段。
+            if (audio && readResult == AVERROR_EOF && !interrupt(this)) {
+                for (auto &unit : audio->finish(epoch))
+                    m_sink(std::move(unit));
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (m_generation == m_readGeneration)
+                    m_status.audio = audio->stats();
             }
         } catch (const std::invalid_argument &) {
             unsupported = true;
@@ -128,7 +156,7 @@ void RtmpSource::run() {
         std::unique_lock<std::mutex> lock(m_mutex);
         if (m_generation == m_readGeneration && !m_stopping) {
             m_status.phase = unsupported ? "unsupported" : "retrying";
-            m_status.note = unsupported ? "首版要求带 avcC 和有效 PTS/DTS 的无 B 帧 H.264 视频"
+            m_status.note = unsupported ? "要求有效 PTS/DTS 的无 B 帧 H.264，以及可选 AAC 音频"
                                         : "等待上游直播或重试连接";
             ++m_status.reconnects;
             m_wakeup.wait_for(lock, std::chrono::seconds(1),

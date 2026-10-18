@@ -12,7 +12,7 @@ MediaGateway::MediaGateway(net::EventLoop &loop, services::AuthService &auth, Ga
              HttpServer::AsyncHandler(
                  [this](const auto &request, auto reply) { handle(request, std::move(reply)); }),
              std::chrono::seconds(12)),
-      m_source(m_config.rtmpBase, [this](VideoUnit unit) { enqueue(std::move(unit)); }) {
+      m_source(m_config.rtmpBase, [this](MediaUnit unit) { enqueue(std::move(unit)); }) {
 }
 MediaGateway::~MediaGateway() {
     // 6. main 已退出 loop；stop 禁用入口/定时器并关闭 RTC，再 join FFmpeg 线程。
@@ -40,8 +40,8 @@ void MediaGateway::stop() {
 void MediaGateway::handle(const HttpRequest &request, HttpServer::Reply reply) {
     // 2. 页面与健康检查公开，控制/媒体会话必须使用未过期 Bearer 登录令牌。
     if (request.method == "GET" && request.target == "/health") {
-        reply(HttpReply::json(200,
-                              {{"ready", true}, {"role", "media-gateway"}, {"videoOnly", true}}));
+        reply(HttpReply::json(
+            200, {{"ready", true}, {"role", "media-gateway"}, {"audioSupported", true}}));
         return;
     }
     if (request.method == "GET" && request.target == "/") {
@@ -118,7 +118,7 @@ void MediaGateway::handle(const HttpRequest &request, HttpServer::Reply reply) {
         try {
             auto rtc =
                 std::make_unique<RtcSession>(body.at("sdp").get<std::string>(), input.profile,
-                                             m_config.firstPort, m_config.lastPort);
+                                             input.hasAudio, m_config.firstPort, m_config.lastPort);
             const auto id = services::AuthService::randomId();
             m_viewers.emplace(
                 id, Viewer{std::move(rtc), owner, expires, Clock::now(), std::move(reply)});
@@ -127,7 +127,7 @@ void MediaGateway::handle(const HttpRequest &request, HttpServer::Reply reply) {
             reply(HttpReply::json(
                 406,
                 errorBody("H264_INCOMPATIBLE",
-                          "需要单条 recvonly 视频和兼容的 H.264 profile/level；首版不转码视频")));
+                          "需要兼容的 recvonly H.264 视频；有声音的上游还需 recvonly Opus 音频")));
         }
         return;
     }
@@ -144,17 +144,23 @@ void MediaGateway::handle(const HttpRequest &request, HttpServer::Reply reply) {
     }
     reply(HttpReply::json(404, errorBody("NOT_FOUND", "接口不存在")));
 }
-void MediaGateway::enqueue(VideoUnit unit) {
-    // 3. 不为每帧向 EventLoop 投递任务；队列同时受 32 帧/8MiB/300ms 约束。
+void MediaGateway::enqueue(MediaUnit unit) {
+    // 3. 音视频共用 32 个媒体单元/8MiB/300ms 队列，不能只裁视频而回放旧音频。
     std::lock_guard<std::mutex> lock(m_queueMutex);
     if (!m_queue.empty() &&
         (m_queue.size() >= 32 || m_queueBytes + unit.bytes->size() > 8 * 1024 * 1024 ||
          unit.epoch != m_queue.front().unit.epoch ||
-         unit.ptsUs - m_queue.front().unit.ptsUs > 300000)) {
+         std::max(m_queueMaxPts, unit.ptsUs) - std::min(m_queueMinPts, unit.ptsUs) > 300000)) {
         m_trimmed += m_queue.size();
         m_queue.clear();
         m_queueBytes = 0;
         m_resync = true;
+    }
+    if (m_queue.empty())
+        m_queueMinPts = m_queueMaxPts = unit.ptsUs;
+    else {
+        m_queueMinPts = std::min(m_queueMinPts, unit.ptsUs);
+        m_queueMaxPts = std::max(m_queueMaxPts, unit.ptsUs);
     }
     m_queueBytes += unit.bytes->size();
     m_queue.push_back({std::move(unit), Clock::now()});
@@ -203,6 +209,11 @@ void MediaGateway::tick() {
             viewer.rtc->resync();
         }
     const auto source = m_source.status();
+    // 同一轮先按媒体时间排序；PTS 相同的视频先行，便于 IDR 建立共同起点。
+    std::stable_sort(frames.begin(), frames.end(), [](const auto &a, const auto &b) {
+        return a.unit.ptsUs != b.unit.ptsUs ? a.unit.ptsUs < b.unit.ptsUs
+                                            : a.unit.kind < b.unit.kind;
+    });
     for (const auto &frame : frames) {
         if (frame.unit.epoch != source.epoch ||
             now - frame.arrived > std::chrono::milliseconds(300)) {
@@ -229,9 +240,14 @@ Json MediaGateway::status() const {
                          {"connected", viewer.rtc->connected()},
                          {"submittedFrames", viewer.rtc->submitted()},
                          {"skippedFrames", viewer.rtc->skipped()},
+                         {"submittedAudioPackets", viewer.rtc->audioSubmitted()},
+                         {"skippedAudioPackets", viewer.rtc->audioSkipped()},
+                         {"clockReanchors", viewer.rtc->reanchors()},
+                         {"videoSenderReports", viewer.rtc->videoReports()},
+                         {"audioSenderReports", viewer.rtc->audioReports()},
                          {"transportBytes", viewer.rtc->bytesSent()}});
     std::lock_guard<std::mutex> lock(m_queueMutex);
-    return {{"videoOnly", true},
+    return {{"videoOnly", !input.hasAudio},
             {"stream", input.stream},
             {"phase", input.phase},
             {"note", input.note},
@@ -240,6 +256,13 @@ Json MediaGateway::status() const {
             {"height", input.height},
             {"epoch", input.epoch},
             {"inputFrames", input.frames},
+            {"audioAvailable", input.hasAudio},
+            {"audioInputRate", input.audio.inputRate},
+            {"audioDecodedSamples", input.audio.decodedSamples},
+            {"audioResampledSamples", input.audio.resampledSamples},
+            {"audioPackets", input.audio.packets},
+            {"audioResets", input.audio.resets},
+            {"opusEncoderDelaySamples", input.audio.encoderDelaySamples},
             {"reconnects", input.reconnects},
             {"viewers", peers},
             {"queuedFrames", m_queue.size()},

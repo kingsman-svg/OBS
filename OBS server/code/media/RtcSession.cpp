@@ -36,20 +36,30 @@ std::string parameter(const std::vector<std::string> &fmtps, const std::string &
     return fallback;
 }
 } // namespace
-RtcSession::RtcSession(const std::string &sdp, const std::string &profile, std::uint16_t firstPort,
-                       std::uint16_t lastPort) {
-    // 1. 浏览器只申请 recvonly 视频；服务端选择与真实 SPS 兼容的 H.264 payload type。
+RtcSession::RtcSession(const std::string &sdp, const std::string &profile, bool hasAudio,
+                       std::uint16_t firstPort, std::uint16_t lastPort) {
+    // 1. 按真实输入协商视频及可选音频；每轨必须 recvonly，不能依赖固定 m-line 顺序。
     rtc::Description offer(sdp, rtc::Description::Type::Offer);
-    if (offer.mediaCount() != 1 || offer.hasApplication())
-        throw std::invalid_argument("one recvonly video track required");
-    const auto entry = offer.media(0);
-    const auto media = std::get_if<rtc::Description::Media *>(&entry);
-    if (!media || (*media)->type() != "video" ||
-        (*media)->direction() != rtc::Description::Direction::RecvOnly)
-        throw std::invalid_argument("recvonly video required");
+    if (offer.mediaCount() != (hasAudio ? 2 : 1) || offer.hasApplication())
+        throw std::invalid_argument("recvonly media tracks required");
+    rtc::Description::Media *videoOffer = nullptr, *audioOffer = nullptr;
+    for (int i = 0; i < offer.mediaCount(); ++i) {
+        const auto entry = offer.media(i);
+        const auto media = std::get_if<rtc::Description::Media *>(&entry);
+        if (!media || (*media)->direction() != rtc::Description::Direction::RecvOnly)
+            throw std::invalid_argument("recvonly required");
+        if ((*media)->type() == "video" && !videoOffer)
+            videoOffer = *media;
+        else if ((*media)->type() == "audio" && hasAudio && !audioOffer)
+            audioOffer = *media;
+        else
+            throw std::invalid_argument("unexpected media track");
+    }
+    if (!videoOffer || (hasAudio && !audioOffer))
+        throw std::invalid_argument("missing media track");
     int payload = -1;
-    for (int pt : (*media)->payloadTypes()) {
-        const auto *map = (*media)->rtpMap(pt);
+    for (int pt : videoOffer->payloadTypes()) {
+        const auto *map = videoOffer->rtpMap(pt);
         if (!map || (map->format != "H264" && map->format != "h264") || map->clockRate != 90000)
             continue;
         const auto remote = parameter(map->fmtps, "profile-level-id", "42e01f");
@@ -63,6 +73,19 @@ RtcSession::RtcSession(const std::string &sdp, const std::string &profile, std::
     }
     if (payload < 0)
         throw std::invalid_argument("browser has no compatible H264 profile/level");
+    int audioPayload = -1;
+    if (audioOffer) {
+        for (int pt : audioOffer->payloadTypes()) {
+            const auto *map = audioOffer->rtpMap(pt);
+            if (map && (map->format == "opus" || map->format == "OPUS") &&
+                map->clockRate == 48000 && map->encParams == "2") {
+                audioPayload = pt;
+                break;
+            }
+        }
+        if (audioPayload < 0)
+            throw std::invalid_argument("Opus 48000/2 required");
+    }
 
     // 2. 使用固定端口范围适配 Docker 映射；首版本机使用 host candidate，不依赖公网 STUN。
     rtc::Configuration config;
@@ -77,19 +100,35 @@ RtcSession::RtcSession(const std::string &sdp, const std::string &profile, std::
         if (state == rtc::PeerConnection::GatheringState::Complete)
             signals->gathered = true;
     });
-    rtc::Description::Video video((*media)->mid(), rtc::Description::Direction::SendOnly);
+    rtc::Description::Video video(videoOffer->mid(), rtc::Description::Direction::SendOnly);
     video.addH264Codec(payload, "profile-level-id=" + profile +
                                     ";packetization-mode=1;level-asymmetry-allowed=1");
     const auto ssrc = std::random_device{}() | 1U;
     video.addSSRC(ssrc, "obs-gateway", "obs-gateway", "video");
     m_video = m_peer->addTrack(video);
-    auto rtp = std::make_shared<rtc::RtpPacketizationConfig>(ssrc, "obs-gateway", payload, 90000);
+    auto rtp = m_videoConfig =
+        std::make_shared<rtc::RtpPacketizationConfig>(ssrc, "obs-gateway", payload, 90000);
     auto packetizer =
         std::make_shared<rtc::H264RtpPacketizer>(rtc::NalUnit::Separator::StartSequence, rtp, 1100);
-    packetizer->addToChain(std::make_shared<rtc::RtcpSrReporter>(rtp));
+    m_videoReport = std::make_shared<ClockSenderReport>(rtp, m_clock);
+    packetizer->addToChain(m_videoReport);
     // 3. 先复用库的有界 512 包 NACK 缓存；自定义重传期限/PLI/GCC 在后续阶段处理。
     packetizer->addToChain(std::make_shared<rtc::RtcpNackResponder>(512));
     m_video->setMediaHandler(packetizer);
+    if (audioOffer) {
+        rtc::Description::Audio audio(audioOffer->mid(), rtc::Description::Direction::SendOnly);
+        audio.addOpusCodec(audioPayload, "minptime=10;stereo=1;sprop-stereo=1;useinbandfec=0");
+        const auto audioSsrc = ssrc + 2U;
+        audio.addSSRC(audioSsrc, "obs-gateway", "obs-gateway", "audio");
+        m_audio = m_peer->addTrack(audio);
+        m_audioConfig = std::make_shared<rtc::RtpPacketizationConfig>(audioSsrc, "obs-gateway",
+                                                                      audioPayload, 48000);
+        auto opus = std::make_shared<rtc::OpusRtpPacketizer>(m_audioConfig);
+        m_audioReport = std::make_shared<ClockSenderReport>(m_audioConfig, m_clock);
+        opus->addToChain(m_audioReport);
+        opus->addToChain(std::make_shared<rtc::RtcpNackResponder>(512));
+        m_audio->setMediaHandler(opus);
+    }
     m_peer->setRemoteDescription(std::move(offer));
     m_peer->setLocalDescription(rtc::Description::Type::Answer);
 }
@@ -127,40 +166,28 @@ std::string RtcSession::answer(const std::string &publicAddress) const {
     description->endCandidates();
     return description->generateSdp();
 }
-void RtcSession::push(const VideoUnit &unit) {
-    // 5. 入场/换段/队列裁剪都等下一个 IDR；首版没有回放旧 GOP，避免拉高首屏延迟。
-    if (!m_video->isOpen())
+void RtcSession::push(const MediaUnit &unit) {
+    // 5. 两轨就绪后共同从 IDR 开始。媒体 PTS 映射为各轨随机起点上的 RTP 时间戳；
+    //    SR 用相同会话理论钟，不把音频转码等待或出队时刻写成新的采集时间。
+    const bool audio = unit.kind == MediaKind::Audio;
+    if (!m_video->isOpen() || (m_audio && !m_audio->isOpen()) || (audio && !m_audio))
         return;
-    if (unit.epoch != m_epoch) {
-        m_epoch = unit.epoch;
-        m_waitIdr = true;
-    }
-    if (m_waitIdr) {
-        if (!unit.idr) {
-            ++m_skipped;
-            return;
-        }
-        m_waitIdr = false;
-        m_originUs = unit.ptsUs;
-        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
-                                 std::chrono::steady_clock::now() - m_started)
-                                 .count();
-        m_baseUs = std::max(m_lastUs + 33333, elapsed);
-    }
-    const auto pts = m_baseUs + unit.ptsUs - m_originUs;
-    if (pts <= m_lastUs) {
-        m_waitIdr = true;
-        ++m_skipped;
+    auto &skipped = audio ? m_audioSkipped : m_skipped;
+    const auto pts = m_clock->map(unit);
+    if (!pts) {
+        ++skipped;
         return;
     }
+    const auto &config = audio ? m_audioConfig : m_videoConfig;
+    const auto &track = audio ? m_audio : m_video;
     try {
-        m_video->sendFrame(unit.bytes->data(), unit.bytes->size(),
-                           std::chrono::duration<double, std::micro>(pts));
-        m_lastUs = pts;
-        ++m_submitted; // 交给 RTC 栈的帧数，不冒充浏览器解码帧数。
+        track->sendFrame(
+            unit.bytes->data(), unit.bytes->size(),
+            rtc::FrameInfo(RtpClock::rtp(*pts, config->clockRate, config->startTimestamp)));
+        ++(audio ? m_audioSubmitted : m_submitted); // 仅表示交给 RTC 栈，不代表已播放。
     } catch (const std::exception &) {
-        m_waitIdr = true;
-        ++m_skipped;
+        m_clock->resync();
+        ++skipped;
     }
 }
 } // namespace obs::media

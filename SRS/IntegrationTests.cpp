@@ -295,12 +295,15 @@ bool integration()
 }
 
 // 编号直接画进像素，经真实编码/RTMP/解码后再读回；不以发送端PTS或旁路消息冒充到达时间。
-ComPtr<ID3D11Texture2D> markedVideo(ID3D11Device *device, quint16 sequence)
+ComPtr<ID3D11Texture2D> markedVideo(ID3D11Device *device, quint16 sequence, bool syncSignal = false)
 {
     QImage pixels(320, 180, QImage::Format_ARGB32); pixels.fill(QColor(195, 35, 35));
     const quint32 marker = 0xa5000000U | (quint32((sequence & 255) ^ (sequence >> 8) ^ 0x5a) << 16) | sequence;
     QPainter painter(&pixels);
     for (int bit = 0; bit < 32; ++bit) painter.fillRect(16 + bit * 8, 12, 8, 24, marker & (1U << bit) ? Qt::white : Qt::black);
+    // 网关验收：31 位包络每 200ms 变换，与生成音频使用同一个采样时间模式。
+    if (syncSignal) painter.fillRect(280, 130, 32, 32,
+        (0x6d5a4e37U >> (((sequence - 1) / 6) % 31)) & 1U ? Qt::white : Qt::black);
     painter.setPen(Qt::white); painter.setFont(QFont(qApp->font().family(), 18));
     painter.drawText(pixels.rect(), Qt::AlignCenter, QStringLiteral("生成帧 %1").arg(sequence)); painter.end();
     if (sequence == 30) { QDir().mkpath("out/低延迟验证"); pixels.save(QStringLiteral("out/低延迟验证/推流编号画面.png")); }
@@ -426,16 +429,28 @@ bool gatewaySource()
     auto base = generatedVideo(); ComPtr<ID3D11Device> device; base->GetDevice(&device);
     MediaPublisher publisher;
     RecordingSettings settings; settings.live = true; settings.width = 320; settings.height = 180;
+    settings.audio = !qApp->arguments().contains("--video-only");
     settings.videoBitrate = 1000000; settings.path = "rtmp://127.0.0.1:1935/live/" + stream;
     QSignalSpy errors(&publisher, &MediaPublisher::failed);
     CHECK(publisher.begin(settings));
     QElapsedTimer timer; timer.start(); int videos = 0, audios = 0;
     while (timer.elapsed() < 60000 && !QFile::exists(stopFile)) {
         if (timer.elapsed() * 30 >= videos * 1000) {
-            FaceFrame frame; frame.video.texture = markedVideo(device.Get(), quint16(videos + 1));
+            FaceFrame frame; frame.video.texture = markedVideo(device.Get(), quint16(videos + 1), true);
             frame.video.sequence = quint64(videos + 1); publisher.pushVideo({frame, videos++});
         }
-        while (audios * 10 <= timer.elapsed()) publisher.pushAudio(audio(audios++ * 480));
+        while (settings.audio && audios * 10 <= timer.elapsed()) {
+            auto packet = audio(audios++ * 480);
+            for (int sample = 0; sample < 480; ++sample) {
+                const auto cell = ((packet.pts + sample) / 9600) % 31;
+                if (!((0x6d5a4e37U >> cell) & 1U)) {
+                    const float zero = 0;
+                    std::memcpy(packet.source.pcm.data() + sample * 8, &zero, 4);
+                    std::memcpy(packet.source.pcm.data() + sample * 8 + 4, &zero, 4);
+                }
+            }
+            publisher.pushAudio(packet);
+        }
         CHECK(errors.isEmpty()); QTest::qWait(3);
     }
     publisher.stop(); CHECK(publisher.wait(2500));

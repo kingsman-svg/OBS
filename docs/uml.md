@@ -4,6 +4,8 @@
 最新流程：[播放端自适应缓冲源码](uml/playback-buffer.mmd) · [播放端自适应缓冲图](uml/播放端自适应缓冲时序图.png) · [SVG](uml/播放端自适应缓冲时序图.svg)。
 音频DSP：[源码](uml/audio-dsp.mmd) · [混音DSP处理时序图](uml/混音DSP处理时序图.png) · [SVG](uml/混音DSP处理时序图.svg)。
 自建媒体网关：[源码](uml/media-gateway.mmd) · [自建媒体网关时序图](uml/自建媒体网关时序图.png) · [SVG](uml/自建媒体网关时序图.svg)。
+网关音频：[源码](uml/gateway-audio.mmd) · [网关音频转码时序图](uml/网关音频转码时序图.png) · [SVG](uml/网关音频转码时序图.svg)。
+网关同步：[源码](uml/gateway-sync.mmd) · [网关音视频同步时序图](uml/网关音视频同步时序图.png) · [SVG](uml/网关音视频同步时序图.svg)。
 `.mmd` 为可编辑 Mermaid 源码，`.svg` 为矢量图，`.png` 为预览图。Qt 库类及自动生成的 UI 类型仅作为关联节点显示。
 
 ## 类图

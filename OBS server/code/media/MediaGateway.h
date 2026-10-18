@@ -28,14 +28,14 @@ class MediaGateway final {
         std::string owner;
         std::int64_t expires = 0;
         std::chrono::steady_clock::time_point created;
-        protocol::HttpServer::Reply pending; // ICE 完成后在 loop 回复，最多等待 8 秒。
+        protocol::HttpServer::Reply pending; // ICE 完成后在 loop 回复；未连接会话十秒收敛。
     };
     struct Queued {
-        VideoUnit unit;
+        MediaUnit unit;
         std::chrono::steady_clock::time_point arrived;
     };
     void handle(const protocol::HttpRequest &request, protocol::HttpServer::Reply reply);
-    void enqueue(VideoUnit unit); // 读取线程调用，限字节数/帧数/媒体跨度，溢出要求等待 IDR。
+    void enqueue(MediaUnit unit); // 读取线程调用，音视频共用有界交接队列，溢出后共同等 IDR。
     void tick(); // loop 每 5ms 处理帧和异步握手，不等待 ICE 或上游 IO。
     protocol::Json status() const;
     net::EventLoop &m_loop;        // 借用，最后销毁。
@@ -49,6 +49,8 @@ class MediaGateway final {
     mutable std::mutex m_queueMutex; // 只保护下列队列，不持锁发送网络数据。
     std::deque<Queued> m_queue;
     std::size_t m_queueBytes = 0;
+    std::int64_t m_queueMinPts = 0,
+                 m_queueMaxPts = 0; // 两轨可能交错到达，用真正 min/max 检查跨度。
     bool m_resync = false;
     std::uint64_t m_trimmed = 0;  // 被应用队列主动裁剪的 access unit 数。
     unsigned m_loginAttempts = 0; // 本机开发入口的全局登录节流窗口。
