@@ -1,0 +1,10 @@
+{
+  "bindAddress": "0.0.0.0",
+  "publicAddress": "127.0.0.1",
+  "httpPort": 8090,
+  "firstRtcPort": 8100,
+  "lastRtcPort": 8109,
+  "maxViewers": 8,
+  "rtmpBase": "rtmp://host.docker.internal:1935/live",
+  "page": "media/player.html"
+}

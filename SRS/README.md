@@ -2,6 +2,8 @@
 
 SRS负责媒体接收、分发与协议桥接，OBS负责采集处理、编码、播放及业务信令。这个目录集中放SRS部署、上游版本、集成验证和二开路线；OBS的通用RTMP代码仍放在`OBS client/ffmpeg/`，不包含SRS内部类型。
 
+2026-10-18：Windows OBS 增加[自建媒体网关](../docs/021-media-gateway.md)。在该路径中SRS只接收RTMP，独立OBS-MEDIA通过FFmpeg拉取并自行适配H.264、经libdatachannel送浏览器，不调用SRS的RTC输出。`python SRS/check.py --gateway`是同一集成入口的可选验证；Mac上的SRS二开仍独立。原有SRS→Player路径继续使用。
+
 ## 文件与Git归属
 
 | 文件 | 用途 |

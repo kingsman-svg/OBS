@@ -413,6 +413,35 @@ bool latencyChecks()
     qInfo("PASS RTMP marked-frame latency comparison / real NVENC and D3D11VA / audio master / fixed budgets after bitrate change / queue bounds / stop");
     return true;
 }
+bool gatewaySource()
+{
+    // 自建网关的显式验收模式：复用真实 MediaPublisher/NVENC，生成编号纹理与 AAC。
+    // 浏览器检查由同一 check.py 协调；不新增独立测试程序，不采集用户的桌面或声音。
+    const auto argument = [](const QString &key) {
+        const int i = qApp->arguments().indexOf(key);
+        return i >= 0 && i + 1 < qApp->arguments().size() ? qApp->arguments()[i + 1] : QString();
+    };
+    const auto stream = argument("--stream"), stopFile = argument("--stop-file");
+    CHECK(!stream.isEmpty() && !stopFile.isEmpty());
+    auto base = generatedVideo(); ComPtr<ID3D11Device> device; base->GetDevice(&device);
+    MediaPublisher publisher;
+    RecordingSettings settings; settings.live = true; settings.width = 320; settings.height = 180;
+    settings.videoBitrate = 1000000; settings.path = "rtmp://127.0.0.1:1935/live/" + stream;
+    QSignalSpy errors(&publisher, &MediaPublisher::failed);
+    CHECK(publisher.begin(settings));
+    QElapsedTimer timer; timer.start(); int videos = 0, audios = 0;
+    while (timer.elapsed() < 60000 && !QFile::exists(stopFile)) {
+        if (timer.elapsed() * 30 >= videos * 1000) {
+            FaceFrame frame; frame.video.texture = markedVideo(device.Get(), quint16(videos + 1));
+            frame.video.sequence = quint64(videos + 1); publisher.pushVideo({frame, videos++});
+        }
+        while (audios * 10 <= timer.elapsed()) publisher.pushAudio(audio(audios++ * 480));
+        CHECK(errors.isEmpty()); QTest::qWait(3);
+    }
+    publisher.stop(); CHECK(publisher.wait(2500));
+    qInfo("PASS gateway source: real MediaPublisher / NVENC H264 + AAC / generated numbered video / clean stop");
+    return true;
+}
 }
 int main(int argc, char **argv)
 {
@@ -423,7 +452,10 @@ int main(int argc, char **argv)
     QApplication app(argc, argv);
     const int font = QFontDatabase::addApplicationFont(QStringLiteral("C:/Windows/Fonts/msyh.ttc"));
     if (font >= 0) app.setFont(QFont(QFontDatabase::applicationFontFamilies(font).constFirst(), 10));
-    try { return integration() && (!app.arguments().contains("--latency") || latencyChecks()) ? 0 : 1; }
+    try {
+        if (app.arguments().contains("--gateway-source")) return gatewaySource() ? 0 : 1;
+        return integration() && (!app.arguments().contains("--latency") || latencyChecks()) ? 0 : 1;
+    }
     catch (const winrt::hresult_error &error) { qCritical().noquote() << QString::fromStdWString(error.message().c_str()); }
     catch (const std::exception &error) { qCritical().noquote() << error.what(); }
     return 1;

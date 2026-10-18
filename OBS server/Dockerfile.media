@@ -1,0 +1,21 @@
+# 独立媒体网关构建环境；不改变现有 OBS SSH 开发容器。
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
+ARG UBUNTU_MIRROR=http://mirrors.ustc.edu.cn/ubuntu
+RUN sed -i -E "s#http://(archive|security).ubuntu.com/ubuntu/?#${UBUNTU_MIRROR}/#g" /etc/apt/sources.list.d/ubuntu.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git build-essential cmake ninja-build pkg-config python3 curl \
+    libssl-dev libsrtp2-dev nlohmann-json3-dev libavformat-dev libavcodec-dev libavutil-dev \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+# 固定已核对的 v0.24.6 提交及其子模块，不把上游源码混入业务目录。
+RUN git clone --branch v0.24.6 --depth 1 --recurse-submodules --shallow-submodules \
+    https://github.com/paullouisageneau/libdatachannel.git /opt/libdatachannel \
+    && test "$(git -C /opt/libdatachannel rev-parse HEAD)" = 6b1e2e620f1e37f0eafeee702eaea0043cb305fd \
+    && cmake -S /opt/libdatachannel -B /opt/libdatachannel/build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DNO_EXAMPLES=ON -DNO_TESTS=ON -DNO_WEBSOCKET=ON \
+    -DUSE_SYSTEM_SRTP=ON \
+    && cmake --build /opt/libdatachannel/build -j 4 \
+    && cmake --install /opt/libdatachannel/build && ldconfig
+WORKDIR /repo/OBS server/code
+EXPOSE 8090 8100-8109/udp

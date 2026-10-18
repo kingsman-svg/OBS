@@ -2,11 +2,28 @@
 #include <stdexcept>
 
 namespace obs::protocol {
+namespace {
+HttpServer::AsyncHandler adapt(HttpServer::Handler handler) {
+    if (!handler)
+        throw std::invalid_argument("invalid HTTP handler");
+    return [handler = std::move(handler)](const HttpRequest &request, HttpServer::Reply reply) {
+        const auto response = handler(request);
+        reply(HttpReply::json(response.first, response.second));
+    };
+}
+} // namespace
 Json errorBody(const std::string &code, const std::string &message) {
     return {{"error", {{"code", code}, {"message", message}}}};
 }
+HttpReply HttpReply::json(int status, const Json &body) {
+    return {status, body.dump(), "application/json; charset=utf-8"};
+}
 HttpServer::HttpServer(net::EventLoop &loop, std::string address, std::uint16_t port,
                        Handler handler, std::chrono::milliseconds timeout)
+    : HttpServer(loop, std::move(address), port, adapt(std::move(handler)), timeout) {
+}
+HttpServer::HttpServer(net::EventLoop &loop, std::string address, std::uint16_t port,
+                       AsyncHandler handler, std::chrono::milliseconds timeout)
     : m_loop(loop), m_server(loop, std::move(address), port), m_handler(std::move(handler)),
       m_timeout(timeout) {
     if (!m_handler || timeout.count() <= 0)
@@ -21,14 +38,14 @@ HttpServer::HttpServer(net::EventLoop &loop, std::string address, std::uint16_t 
             if (auto active = weak.lock())
                 active->forceClose();
         });
-        m_requests.emplace(connection.get(), std::make_pair(timer, false));
+        m_requests.emplace(connection.get(), RequestState{timer, false, false});
     });
     m_server.setMessageCallback(
         [this](const auto &connection, auto &input) { receive(connection, input); });
     m_server.setDisconnectCallback([this](const auto &connection, const auto &) {
         const auto it = m_requests.find(connection.get());
         if (it != m_requests.end()) {
-            m_loop.cancelTimer(it->second.first);
+            m_loop.cancelTimer(it->second.timer);
             m_requests.erase(it);
         }
     });
@@ -39,12 +56,15 @@ HttpServer::~HttpServer() {
     stop();
 }
 void HttpServer::start() {
+    if (!m_alive)
+        m_alive = std::make_shared<int>(0);
     m_server.start();
 }
 void HttpServer::stop() {
+    m_alive.reset();
     for (auto &[connection, request] : m_requests) {
         (void)connection;
-        m_loop.cancelTimer(request.first);
+        m_loop.cancelTimer(request.timer);
     }
     m_requests.clear();
     m_server.stop();
@@ -57,7 +77,7 @@ std::size_t HttpServer::connectionCount() const {
 }
 void HttpServer::receive(const net::TcpConnection::Ptr &connection, net::Buffer &input) {
     const auto found = m_requests.find(connection.get());
-    if (found == m_requests.end() || found->second.second) {
+    if (found == m_requests.end() || found->second.dispatched || found->second.responded) {
         input.retrieveAll();
         return;
     }
@@ -66,33 +86,46 @@ void HttpServer::receive(const net::TcpConnection::Ptr &connection, net::Buffer 
     if (result == 0)
         return;
     if (result != 200) {
-        respond(connection, {result, errorBody("INVALID_HTTP", "请求格式或大小不符合要求")});
+        respond(connection,
+                HttpReply::json(result, errorBody("INVALID_HTTP", "请求格式或大小不符合要求")));
         return;
     }
+    // 1. 分发即占用此请求；ICE 等异步任务不能阻塞 epoll，也不能重复分发。
+    found->second.dispatched = true;
+    const std::weak_ptr<int> alive = m_alive;
+    const std::weak_ptr<net::TcpConnection> weak = connection;
+    Reply reply = [this, alive, weak](HttpReply response) {
+        if (alive.expired())
+            return;
+        m_loop.assertInLoopThread();
+        if (auto active = weak.lock())
+            respond(active, std::move(response));
+    };
     try {
-        respond(connection, m_handler(request));
+        m_handler(request, std::move(reply));
     } catch (const Json::exception &) {
-        respond(connection, {400, errorBody("INVALID_JSON", "JSON 字段类型或格式错误")});
+        respond(connection,
+                HttpReply::json(400, errorBody("INVALID_JSON", "JSON 字段类型或格式错误")));
     } catch (const std::exception &) {
         // 不输出请求体和异常携带的数据，避免把密码或令牌写入日志。
-        respond(connection, {500, errorBody("INTERNAL_ERROR", "服务处理失败")});
+        respond(connection, HttpReply::json(500, errorBody("INTERNAL_ERROR", "服务处理失败")));
     }
 }
-void HttpServer::respond(const net::TcpConnection::Ptr &connection, HttpResponse response) {
+void HttpServer::respond(const net::TcpConnection::Ptr &connection, HttpReply response) {
     auto it = m_requests.find(connection.get());
-    if (it == m_requests.end() || it->second.second)
+    if (it == m_requests.end() || it->second.responded)
         return;
-    const auto body = response.second.dump();
-    const auto status = response.first;
+    const auto &body = response.body;
+    const auto status = response.status;
     const std::string reason = status == 200 ? "OK" : "Error";
     const auto wire = "HTTP/1.1 " + std::to_string(status) + " " + reason +
-                      "\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: " +
-                      std::to_string(body.size()) +
+                      "\r\nContent-Type: " + response.contentType +
+                      "\r\nContent-Length: " + std::to_string(body.size()) +
                       "\r\nConnection: close\r\nCache-Control: no-store\r\n\r\n" + body;
-    it->second.second = true;
-    m_loop.cancelTimer(it->second.first);
+    it->second.responded = true;
+    m_loop.cancelTimer(it->second.timer);
     const std::weak_ptr<net::TcpConnection> weak = connection;
-    it->second.first = m_loop.runAfter(std::chrono::seconds(1), [weak] {
+    it->second.timer = m_loop.runAfter(std::chrono::seconds(1), [weak] {
         if (auto active = weak.lock())
             active->forceClose();
     });

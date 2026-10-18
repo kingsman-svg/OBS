@@ -5,11 +5,14 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import json
+import time
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument('--beauty', action='store_true', help='Verify beauty using the existing local example image and engine.')
 parser.add_argument('--latency', action='store_true', help='Compare original and low-latency budgets using generated pixel frame IDs.')
+parser.add_argument('--gateway', action='store_true', help='Verify the custom Linux gateway with the real Publisher and Edge WebRTC decoder.')
 args = parser.parse_args()
 qt = Path(os.environ.get('CSN_QT_ROOT', 'C:/software/Qt/6.11.2/msvc2022_64'))
 env = os.environ.copy()
@@ -19,6 +22,175 @@ env['QT_QPA_PLATFORM'] = 'windows'
 if os.name == 'nt':
     ctypes.WinDLL('kernel32').SetErrorMode(0x8003)
 sys.stdout.reconfigure(encoding='utf-8')
+
+
+def gateway_check():
+    # 复用已有集成入口，浏览器依赖仅此显式模式加载，不影响默认 7 组 CTest。
+    sys.path.insert(0, str(root / 'out/media-check-deps'))
+    from playwright.sync_api import sync_playwright
+    output = root / 'out/媒体网关验证'
+    output.mkdir(parents=True, exist_ok=True)
+    stream = f'gateway_check_{os.getpid()}'
+    stop_file = output / f'停止推流_{os.getpid()}.flag'
+    stop_file.unlink(missing_ok=True)
+    command = [str(root / 'OBS client/build-agent/OBSStreamingTests.exe'), '--gateway-source',
+               '--stream', stream, '--stop-file', str(stop_file)]
+    log = (output / 'Publisher网关验收.log').open('wb')
+    publisher = subprocess.Popen(command, env=env, cwd=root, stdout=log, stderr=log,
+                                 creationflags=subprocess.CREATE_NO_WINDOW)
+    report = {'scope': 'H264 video only; local Docker host-candidate connectivity; no weak-network benchmark'}
+    try:
+        with sync_playwright() as automation:
+            browser = automation.chromium.launch(channel='msedge', headless=True)
+            context = browser.new_context(viewport={'width': 1100, 'height': 900})
+            page = context.new_page()
+            page.goto('http://127.0.0.1:8090/')
+            assert context.request.get('http://127.0.0.1:8090/api/status').status == 401
+            existing_login = context.request.post('http://127.0.0.1:8081/auth/login',
+                data=json.dumps({'account': 'root', 'password': os.environ.get('OBS_LOGIN_PASSWORD', 'root')}),
+                headers={'Content-Type': 'application/json'})
+            assert existing_login.status == 200
+            existing_token = existing_login.json()['accessToken']
+            assert context.request.get('http://127.0.0.1:8090/api/status',
+                headers={'Authorization': 'Bearer ' + existing_token}).status == 200
+            del existing_token
+            report['existingLoginTokenAccepted'] = True
+
+            def login(target):
+                target.locator('#account').fill('root')
+                target.locator('#password').fill(os.environ.get('OBS_LOGIN_PASSWORD', 'root'))
+                target.locator('#loginButton').click()
+                target.wait_for_function("!document.getElementById('start').disabled")
+
+            login(page)
+            # 页面 api 函数使用内存令牌；不导出、打印或保存密码/SDP/令牌。
+            rejected = page.evaluate("""async()=>{const r=await fetch('/api/source',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({stream:'../invalid'})});return r.status;}""")
+            assert rejected == 400
+            page.evaluate("name=>api('/api/source','POST',{stream:name})", 'missing_' + stream)
+            started = time.monotonic()
+            assert context.request.get('http://127.0.0.1:8090/health').status == 200
+            report['healthDuringMissingUpstreamMs'] = round((time.monotonic() - started) * 1000, 1)
+            assert report['healthDuringMissingUpstreamMs'] < 1500
+
+            def wait_frames(target, minimum, timeout=25):
+                deadline = time.monotonic() + timeout
+                stats = {}
+                while time.monotonic() < deadline:
+                    stats = target.evaluate('window.gatewayStats()')
+                    if stats.get('framesDecoded', 0) >= minimum:
+                        return stats
+                    target.wait_for_timeout(200)
+                raise AssertionError('browser decoding did not reach the expected frame count')
+
+            def watch(target):
+                target.locator('#stream').fill(stream)
+                target.locator('#start').click()
+                try:
+                    return wait_frames(target, 30)
+                except Exception:
+                    # 仅记录去敏后的业务状态与接收统计，避免 Playwright 日志携带协商正文。
+                    report['pageMessage'] = target.locator('#message').inner_text()
+                    report['gateway'] = target.evaluate("api('/api/status')")
+                    raise
+
+            report['firstViewer'] = watch(page)
+            assert report['firstViewer']['connected'] and report['firstViewer']['width'] == 320
+            status = page.evaluate("api('/api/status')")
+            report['inputProfile'] = status['profile']
+            incompatible = page.evaluate("""async()=>{const r=await fetch('/api/sessions',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({sdp:'v=0\\r\\n'})});return r.status;}""")
+            assert incompatible == 406
+            report['incompatibleOfferRejected'] = True
+            page.screenshot(path=str(output / '自建网关浏览器播放.png'), full_page=True)
+            # 编号像素直接经过 NVENC→RTMP→网关→浏览器，检查收到的画面内容。
+            def read_marker(target):
+                return target.evaluate("""()=>{const v=document.getElementById('video'),c=document.createElement('canvas');c.width=v.videoWidth;c.height=v.videoHeight;const x=c.getContext('2d');x.drawImage(v,0,0);let marker=0;for(let bit=0;bit<32;bit++){const p=x.getImageData(20+bit*8,24,1,1).data;if(p[0]+p[1]+p[2]>384)marker=(marker|(1<<bit))>>>0;}return marker;}""")
+
+            marker = read_marker(page)
+            sequence = marker & 65535
+            assert marker >> 24 == 0xa5 and (marker >> 16) & 255 == ((sequence & 255) ^ (sequence >> 8) ^ 0x5a)
+            report['validPixelFrameId'] = sequence
+
+            late = context.new_page()
+            late.goto('http://127.0.0.1:8090/')
+            login(late)
+            report['lateViewer'] = watch(late)
+            busy = page.evaluate("""async()=>{const r=await fetch('/api/source',{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({stream:'another_stream'})});return r.status;}""")
+            assert busy == 409
+            before = late.evaluate('window.gatewayStats()')['framesDecoded']
+            page.locator('#stop').click()
+            wait_frames(late, before + 20)
+            report['remainingViewer'] = late.evaluate('window.gatewayStats()')
+
+            # 上游停止并重新推同名流：新 PTS 从零开始，原浏览器会话应在新 IDR 后恢复。
+            old_epoch = late.evaluate("api('/api/status')")['epoch']
+            old_sequence = read_marker(late) & 65535
+            stop_file.touch(); assert publisher.wait(timeout=8) == 0
+            time.sleep(1)
+            before = late.evaluate('window.gatewayStats()')['framesDecoded']
+            stop_file.unlink()
+            publisher = subprocess.Popen(command, env=env, cwd=root, stdout=log, stderr=log,
+                                         creationflags=subprocess.CREATE_NO_WINDOW)
+            # SRS 可能保留 RTMP 订阅连接并修正新主播时间戳；不强求读取端必须重开。
+            # 用视频中的编号归零证明播放的是新 Publisher 的真实画面。
+            deadline = time.monotonic() + 15
+            new_sequence = old_sequence
+            while time.monotonic() < deadline:
+                candidate = read_marker(late)
+                new_sequence = candidate & 65535
+                if candidate >> 24 == 0xa5 and 0 < new_sequence < old_sequence:
+                    break
+                late.wait_for_timeout(100)
+            assert 0 < new_sequence < old_sequence
+            wait_frames(late, before + 30, timeout=20)
+            status = late.evaluate("api('/api/status')")
+            report['upstreamRestartFrameIds'] = [old_sequence, new_sequence]
+            report['originalEpoch'] = old_epoch
+            report['reconnectedEpoch'] = status['epoch']
+            report['afterUpstreamRestart'] = late.evaluate('window.gatewayStats()')
+            late.locator('#stop').click()
+            for _ in range(30):
+                if not page.evaluate("api('/api/status')")['viewers']:
+                    break
+                page.wait_for_timeout(100)
+            assert not page.evaluate("api('/api/status')")['viewers']
+            report['restartedViewer'] = watch(page)
+            page.locator('#stop').click()
+            for _ in range(30):
+                if not page.evaluate("api('/api/status')")['viewers']:
+                    break
+                page.wait_for_timeout(100)
+            assert not page.evaluate("api('/api/status')")['viewers']
+            report['finalStatus'] = page.evaluate("api('/api/status')")
+            assert report['finalStatus']['queuedFrames'] <= 32 and report['finalStatus']['queuedBytes'] <= 8*1024*1024
+            # 小窗口只验排版：表单可折行，没有横向溢出。
+            page.set_viewport_size({'width': 400, 'height': 850})
+            assert page.evaluate('document.documentElement.scrollWidth<=window.innerWidth')
+            page.screenshot(path=str(output / '自建网关窄屏布局.png'), full_page=True)
+            browser.close()
+        report['passed'] = True
+    finally:
+        stop_file.touch()
+        try:
+            publisher.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            publisher.terminate(); publisher.wait(timeout=5)
+        log.close(); stop_file.unlink(missing_ok=True)
+        (output / '媒体网关验收.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    assert publisher.returncode == 0
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    print('PASS custom gateway: Publisher/NVENC -> SRS RTMP ingest -> FFmpeg/H264 adapter -> libdatachannel -> Edge decoder; late join, source restart, stop/restart and narrow layout')
+    return 0
+
+
+if args.gateway:
+    if args.beauty or args.latency:
+        parser.error('--gateway is a separate functional check')
+    try:
+        raise SystemExit(gateway_check())
+    except Exception as error:
+        print('Gateway check failed:', type(error).__name__, '(sanitized details: out/媒体网关验证/媒体网关验收.json)')
+        raise SystemExit(1)
+
 try:
     command = [str(root / 'OBS client/build-agent/OBSStreamingTests.exe')]
     if args.latency:

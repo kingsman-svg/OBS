@@ -1,0 +1,53 @@
+sequenceDiagram
+participant M as GatewayMain
+participant L as EventLoop
+participant G as MediaGateway
+participant R as RTMP读取线程
+participant S as SRS接入
+participant W as RtcSession
+participant B as 浏览器
+M->>G: 构造并绑定HTTP和入队回调
+M->>G: start
+G->>R: start创建唯一读取线程
+G->>L: 监听HTTP并注册5ms定时器
+M->>L: loop
+B->>G: 登录并提交Bearer令牌及流名
+G->>R: select只更新命令并唤醒
+R->>S: FFmpeg打开RTMP并探测H264
+alt 上游不存在或不支持
+R-->>G: 更新去敏状态并等待可中断重试
+G-->>B: 状态与未就绪503
+else 输入就绪
+R->>R: avcC到AnnexB并保留源PTS
+R->>G: 有界队列交接完整压缩帧
+B->>G: 提交recvonly H264 offer
+G->>W: 创建独立会话并注册原子状态回调
+alt 无兼容profile或level
+W-->>G: 明确拒绝透传
+G-->>B: 返回406
+else 协商兼容
+W->>W: 库内部线程收集ICE候选
+Note over L,G: HTTP保留Reply，epoll继续处理其他连接
+L->>G: tick读取ICE完成状态
+G->>W: 获取answer并映射可达candidate
+G-->>B: 自定义JSON answer
+B->>W: ICE检查和DTLS握手
+L->>G: tick取出有限年龄视频帧
+G->>W: 等待IDR后push完整access unit
+W-->>B: H264 RTP与SR经SRTP传输
+B->>B: 实际解码和显示编号画面
+end
+end
+alt 浏览器停止或令牌过期
+B->>G: DELETE会话或定时检查过期
+G->>W: 关闭并释放本观众
+Note over R,S: 其他观众和Publisher继续运行
+else 服务停止
+M->>L: signalfd请求quit
+L-->>M: 返回main
+M->>G: stop入口和定时器
+G->>R: stop打断RTMP读包
+G->>W: 撤销回调并关闭全部会话
+G->>R: 析构join并清理FFmpeg
+M->>M: 撤销信号通道并销毁loop
+end

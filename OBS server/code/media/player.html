@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OBS 自建 WebRTC 视频网关</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101725;color:#e7edf7;font:16px/1.6 system-ui,"Microsoft YaHei",sans-serif}
+main{max-width:1100px;margin:auto;padding:28px 20px}h1{font-size:25px;margin:0 0 8px}p{color:#aebed5;margin:8px 0 20px}
+.panel{background:#192437;border:1px solid #34435b;border-radius:12px;padding:20px;margin-bottom:18px}
+.row{display:flex;flex-wrap:wrap;gap:14px;align-items:end}label{display:flex;flex:1 1 180px;flex-direction:column;gap:6px;min-width:0}
+input,button{font:inherit;border-radius:7px;padding:9px 12px;border:1px solid #50617b}input{width:100%;background:#101b2c;color:inherit}
+button{background:#315ecb;color:white;cursor:pointer;white-space:nowrap}button:disabled{opacity:.45;cursor:default}.secondary{background:#34435b}
+video{display:block;width:100%;aspect-ratio:16/9;background:black;border-radius:10px;object-fit:contain}
+#message{min-height:30px;margin-top:14px;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:0;color:#b9cce8;font-size:13px}
+@media(max-width:540px){main{padding:18px 12px}.panel{padding:14px}button{width:100%}h1{font-size:21px}}
+</style>
+<main>
+<h1>OBS 自建 WebRTC 视频网关</h1>
+<p>第一阶段 · RTMP → H.264 RTP → WebRTC。当前仅播放视频；音频尚未接入。</p>
+<section class="panel"><form id="login" class="row">
+<label>账号<input id="account" value="root" autocomplete="username" required maxlength="64"></label>
+<label>密码<input id="password" type="password" autocomplete="current-password" required maxlength="128"></label>
+<button id="loginButton">登录</button>
+</form></section>
+<section class="panel"><form id="watch" class="row">
+<label>流名称（Publisher 推流地址的最后一段）<input id="stream" placeholder="例如 live 地址中的房间流名称" required pattern="[A-Za-z0-9_-]{1,96}" maxlength="96" autocomplete="off"></label>
+<button id="start" disabled>开始播放</button><button id="stop" class="secondary" type="button" disabled>停止播放</button>
+</form><div id="message" role="status" aria-live="polite">请使用现有开发账号登录。</div></section>
+<section class="panel"><video id="video" autoplay muted playsinline controls></video></section>
+<details class="panel"><summary>运行状态</summary><pre id="diagnostics">尚未连接</pre></details>
+</main>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let token='',peer=null,session='',controller=null,revision=0,poll=null;
+const message=text=>$('message').textContent=text;
+async function api(path,method='GET',body,signal){
+  const headers={};if(token)headers.Authorization='Bearer '+token;if(body!==undefined)headers['Content-Type']='application/json';
+  const response=await fetch(path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),signal,cache:'no-store'});
+  const data=await response.json();if(!response.ok)throw Error(data.error?.message||'请求失败：'+response.status);return data;
+}
+function iceComplete(pc,signal){
+  if(pc.iceGatheringState==='complete')return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const finish=error=>{clearTimeout(timer);pc.removeEventListener('icegatheringstatechange',changed);signal.removeEventListener('abort',aborted);error?reject(error):resolve();};
+    const changed=()=>{if(pc.iceGatheringState==='complete')finish();};
+    const aborted=()=>finish(new DOMException('已停止','AbortError'));
+    const timer=setTimeout(()=>finish(Error('本机 ICE 候选收集超时')),5000);
+    pc.addEventListener('icegatheringstatechange',changed);signal.addEventListener('abort',aborted,{once:true});
+  });
+}
+async function closePlayback(){
+  ++revision;controller?.abort();controller=null;peer?.close();peer=null;$('video').srcObject=null;
+  const id=session;session='';$('start').disabled=!token;$('stop').disabled=true;
+  if(id)try{await api('/api/sessions/'+id,'DELETE');}catch{}
+}
+$('login').addEventListener('submit',async event=>{
+  event.preventDefault();$('loginButton').disabled=true;
+  try{await closePlayback();const result=await api('/api/login','POST',{account:$('account').value,password:$('password').value});
+    token=result.token;$('password').value='';$('start').disabled=false;message('登录成功。开始 Publisher 直播后，填写流名称并播放。');
+    clearInterval(poll);poll=setInterval(async()=>{try{$('diagnostics').textContent=JSON.stringify(await api('/api/status'),null,2);}catch(error){message(error.message);}},1000);
+  }catch(error){message(error.message);}finally{$('loginButton').disabled=false;}
+});
+$('watch').addEventListener('submit',async event=>{
+  event.preventDefault();await closePlayback();const current=++revision;controller=new AbortController();const signal=controller.signal;
+  $('start').disabled=true;$('stop').disabled=false;
+  try{
+    message('正在连接 RTMP 上游…');await api('/api/source','POST',{stream:$('stream').value.trim()},signal);
+    let status;for(let i=0;i<30;i++){status=await api('/api/status','GET',undefined,signal);if(status.phase==='ready'&&status.inputFrames>0)break;
+      await new Promise(resolve=>setTimeout(resolve,400));if(signal.aborted)throw new DOMException('已停止','AbortError');}
+    if(status.phase!=='ready'||!status.inputFrames)throw Error('上游尚未就绪，请检查 Publisher 流名称、H.264 编码与推流状态。');
+    if(current!==revision)return;
+    const pc=peer=new RTCPeerConnection({iceServers:[]});
+    const transceiver=pc.addTransceiver('video',{direction:'recvonly'});
+    const codecs=RTCRtpReceiver.getCapabilities('video').codecs.filter(codec=>codec.mimeType.toLowerCase()==='video/h264');
+    if(!codecs.length)throw Error('当前浏览器没有可用的 H.264 WebRTC 解码器。');
+    transceiver.setCodecPreferences(codecs);
+    pc.ontrack=event=>{$('video').srcObject=new MediaStream([event.track]);$('video').play().catch(()=>{});};
+    pc.onconnectionstatechange=()=>{if(current===revision)message('WebRTC 连接状态：'+pc.connectionState+(pc.connectionState==='connected'?'；正在等待/播放视频。':''));};
+    message('正在协商视频并建立 WebRTC 连接…');
+    await pc.setLocalDescription(await pc.createOffer());await iceComplete(pc,signal);
+    const answer=await api('/api/sessions','POST',{sdp:pc.localDescription.sdp},signal);
+    if(current!==revision){api('/api/sessions/'+answer.id,'DELETE').catch(()=>{});return;}
+    session=answer.id;await pc.setRemoteDescription({type:'answer',sdp:answer.sdp});
+  }catch(error){if(current===revision){await closePlayback();message(error.name==='AbortError'?'播放已停止。':error.message);}}
+});
+$('stop').addEventListener('click',async()=>{await closePlayback();message('播放已停止，Publisher 可以继续推流。');});
+window.addEventListener('pagehide',()=>{peer?.close();if(session&&token)fetch('/api/sessions/'+session,{method:'DELETE',headers:{Authorization:'Bearer '+token},keepalive:true}).catch(()=>{});});
+// 验收读取浏览器真正的解码/接收计数；不把网关提交帧数当播放成功。
+window.gatewayStats=async()=>{
+  if(!peer)return {connected:false,framesDecoded:0};const result={connected:peer.connectionState==='connected',width:$('video').videoWidth,height:$('video').videoHeight};
+  for(const report of (await peer.getStats()).values())if(report.type==='inbound-rtp'&&report.kind==='video')Object.assign(result,{framesDecoded:report.framesDecoded||0,packetsReceived:report.packetsReceived||0,framesDropped:report.framesDropped||0,bytesReceived:report.bytesReceived||0});
+  return result;
+};
+</script>
+</html>

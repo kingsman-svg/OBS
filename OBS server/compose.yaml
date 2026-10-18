@@ -35,6 +35,33 @@ services:
       timeout: 3s
       retries: 3
       start_period: 10s
+  media:
+    profiles: [media]
+    container_name: OBS-MEDIA
+    image: csn-obs-media:24.04-rtc0.24.6
+    build:
+      context: .
+      dockerfile: Dockerfile.media
+    init: true
+    restart: unless-stopped
+    working_dir: /repo/OBS server/code
+    environment:
+      OBS_TOKEN_SECRET_FILE: /auth/.config/obs/token-secret
+    volumes:
+      - type: bind
+        source: ..
+        target: /repo
+      - obs-root:/auth:ro
+    command: ["./build-media/obs_media_gateway", "--config", "media/config.json"]
+    ports:
+      - "127.0.0.1:8090:8090"             # 自建网关页面与 HTTP 会话 API
+      - "127.0.0.1:8100-8109:8100-8109/udp" # 自建 WebRTC 媒体，与 SRS 的 8000 分开
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8090/health"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+      start_period: 10s
 volumes:
   obs-root:
   obs-ssh-keys:

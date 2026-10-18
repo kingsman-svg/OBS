@@ -1,5 +1,7 @@
 # 构建与验证
 
+自建媒体网关另用可选`OBS_BUILD_MEDIA=ON`，不影响默认客户端七组/服务端四组测试数量。主机PowerShell执行`& './OBS server/media.ps1' build`和`start`，浏览器打开`http://127.0.0.1:8090/`。显式`python SRS/check.py --gateway`复用现有集成程序，用真实Publisher与Edge解码验证视频；需要隔离安装Playwright，完整步骤见[第021步](021-media-gateway.md)。
+
 Qt Creator 打开 OBS client/CMakeLists.txt，选择 Qt 6 + MSVC 64 位 Kit。重新配置后有两个运行目标：OBS_Publisher、OBS_Player。程序连接独立 Docker 服务，启动与双端操作见 [第 003 步](003-two-clients.md)。
 
 ## Windows 构建和部署
