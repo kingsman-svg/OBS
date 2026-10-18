@@ -1,8 +1,10 @@
-# SRS 独立副项目
+# SRS 接入与二开目录
 
 SRS负责媒体接收、分发与协议桥接，OBS负责采集处理、编码、播放及业务信令。这个目录集中放SRS部署、上游版本、集成验证和二开路线；OBS的通用RTMP代码仍放在`OBS client/ffmpeg/`，不包含SRS内部类型。
 
-2026-10-18：Windows OBS 增加[自建媒体网关](../docs/021-media-gateway.md)。在该路径中SRS只接收RTMP，独立OBS-MEDIA通过FFmpeg拉取并自行适配H.264、经libdatachannel送浏览器，不调用SRS的RTC输出。`python SRS/check.py --gateway`是同一集成入口的可选验证；Mac上的SRS二开仍独立。原有SRS→Player路径继续使用。
+2026-10-18最新约定：SRS二开不再放到Mac独立项目，后续在本目录推进；当前只整理既有音视频成果，不启动新的源码改造。运行镜像仍为官方版本，不能将部署、配置或外置网关称作已完成的SRS源码二开。
+
+Windows OBS 增加了[自建媒体网关](../docs/021-media-gateway.md)。在该路径中SRS承担RTMP接收和分发，独立OBS-MEDIA作为RTMP拉流客户端，通过FFmpeg适配H.264、经libdatachannel送浏览器，不调用SRS的RTC输出。`python SRS/check.py --gateway`是同一集成入口的可选验证。原有SRS→Player路径继续使用。
 
 最新网关已支持[H.264+Opus与音画同步](../docs/022-gateway-av-sync.md)：AAC在自建进程转码、同一个RTC会话发送，SRS仍只做RTMP接入。同一验证入口扩展合成音画包络和重推同步检查。
 
@@ -68,9 +70,9 @@ SRS服务与OBS业务服务各自启停；停止SRS不会停止SSH/登录/信令
 
 OBS信令配置继续使用`OBS server/code/services/config.json`：`rtmpBase=rtmp://127.0.0.1:1935/live`、`playbackBase=http://127.0.0.1:8088/live`。房间创建响应只向主播返回`pushUrl`，观众拿`pullUrl`和`playbackUrl`。媒体写出后才发`live.start`；这个状态来自受控客户端，尚未用SRS回调校验外部推流。
 
-## 副项目二开范围
+## 后续二开范围
 
-当前运行官方镜像，原生RTMP→WebRTC桥接已配置开启。OBS Player的WebRTC会话/传输接入与实际RTC播放验收仍为后续步骤。
+当前运行官方镜像，原生RTMP→WebRTC桥接已配置开启；自建网关到浏览器的音视频已验收。SRS原生RTC直出与原生OBS Player的WebRTC会话/传输接入尚未完成对应验收。SRS自带转换与自建网关是两条替代路径，不要求业务流同时经过两次转换；目前网关只是可选研究链路。
 
 固定源码中优先阅读：
 
@@ -90,7 +92,7 @@ python SRS/check.py
 
 2026-10-12：SRS配置检查、API健康、OBS服务端4组和客户端8组回归通过。生成GPU纹理经NVENC H.264/AAC→RTMP→SRS→Player MVC，连续两轮每轮4.5秒；最终回归显示124/123帧，声音输出音量0、时钟约4.24秒、补静音0次。停播线程退出156/118ms；无响应RTMP握手推流取消90ms、拉流取消78ms。这些是本机功能验证数据，生产环境延迟基准另行测量。
 
-当前为本机开发部署，所有映射绑定127.0.0.1，`CANDIDATE`默认127.0.0.1。跨机部署需同时调整媒体基地址、端口绑定和客户端可达Candidate。RTC浏览器播放、ICE穿透、弱网重传/拥塞、长期漂移、生产推拉流鉴权尚未验收；房间权限与SRS媒体权限后续通过鉴权/回调联动。
+当前为本机开发部署，所有映射绑定127.0.0.1，`CANDIDATE`默认127.0.0.1。跨机部署需同时调整媒体基地址、端口绑定和客户端可达Candidate。自建网关的本机浏览器播放见第022步；SRS原生RTC直出、互联网ICE穿透、弱网重传/拥塞、长期漂移、生产推拉流鉴权尚未完整验收。房间权限与SRS媒体权限后续通过鉴权/回调联动。阶段收尾与简历口径见[第023步](../docs/023-project-summary-resume.md)。
 
 还验证了实际Publisher按钮启动：只捕获测试自建窗口，WGC→MediaTimeline→NVENC→SRS→后加入的Player显示，直接关闭直播房间后两端媒体与采集完整退出。
 

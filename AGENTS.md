@@ -3,7 +3,7 @@
 - 在 `OBS client/` 这个应用工程内逐步推进，使用 Git 记录完成并验证的小步骤。
 - 后续 Git 提交的标题和说明统一使用中文；类名、API 名和必要技术术语保留原文。已推送的历史提交不自动改写。
 - 用户明确要求模型优化工具独立放在 `cpp/`：原生 C++ / TensorRT、Visual Studio 工程、输出 `.engine`，模型改用 SCRFD-10G-KPS；先完成独立工程，OBS 接入后续进行。
-- 当前优先实现网络与登录；界面采用简单 MVC。
+- 初期网络与登录已完成；界面采用简单MVC。当前按第023步收尾音视频阶段，不自动启动新功能。
 - 首期登录重新设计 HTTP JSON 接口，不沿用 yzj 的 TCP 登录协议。
 - View 负责输入与展示，Controller 编排流程，Model 保存业务状态。网络类负责通信，协议类负责封包和解析。
 - 不增加云助教、课程转写、课程总结、教学问答或远程鼠标键盘控制相关功能。
@@ -23,10 +23,10 @@
 - 不打印密码、认证数据包或令牌。
 - Linux 服务端源码和 Docker 配置集中在 `OBS server/`，容器名 `OBS`，工作目录 `/workspace`；保持简单分级。客户端继续使用 `OBS client/`。
 - SRS作为独立副项目放在一级`SRS/`，容器`OBS-SRS`；部署、源码版本与二开路线单独维护。OBS通过RTMP/HTTP/WebRTC协议接入，通用FFmpeg代码不依赖SRS内部类型。
-- 用户最新明确：SRS、MediaMTX、OpenH264的三个研究/二开项目都在Mac独立开展，与Windows OBS、CourseStudio不联调；OBS现有媒体服务接入继续保留，不依赖Mac二开成果。
+- 2026-10-18最新边界：SRS二开不再限定为Mac上的独立项目，后续在本工程的SRS目录内推进；本次只收尾既有音视频模块、整理总结与简历，不自动启动SRS源码改造或改变媒体拓扑。MediaMTX、OpenH264仍保留原Mac独立项目约定。
 - Player当前推进D3D11VA硬件解码与GPU颜色转换，输出独立BGRA快照，复用MediaPlayer的线程/同步/启停；软件回退和硬件回读应在统计中如实区分。
 - 本地AI美颜复用SCRFD检测线程和普通GpuBeauty：同帧框/五点驱动GPU磨皮、提亮，输出独立纹理交给时间线、预览与录制/推流；诊断框点开关独立，不新增线程或MVC，不接远程API。
-- 2026-10-16用户暂定弱网优化范围：发送队列优化、自适应码率、用户可调节码率、RTMP低延迟，优先于Agent。先补统计和运行时调码率，再调队列/自适应策略并做隔离弱网验收；WebRTC与Mac三个研究项目不并入本步。
+- 2026-10-16弱网阶段范围：发送队列优化、自适应码率、用户可调节码率、RTMP低延迟，优先于Agent。先补统计和运行时调码率，再调队列/自适应策略并做隔离弱网验收；WebRTC与当时的Mac独立研究不并入第015～018步，后续边界以最新约定为准。
 - 第015步已增加Publisher队列时间/IO/处理观测与单值码率请求邮箱，用户手动目标由现有编码线程提交到FFmpeg/NVENC；请求、编码目标、实际视频包码率和本机IO码率分别显示。后续自适应复用该入口，不能直接从GUI改AVCodecContext或把本机写出当可用带宽。
 - 第016步直播队列在入队/出队前按300ms高水位、100ms目标检查媒体跨度和年龄；音频过期推进共同截止点，编码器显式liveCatchup跳过缺口/FIFO而不补回大段静音。仅直播启用，不改MP4策略；已有隔离RTMP阻塞恢复验证。
 - 第017步ABR由推流线程独占普通AdaptiveBitrate，500ms采样写出/处理/队列反馈，在用户上下限内较快下降、稳定后慢升；默认手动，完整配置邮箱原子切换，下一视频前复用NVENC入口。不得把本机IO占时当可用带宽；空闲/低负载不上探。现有publish_control和SRS集成扩展验收，不增加线程或测试文件；自动重连仍未实现。
@@ -35,7 +35,8 @@
 - 第019步播放端自适应：普通PlaybackBuffer复用原线程，低延迟直播默认50～150ms目标/300ms PCM上限，设备待播仍30ms，视频500ms/16帧兜底。欠载排空端点后Stop/Reset冻结主时钟、补足恢复；目标稳定慢降并实际裁未提交PCM追赶；无音频输出复用策略控制视频QPC映射。点播不启用，begin末参数false保留固定对照。Publisher不改ABR/队列策略，综合弱网实验按用户要求最后共同进行；不增加测试程序、线程或类图。
 - 第020步混音DSP：AudioMixer按480采样帧平滑音量/静音，持有普通StereoLimiter做左右联动5ms预读/50ms指数释放；保留一包及原PTS，finish先排swr再排限幅，clear/积压跳过也清预读。AudioResampler从首包启用滤波，可信设备QPC每秒估计频差和库存相位，限幅±1000ppm/限速后swr_set_compensation；估计/异常时间不驱动校正，真跳变/格式变化才重建。原120ms总等待覆盖80ms对齐和一包预读。默认仍7组CTest，扩展现有音频及UI验证；合成漂移不等于多小时真实设备验收，不改Publisher/Player策略或新增线程/MVC/类图。
 - 服务端应用工程入口为 `OBS server/code/CMakeLists.txt`，公共网络类放 `code/net/`，行为测试放 `code/tests/`；业务目录随实现再添加。
-- 2026-10-18按用户新要求启动自建RTMP→WebRTC网关：代码平铺code/media，独立OBS-MEDIA容器，首期H.264视频透传到浏览器，SRS只接收RTMP且不修改Mac研究项目。复用AuthService/只读签名密钥，HTTP异步Reply只在loop调用，FFmpeg单读取线程经32帧/8MiB/300ms队列交接，入场/裁剪后等IDR；库内ICE/DTLS/SRTP及512包NACK不是自行实现的GCC。当前自定义JSON协商尚非WHEP，AAC/Opus、音画同步、逐观众反馈/期限与原生Player接入后续推进；完成基础链路后再集中学习WebRTC信令、ICE穿透、拥塞控制。扩展现有ProtocolTests/SRS集成，不新增测试程序；综合弱网实验仍最后一起做。
+- 第021步自建RTMP→WebRTC网关：代码平铺code/media，独立OBS-MEDIA容器，首期H.264视频透传到浏览器，当时未修改SRS上游源码。复用AuthService/只读签名密钥，HTTP异步Reply只在loop调用，FFmpeg单读取线程经32帧/8MiB/300ms队列交接，入场/裁剪后等IDR；库内ICE/DTLS/SRTP及512包NACK不是自行实现的GCC。AAC/Opus和音画同步已在第022步补齐，自定义JSON协商尚非WHEP；逐观众反馈/期限、原生Player的WebRTC与互联网ICE/TURN尚未完成。扩展现有ProtocolTests/SRS集成，不新增测试程序；综合弱网实验仍最后一起做。
 - 服务端协议放 `code/protocol/`，登录/调度/信令放 `code/services/`；共用同一网络库与 CMake 工程，配置不得保存签名密钥或真实密码。
 - 第022步网关音频/同步：MediaUnit统一视频与Opus；RtmpSource原线程持有普通AudioTranscoder（AAC decoder→SWR→Float32 stereo FIFO→libopus，48kHz/960帧/20ms/目标96kbps），编码器packet PTS已含lookahead，不能二次加减延迟。每位观众RtpClock统一源PTS映射与单调/NTP参考，ClockSenderReport配对“现在的理论RTP钟”和同一时刻NTP，双轨共享CNAME/MSID/元素；裁剪/重开共同等IDR。真实EOF排尾，取消/换流丢旧尾；RTP尾包填充不冒充全部有效样本。复用原ProtocolTests与SRS/check.py --gateway，静音WebAudio和实际视频像素比较生成包络；这是浏览器消费分支同步验证，不是物理声卡/显示器测量。纯视频仍兼容，不新增线程/MVC/测试程序/类图。
+- 第023步收尾：用户认为音视频模块可以结束；冻结为可演示的阶段成果，后续优先讲解、展示和已有实验验收，不主动追加媒体模块或Agent。总结与简历见docs/023-project-summary-resume.md。不能将SRS部署/外置网关写成已完成SRS源码二开，不能将库内RTP/NACK/ICE写成全部自研；延迟指标保留测量起止点和本机生成素材条件，量化/剪枝区分已实现工具与实际通过的交付。
 - 容器 `/repo` 挂载完整 CourseStudioNext 仓库，用于 Git 和全工程浏览；`/workspace` 保留服务端目录别名和原构建路径。两者为同一份本地文件。

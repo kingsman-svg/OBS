@@ -14,9 +14,11 @@
 
 ## 当前进度
 
+音视频模块于2026-10-18作为可运行、可演示的阶段成果收尾，链路总结、验证口径和可直接使用的简历表述见[项目总结与简历](docs/023-project-summary-resume.md)。本次不新增功能或改变媒体运行拓扑。
+
 已实现同一 CMake 工程中的两个客户端：OBS_Publisher 推流端、OBS_Player 播放端。简单 MVC，共享异步 HTTP 登录与 TCP 信令，已完成节点调度、认证、心跳、房间创建/列表/加入/退出、成员更新、断线重连和会话到期。保留历史类图，后续按最新约定只维护流程时序图。
 
-Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。启动方法见 [服务端说明](docs/server-services.md)。Windows现有SRS媒体部署放在[SRS目录](SRS/README.md)，容器OBS-SRS，提供RTMP运行基线；当前使用root开发账号，生产账号系统后续实现。用户的SRS、MediaMTX、OpenH264二开研究在Mac独立开展，与本工程不联调。
+Linux 服务端已实现公共 Reactor 与 timerfd 定时器、独立 HTTP 登录（8081/8082）、健康节点调度（8080）和 TCP JSON 信令（9000）。启动方法见 [服务端说明](docs/server-services.md)。SRS媒体部署和后续二开统一放在本工程的[SRS目录](SRS/README.md)，容器OBS-SRS提供RTMP运行基线；当前仍运行官方镜像，尚未完成SRS源码二开。MediaMTX、OpenH264保持Mac独立项目约定。当前使用root开发账号，生产账号系统后续实现。
 
 先在 OBS 容器启动 `python3 /workspace/code/run_services.py start`，再用 Qt Creator 打开 `OBS client/CMakeLists.txt`，构建并分别运行 OBS_Publisher 和 OBS_Player。两端使用开发账号 `root`、密码 `root`，默认连接本机 Docker 的 8080 调度与 9000 信令。详见 [双端运行说明](docs/003-two-clients.md)。
 
@@ -62,6 +64,7 @@ Qt Creator 继续打开 `OBS client/CMakeLists.txt`。构建缓存由 CMake/Qt C
 - [需求与待定事项](docs/requirements.md)
 - [现有技术栈初查](docs/technical-baseline.md)
 - [分阶段实施路线](docs/roadmap.md)
+- [音视频阶段总结与简历表述](docs/023-project-summary-resume.md)
 - [弱网与RTMP低延迟优化计划（暂定）](docs/weak-network.md)
 - [首期网络与登录设计](docs/network-login.md)
 - [HTTP 登录接口契约](docs/auth-login.md)
